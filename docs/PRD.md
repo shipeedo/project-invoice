@@ -48,9 +48,20 @@ Rules should be extensible for additional conditions over time.
 
 ### 3. Authentication
 
-Authentication via **Shipeedo OAuth server**.
+Authentication via **Shipeedo OAuth2 / OpenID Connect**.
 
-> **Action item (Jay):** Register an OAuth client in Shipeedo and provide `client_id` + `client_secret` to the project.
+The OAuth server exposes **`/.well-known/openid-configuration`**. The application discovers all required endpoints (authorization, token, userinfo, JWKS, etc.) from that document — only the **issuer URL** needs to be configured, not individual endpoint URLs.
+
+**Environment variables:**
+
+| Variable | Required | Notes |
+|----------|----------|-------|
+| `CLIENT_ID` | Yes | From Shipeedo OAuth client registration |
+| `CLIENT_SECRET` | Yes | Keep private; never commit |
+| `OIDC_ISSUER` | Yes | Base issuer URL; discovery at `{OIDC_ISSUER}/.well-known/openid-configuration` |
+| `REDIRECT_URI` | Yes | Must match value registered on the OAuth client |
+
+> **Action item (Jay):** Register an OAuth client in Shipeedo and provide `CLIENT_ID`, `CLIENT_SECRET`, and `OIDC_ISSUER` for local `.env` setup.
 
 Until credentials are available, development may use a stub/mock auth provider.
 
@@ -176,5 +187,5 @@ Received → Processing → Pending Approval → Approved → Ready for Payment
 
 | Item | Owner | Status |
 |------|-------|--------|
-| Shipeedo OAuth client + secret | Jay | **Pending** |
+| Shipeedo OAuth client + secret + issuer URL | Jay | **Pending** |
 | O365 app registration + shared mailbox credentials | Jay | **Pending** |
