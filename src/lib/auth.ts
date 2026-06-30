@@ -1,6 +1,7 @@
 import NextAuth from "next-auth";
 import type { NextAuthConfig } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
+import { authConfig } from "@/lib/auth.config";
 import type { UserRole } from "@/lib/db/types";
 import { upsertUserFromProfile } from "@/lib/users";
 
@@ -60,15 +61,11 @@ const providers: NextAuthConfig["providers"] = useMockAuth
       },
     ];
 
-export const authConfig: NextAuthConfig = {
+export const { handlers, auth, signIn, signOut } = NextAuth({
+  ...authConfig,
   providers,
-  pages: {
-    signIn: "/login",
-  },
-  session: {
-    strategy: "jwt",
-  },
   callbacks: {
+    ...authConfig.callbacks,
     async jwt({ token, user, account, profile }) {
       if (user) {
         token.userId = user.id;
@@ -89,16 +86,5 @@ export const authConfig: NextAuthConfig = {
 
       return token;
     },
-    async session({ session, token }) {
-      if (session.user) {
-        session.user.id = token.userId as string;
-        session.user.role = token.role as UserRole;
-        session.user.organizationId = token.organizationId as string;
-      }
-      return session;
-    },
   },
-  trustHost: true,
-};
-
-export const { handlers, auth, signIn, signOut } = NextAuth(authConfig);
+});
