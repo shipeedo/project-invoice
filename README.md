@@ -16,7 +16,7 @@ Invoice intake, OCR, and approval portal for transport company supplier invoices
    |----------|-------------|
    | `CLIENT_ID` | `project-invoice` (already set in `.env.example`) |
    | `CLIENT_SECRET` | From your Shipeedo client registration |
-   | `OIDC_ISSUER` | Issuer URL for your OAuth server |
+   | `OIDC_ISSUER` | `https://auth.shipeedo.com` |
    | `REDIRECT_URI` | `http://localhost:3000/api/auth/callback/shipeedo` for local dev |
 
    The app uses OpenID Connect discovery (`{OIDC_ISSUER}/.well-known/openid-configuration`) to resolve authorization, token, userinfo, and other endpoints.

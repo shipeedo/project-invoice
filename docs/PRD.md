@@ -70,12 +70,12 @@ See [docs/auth.md](auth.md) for full client registration details.
 |----------|----------|-------|
 | `CLIENT_ID` | Yes | `project-invoice` |
 | `CLIENT_SECRET` | Yes | Keep private; never commit |
-| `OIDC_ISSUER` | Yes | Base issuer URL; discovery at `{OIDC_ISSUER}/.well-known/openid-configuration` |
+| `OIDC_ISSUER` | Yes | `https://auth.shipeedo.com` |
 | `REDIRECT_URI` | Yes | Must match a registered redirect URI for the environment |
 
-> **Action item (Jay):** Add `CLIENT_SECRET` and `OIDC_ISSUER` to local `.env` (client is registered).
+> **Action item (Jay):** Add `CLIENT_SECRET` to local `.env` (client and issuer are configured).
 
-Until `OIDC_ISSUER` is available locally, development may use a stub/mock auth provider.
+Until `CLIENT_SECRET` is in local `.env`, development may use a stub/mock auth provider.
 
 ### 4. Credit Handling (MVP)
 
@@ -200,5 +200,5 @@ Received → Processing → Pending Approval → Approved → Ready for Payment
 | Item | Owner | Status |
 |------|-------|--------|
 | Shipeedo OAuth client registered (`project-invoice`) | Jay | **Done** |
-| Add `CLIENT_SECRET` + `OIDC_ISSUER` to local `.env` | Jay | **Pending** |
+| Add `CLIENT_SECRET` to local `.env` | Jay | **Pending** |
 | O365 app registration + shared mailbox credentials | Jay | **Pending** |

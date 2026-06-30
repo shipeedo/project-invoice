@@ -30,6 +30,8 @@ The Shipeedo OAuth server exposes:
 
 The application uses that document to resolve `authorization_endpoint`, `token_endpoint`, `userinfo_endpoint`, `jwks_uri`, and other endpoints. Do not hardcode individual endpoint URLs.
 
+Discovery URL: `https://auth.shipeedo.com/.well-known/openid-configuration`
+
 ## Environment variables
 
 See [`.env.example`](../.env.example). Required values:
