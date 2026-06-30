@@ -13,7 +13,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 
 type O365Status = {
@@ -40,8 +39,6 @@ type O365SettingsProps = {
   connected?: boolean;
   errorMessage?: string | null;
 };
-
-type PickerMode = "browse" | "manual";
 
 function statusVariant(status: O365Status["status"]) {
   if (status === "CONNECTED") return "default" as const;
@@ -71,6 +68,10 @@ function matchesQuery(mailbox: Mailbox, query: string) {
   );
 }
 
+function looksLikeEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+}
+
 export function O365Settings({
   initialStatus,
   initialMailboxes,
@@ -80,7 +81,6 @@ export function O365Settings({
   const [status, setStatus] = useState(initialStatus);
   const [mailboxes, setMailboxes] = useState<Mailbox[]>(initialMailboxes);
   const [search, setSearch] = useState("");
-  const [pickerMode, setPickerMode] = useState<PickerMode>("browse");
   const [selectedMailbox, setSelectedMailbox] = useState<Mailbox | null>(() => {
     if (!initialStatus.mailboxId) return null;
     return (
@@ -92,10 +92,8 @@ export function O365Settings({
       }
     );
   });
-  const [manualAddress, setManualAddress] = useState("");
-  const [manualMailbox, setManualMailbox] = useState<Mailbox | null>(null);
   const [loadingMailboxes, setLoadingMailboxes] = useState(false);
-  const [resolvingManual, setResolvingManual] = useState(false);
+  const [resolvingAddress, setResolvingAddress] = useState(false);
   const [savingMailbox, setSavingMailbox] = useState(false);
   const [polling, setPolling] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
@@ -158,8 +156,7 @@ export function O365Settings({
     [mailboxes, search],
   );
 
-  function openBrowseMode() {
-    setPickerMode("browse");
+  function ensureMailboxesLoaded() {
     if (!hasLoadedMailboxes && !loadingMailboxes) {
       void loadMailboxes();
     }
@@ -175,25 +172,23 @@ export function O365Settings({
     }, 350);
   }
 
-  async function handleResolveManualAddress() {
-    const address = manualAddress.trim();
-    if (!address) {
-      setError("Enter a mailbox email address");
-      return;
-    }
-
-    setResolvingManual(true);
+  async function resolveAddressAsMailbox(address: string) {
+    setResolvingAddress(true);
     setError(null);
-    setManualMailbox(null);
     try {
       const response = await fetch(
-        `/api/admin/o365/mailboxes/resolve?address=${encodeURIComponent(address)}`,
+        `/api/admin/o365/mailboxes/resolve?address=${encodeURIComponent(address.trim())}`,
       );
       const data = (await response.json()) as { mailbox?: Mailbox; error?: string };
-      if (!response.ok) {
+      if (!response.ok || !data.mailbox) {
         throw new Error(data.error ?? "Mailbox not found");
       }
-      setManualMailbox(data.mailbox ?? null);
+      setSelectedMailbox(data.mailbox);
+      setMailboxes((current) =>
+        current.some((entry) => entry.id === data.mailbox!.id)
+          ? current
+          : [...current, data.mailbox!],
+      );
     } catch (resolveError) {
       setError(
         resolveError instanceof Error
@@ -201,11 +196,16 @@ export function O365Settings({
           : "Could not find that mailbox",
       );
     } finally {
-      setResolvingManual(false);
+      setResolvingAddress(false);
     }
   }
 
-  async function saveMailboxSelection(mailbox: Mailbox) {
+  async function handleSaveMailbox() {
+    if (!selectedMailbox) {
+      setError("Select a mailbox from the list");
+      return;
+    }
+
     setSavingMailbox(true);
     setError(null);
     setMessage(null);
@@ -214,16 +214,15 @@ export function O365Settings({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          mailboxId: mailbox.id,
-          mailboxUpn: mailboxAddress(mailbox),
+          mailboxId: selectedMailbox.id,
+          mailboxUpn: mailboxAddress(selectedMailbox),
         }),
       });
       const data = (await response.json()) as { error?: string };
       if (!response.ok) {
         throw new Error(data.error ?? "Failed to save mailbox");
       }
-      setSelectedMailbox(mailbox);
-      setMessage(`Now monitoring ${mailboxAddress(mailbox)}.`);
+      setMessage(`Now monitoring ${mailboxAddress(selectedMailbox)}.`);
       await refreshStatus();
     } catch (saveError) {
       setError(
@@ -232,20 +231,6 @@ export function O365Settings({
     } finally {
       setSavingMailbox(false);
     }
-  }
-
-  async function handleSaveMailbox() {
-    const mailbox =
-      pickerMode === "manual" ? manualMailbox : selectedMailbox;
-    if (!mailbox) {
-      setError(
-        pickerMode === "manual"
-          ? "Verify a mailbox address first"
-          : "Select a mailbox from the list",
-      );
-      return;
-    }
-    await saveMailboxSelection(mailbox);
   }
 
   async function handlePollNow() {
@@ -258,7 +243,6 @@ export function O365Settings({
         synced?: number;
         invoicesProcessed?: number;
         processed?: number;
-        skipped?: number;
         errors?: string[];
         error?: string;
       };
@@ -266,7 +250,7 @@ export function O365Settings({
         throw new Error(data.error ?? "Polling failed");
       }
       setMessage(
-        `Poll complete — synced ${data.synced ?? data.processed ?? 0} emails, processed ${data.invoicesProcessed ?? 0} invoices.`,
+        `Poll complete — synced ${data.synced ?? 0} emails, processed ${data.invoicesProcessed ?? 0} invoices.`,
       );
       if (data.errors?.length) {
         setError(data.errors.join("; "));
@@ -291,7 +275,6 @@ export function O365Settings({
       }
       setMailboxes([]);
       setSelectedMailbox(null);
-      setManualMailbox(null);
       setHasLoadedMailboxes(false);
       setMessage("Office 365 disconnected.");
       await refreshStatus();
@@ -306,8 +289,10 @@ export function O365Settings({
     }
   }
 
-  const activeSelection =
-    pickerMode === "manual" ? manualMailbox : selectedMailbox;
+  const showAddressFallback =
+    !loadingMailboxes &&
+    filteredMailboxes.length === 0 &&
+    looksLikeEmail(search);
 
   return (
     <div className="space-y-6">
@@ -406,11 +391,10 @@ export function O365Settings({
           <CardHeader>
             <CardTitle>Invoice mailbox</CardTitle>
             <CardDescription>
-              Pick the shared mailbox where carriers send invoices — for example{" "}
-              <span className="font-medium">invoices@yourcompany.com</span>.
+              Search for the shared mailbox where carriers send invoices.
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-5">
+          <CardContent className="space-y-4">
             {status.mailboxUpn ? (
               <div className="rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-sm">
                 <p className="font-medium">Currently monitoring</p>
@@ -418,186 +402,112 @@ export function O365Settings({
               </div>
             ) : null}
 
-            <div className="flex gap-2">
+            <div className="relative">
+              <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                id="mailbox-search"
+                value={search}
+                onChange={(event) => handleSearchChange(event.target.value)}
+                onFocus={ensureMailboxesLoaded}
+                placeholder="Search by name or email address…"
+                className="pl-9"
+              />
+            </div>
+
+            <div className="flex items-center justify-between text-sm text-muted-foreground">
+              <span>
+                {loadingMailboxes
+                  ? "Loading mailboxes…"
+                  : `${filteredMailboxes.length} mailbox${filteredMailboxes.length === 1 ? "" : "es"}`}
+              </span>
               <Button
                 type="button"
-                variant={pickerMode === "browse" ? "default" : "outline"}
+                variant="ghost"
                 size="sm"
-                onClick={openBrowseMode}
+                onClick={() => void loadMailboxes(search)}
+                disabled={loadingMailboxes}
               >
-                Browse mailboxes
-              </Button>
-              <Button
-                type="button"
-                variant={pickerMode === "manual" ? "default" : "outline"}
-                size="sm"
-                onClick={() => setPickerMode("manual")}
-              >
-                Enter address
+                <RefreshCwIcon
+                  className={cn("size-4", loadingMailboxes && "animate-spin")}
+                />
+                Refresh
               </Button>
             </div>
 
-            {pickerMode === "browse" ? (
-              <div className="space-y-3">
-                <div className="relative">
-                  <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    id="mailbox-search"
-                    value={search}
-                    onChange={(event) => handleSearchChange(event.target.value)}
-                    onFocus={() => {
-                      if (!hasLoadedMailboxes && !loadingMailboxes) {
-                        void loadMailboxes();
-                      }
-                    }}
-                    placeholder="Search by name or email address…"
-                    className="pl-9"
-                  />
-                </div>
-
-                <div className="flex items-center justify-between text-sm text-muted-foreground">
-                  <span>
-                    {loadingMailboxes
-                      ? "Loading mailboxes…"
-                      : `${filteredMailboxes.length} mailbox${filteredMailboxes.length === 1 ? "" : "es"} found`}
-                  </span>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => void loadMailboxes(search)}
-                    disabled={loadingMailboxes}
-                  >
-                    <RefreshCwIcon
-                      className={cn("size-4", loadingMailboxes && "animate-spin")}
-                    />
-                    Refresh
-                  </Button>
-                </div>
-
-                <div className="max-h-80 overflow-y-auto rounded-lg border">
-                  {filteredMailboxes.length === 0 ? (
-                    <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-                      {loadingMailboxes ? (
-                        "Loading mailboxes…"
-                      ) : !hasLoadedMailboxes ? (
-                        <span>
-                          Click{" "}
-                          <button
-                            type="button"
-                            className="text-primary underline-offset-4 hover:underline"
-                            onClick={() => void loadMailboxes()}
-                          >
-                            load mailboxes
-                          </button>{" "}
-                          or use Enter address for shared mailboxes.
-                        </span>
-                      ) : (
-                        "No mailboxes match your search. Try Enter address for shared mailboxes."
-                      )}
+            <div className="max-h-80 overflow-y-auto rounded-lg border">
+              {filteredMailboxes.length === 0 ? (
+                <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+                  {loadingMailboxes ? (
+                    "Loading mailboxes…"
+                  ) : showAddressFallback ? (
+                    <div className="space-y-3">
+                      <p>No matches in the directory for that address.</p>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={resolvingAddress}
+                        onClick={() => void resolveAddressAsMailbox(search)}
+                      >
+                        {resolvingAddress ? "Checking…" : `Use ${search.trim()}`}
+                      </Button>
                     </div>
+                  ) : !hasLoadedMailboxes ? (
+                    <button
+                      type="button"
+                      className="text-primary underline-offset-4 hover:underline"
+                      onClick={() => void loadMailboxes()}
+                    >
+                      Load mailboxes
+                    </button>
                   ) : (
-                    <ul className="divide-y">
-                      {filteredMailboxes.map((mailbox) => {
-                        const isSelected = selectedMailbox?.id === mailbox.id;
-                        const address = mailboxAddress(mailbox);
-                        return (
-                          <li key={mailbox.id}>
-                            <button
-                              type="button"
-                              onClick={() => setSelectedMailbox(mailbox)}
-                              className={cn(
-                                "flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/50",
-                                isSelected && "bg-primary/5",
-                              )}
-                            >
-                              <span
-                                className={cn(
-                                  "mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border",
-                                  isSelected
-                                    ? "border-primary bg-primary text-primary-foreground"
-                                    : "border-muted-foreground/30",
-                                )}
-                              >
-                                {isSelected ? <CheckIcon className="size-3" /> : null}
-                              </span>
-                              <span className="min-w-0 flex-1">
-                                <span className="block font-medium">
-                                  {mailbox.displayName}
-                                </span>
-                                <span className="block truncate text-sm text-muted-foreground">
-                                  {address}
-                                </span>
-                              </span>
-                            </button>
-                          </li>
-                        );
-                      })}
-                    </ul>
+                    "No mailboxes match your search."
                   )}
                 </div>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                <p className="text-sm text-muted-foreground">
-                  Shared mailboxes often do not appear in search. Enter the full email
-                  address and we will verify you have access.
-                </p>
-                <div className="space-y-2">
-                  <Label htmlFor="manual-mailbox">Mailbox email address</Label>
-                  <div className="flex flex-col gap-2 sm:flex-row">
-                    <Input
-                      id="manual-mailbox"
-                      type="email"
-                      value={manualAddress}
-                      onChange={(event) => {
-                        setManualAddress(event.target.value);
-                        setManualMailbox(null);
-                      }}
-                      placeholder="invoices@yourcompany.com"
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          event.preventDefault();
-                          void handleResolveManualAddress();
-                        }
-                      }}
-                    />
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => void handleResolveManualAddress()}
-                      disabled={resolvingManual || !manualAddress.trim()}
-                    >
-                      {resolvingManual ? "Checking…" : "Verify access"}
-                    </Button>
-                  </div>
-                </div>
-
-                {manualMailbox ? (
-                  <div className="rounded-lg border bg-muted/30 px-4 py-3 text-sm">
-                    <p className="font-medium">{manualMailbox.displayName}</p>
-                    <p className="text-muted-foreground">
-                      {mailboxAddress(manualMailbox)}
-                    </p>
-                    <p className="mt-2 text-primary">Access verified — ready to save</p>
-                  </div>
-                ) : null}
-              </div>
-            )}
-
-            {activeSelection ? (
-              <div className="rounded-lg border px-4 py-3 text-sm">
-                <p className="text-muted-foreground">Selected</p>
-                <p className="font-medium">{activeSelection.displayName}</p>
-                <p className="text-muted-foreground">
-                  {mailboxAddress(activeSelection)}
-                </p>
-              </div>
-            ) : null}
+              ) : (
+                <ul className="divide-y">
+                  {filteredMailboxes.map((mailbox) => {
+                    const isSelected = selectedMailbox?.id === mailbox.id;
+                    const address = mailboxAddress(mailbox);
+                    return (
+                      <li key={mailbox.id}>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedMailbox(mailbox)}
+                          className={cn(
+                            "flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/50",
+                            isSelected && "bg-primary/5",
+                          )}
+                        >
+                          <span
+                            className={cn(
+                              "mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border",
+                              isSelected
+                                ? "border-primary bg-primary text-primary-foreground"
+                                : "border-muted-foreground/30",
+                            )}
+                          >
+                            {isSelected ? <CheckIcon className="size-3" /> : null}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block font-medium">
+                              {mailbox.displayName}
+                            </span>
+                            <span className="block truncate text-sm text-muted-foreground">
+                              {address}
+                            </span>
+                          </span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
 
             <Button
               onClick={() => void handleSaveMailbox()}
-              disabled={savingMailbox || !activeSelection}
+              disabled={savingMailbox || !selectedMailbox}
             >
               {savingMailbox ? "Saving…" : "Use this mailbox"}
             </Button>
