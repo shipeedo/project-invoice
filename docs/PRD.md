@@ -71,6 +71,8 @@ The OAuth server exposes **`/.well-known/openid-configuration`**. The applicatio
 
 See [docs/auth.md](auth.md) for full client registration details.
 
+> **Gap:** Multi-tenant login (tenant picker at `pi.shipeedo.com`) is **not implemented** — pilot auth is scoped to a single hardcoded Shipeedo tenant. See [auth.md — Multi-tenant support](auth.md#multi-tenant-support--not-yet-implemented).
+
 **Environment variables:**
 
 | Variable | Required | Notes |
