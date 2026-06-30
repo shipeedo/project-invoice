@@ -77,6 +77,17 @@ async function graphFetch<T>(accessToken: string, path: string, init?: RequestIn
   return JSON.parse(text) as T;
 }
 
+function matchesMailboxSearch(mailbox: GraphMailbox, search: string) {
+  const normalized = search.trim().toLowerCase();
+  if (!normalized) return true;
+  const fields = [
+    mailbox.displayName,
+    mailbox.mail,
+    mailbox.userPrincipalName,
+  ].filter(Boolean);
+  return fields.some((field) => field!.toLowerCase().includes(normalized));
+}
+
 export async function listGraphMailboxes(accessToken: string, search?: string) {
   const mailboxes: GraphMailbox[] = [];
 
@@ -88,19 +99,9 @@ export async function listGraphMailboxes(accessToken: string, search?: string) {
     mailboxes.push(normalizeGraphMailbox(me));
   }
 
-  const trimmedSearch = search?.trim();
-  let usersPath = `/users?$select=id,displayName,mail,userPrincipalName&$top=999`;
-  if (trimmedSearch) {
-    const escaped = trimmedSearch.replace(/'/g, "''");
-    const filter = encodeURIComponent(
-      `startswith(displayName,'${escaped}') or startswith(mail,'${escaped}') or startswith(userPrincipalName,'${escaped}') or contains(displayName,'${escaped}') or contains(mail,'${escaped}') or contains(userPrincipalName,'${escaped}')`,
-    );
-    usersPath = `/users?$select=id,displayName,mail,userPrincipalName&$top=999&$filter=${filter}`;
-  }
-
   const users = await graphFetch<GraphListResponse<GraphMailbox>>(
     accessToken,
-    usersPath,
+    "/users?$select=id,displayName,mail,userPrincipalName&$top=999",
   );
 
   for (const user of users.value) {
@@ -109,7 +110,12 @@ export async function listGraphMailboxes(accessToken: string, search?: string) {
     mailboxes.push(normalizeGraphMailbox(user));
   }
 
-  return mailboxes.sort((a, b) => a.displayName.localeCompare(b.displayName));
+  const trimmedSearch = search?.trim();
+  const filtered = trimmedSearch
+    ? mailboxes.filter((mailbox) => matchesMailboxSearch(mailbox, trimmedSearch))
+    : mailboxes;
+
+  return filtered.sort((a, b) => a.displayName.localeCompare(b.displayName));
 }
 
 function normalizeGraphMailbox(user: GraphMailbox): GraphMailbox {
