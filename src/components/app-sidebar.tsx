@@ -3,6 +3,7 @@
 import {
   FileTextIcon,
   GalleryVerticalEndIcon,
+  MailIcon,
   RouteIcon,
   TruckIcon,
 } from "lucide-react";
@@ -68,6 +69,12 @@ export function AppSidebar({ user, activePath, ...props }: AppSidebarProps) {
           url: "/admin/suppliers",
           icon: <TruckIcon />,
           isActive: activePath === "/admin/suppliers",
+        },
+        {
+          name: "Office 365",
+          url: "/admin/o365",
+          icon: <MailIcon />,
+          isActive: activePath === "/admin/o365",
         },
       ]
     : [];

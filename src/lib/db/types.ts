@@ -23,3 +23,6 @@ export const routingRuleTypes = [
   "DEFAULT",
 ] as const;
 export type RoutingRuleType = (typeof routingRuleTypes)[number];
+
+export const o365ConnectionStatuses = ["CONNECTED", "DISCONNECTED", "ERROR"] as const;
+export type O365ConnectionStatus = (typeof o365ConnectionStatuses)[number];

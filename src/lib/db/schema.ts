@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm";
-import { integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { createId } from "@paralleldrive/cuid2";
 
 const timestamp = () =>
@@ -63,6 +63,13 @@ export const invoices = sqliteTable("invoices", {
   sourceType: text("source_type", { enum: ["UPLOAD", "EMAIL"] })
     .notNull()
     .default("UPLOAD"),
+  sourceMessageId: text("source_message_id"),
+  emailSubject: text("email_subject"),
+  emailFrom: text("email_from"),
+  emailFromName: text("email_from_name"),
+  emailReceivedAt: integer("email_received_at", { mode: "timestamp_ms" }),
+  emailBodyHtml: text("email_body_html"),
+  emailBodyText: text("email_body_text"),
   originalFileName: text("original_file_name"),
   filePath: text("file_path"),
   fileMimeType: text("file_mime_type"),
@@ -154,6 +161,73 @@ export const auditEvents = sqliteTable("audit_events", {
   createdAt: timestamp(),
 });
 
+export const o365Connections = sqliteTable("o365_connections", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => createId()),
+  organizationId: text("organization_id")
+    .notNull()
+    .unique()
+    .references(() => organizations.id, { onDelete: "cascade" }),
+  microsoftTenantId: text("microsoft_tenant_id"),
+  accessTokenEncrypted: text("access_token_encrypted"),
+  refreshTokenEncrypted: text("refresh_token_encrypted"),
+  tokenExpiresAt: integer("token_expires_at", { mode: "timestamp_ms" }),
+  selectedMailboxId: text("selected_mailbox_id"),
+  selectedMailboxUpn: text("selected_mailbox_upn"),
+  status: text("status", {
+    enum: ["CONNECTED", "DISCONNECTED", "ERROR"],
+  })
+    .notNull()
+    .default("DISCONNECTED"),
+  lastError: text("last_error"),
+  lastSyncedAt: integer("last_synced_at", { mode: "timestamp_ms" }),
+  connectedById: text("connected_by_id").references(() => users.id, {
+    onDelete: "set null",
+  }),
+  connectedAt: integer("connected_at", { mode: "timestamp_ms" }),
+  createdAt: timestamp(),
+  updatedAt: updatedAt(),
+});
+
+export const invoiceAttachments = sqliteTable("invoice_attachments", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => createId()),
+  invoiceId: text("invoice_id")
+    .notNull()
+    .references(() => invoices.id, { onDelete: "cascade" }),
+  fileName: text("file_name").notNull(),
+  filePath: text("file_path").notNull(),
+  mimeType: text("mime_type"),
+  size: integer("size"),
+  isPrimary: integer("is_primary", { mode: "boolean" }).notNull().default(false),
+  createdAt: timestamp(),
+});
+
+export const processedO365Messages = sqliteTable(
+  "processed_o365_messages",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    messageId: text("message_id").notNull(),
+    invoiceId: text("invoice_id").references(() => invoices.id, {
+      onDelete: "set null",
+    }),
+    processedAt: timestamp(),
+  },
+  (table) => [
+    uniqueIndex("processed_o365_messages_org_message_unique").on(
+      table.organizationId,
+      table.messageId,
+    ),
+  ],
+);
+
 export const creditDrafts = sqliteTable("credit_drafts", {
   id: text("id")
     .primaryKey()
@@ -170,11 +244,13 @@ export const creditDrafts = sqliteTable("credit_drafts", {
   createdAt: timestamp(),
 });
 
-export const organizationsRelations = relations(organizations, ({ many }) => ({
+export const organizationsRelations = relations(organizations, ({ many, one }) => ({
   users: many(users),
   invoices: many(invoices),
   suppliers: many(suppliers),
   routingRules: many(routingRules),
+  o365Connection: one(o365Connections),
+  processedO365Messages: many(processedO365Messages),
 }));
 
 export const usersRelations = relations(users, ({ one, many }) => ({
@@ -208,7 +284,43 @@ export const invoicesRelations = relations(invoices, ({ one, many }) => ({
   notes: many(notes),
   auditEvents: many(auditEvents),
   creditDrafts: many(creditDrafts),
+  attachments: many(invoiceAttachments),
 }));
+
+export const o365ConnectionsRelations = relations(o365Connections, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [o365Connections.organizationId],
+    references: [organizations.id],
+  }),
+  connectedBy: one(users, {
+    fields: [o365Connections.connectedById],
+    references: [users.id],
+  }),
+}));
+
+export const invoiceAttachmentsRelations = relations(
+  invoiceAttachments,
+  ({ one }) => ({
+    invoice: one(invoices, {
+      fields: [invoiceAttachments.invoiceId],
+      references: [invoices.id],
+    }),
+  }),
+);
+
+export const processedO365MessagesRelations = relations(
+  processedO365Messages,
+  ({ one }) => ({
+    organization: one(organizations, {
+      fields: [processedO365Messages.organizationId],
+      references: [organizations.id],
+    }),
+    invoice: one(invoices, {
+      fields: [processedO365Messages.invoiceId],
+      references: [invoices.id],
+    }),
+  }),
+);
 
 export const notesRelations = relations(notes, ({ one }) => ({
   invoice: one(invoices, {
@@ -266,3 +378,6 @@ export type Supplier = typeof suppliers.$inferSelect;
 export type AuditEvent = typeof auditEvents.$inferSelect;
 export type CreditDraft = typeof creditDrafts.$inferSelect;
 export type Note = typeof notes.$inferSelect;
+export type O365Connection = typeof o365Connections.$inferSelect;
+export type InvoiceAttachment = typeof invoiceAttachments.$inferSelect;
+export type ProcessedO365Message = typeof processedO365Messages.$inferSelect;
