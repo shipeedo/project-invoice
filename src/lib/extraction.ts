@@ -1,13 +1,10 @@
 import { readFile } from "fs/promises";
 import pdf from "pdf-parse";
 import { getUploadAbsolutePath } from "@/lib/uploads";
-import {
-  buildInvoiceExtractionUserPrompt,
-  INVOICE_EXTRACTION_SYSTEM_PROMPT,
-} from "@/lib/extraction-prompts";
+import { buildInvoiceExtractionUserPrompt } from "@/lib/extraction-prompts";
 import type { ExtractionCandidates, FieldCandidate } from "@/lib/extraction-types";
 import {
-  buildSupplierPromptSection,
+  resolveExtractionSystemPrompt,
   type SupplierExtractionContext,
 } from "@/lib/supplier-extraction";
 
@@ -91,14 +88,11 @@ export async function extractInvoiceFromPdf(
     process.env.AI_GATEWAY_URL ?? "https://ai-gateway.vercel.sh/v1/chat/completions";
   const model = process.env.AI_GATEWAY_MODEL ?? "openai/gpt-4o-mini";
 
-  const supplierSection = supplierContext
-    ? buildSupplierPromptSection(supplierContext)
-    : null;
+  const systemPrompt = resolveExtractionSystemPrompt(supplierContext);
 
   const userPrompt = buildInvoiceExtractionUserPrompt(
     fileName,
     text.slice(0, MAX_INVOICE_TEXT_CHARS),
-    supplierSection,
   );
 
   try {
@@ -106,7 +100,7 @@ export async function extractInvoiceFromPdf(
       model,
       temperature: 0,
       messages: [
-        { role: "system", content: INVOICE_EXTRACTION_SYSTEM_PROMPT },
+        { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
       ],
     };

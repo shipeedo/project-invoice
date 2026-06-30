@@ -9,9 +9,11 @@ import {
 import type { ExtractionCandidates, ValidatableField } from "@/lib/extraction-types";
 import { assignApproverForInvoice, ensureDefaultRoutingRules } from "@/lib/routing";
 import {
+  buildNewSupplierValues,
   findMatchingSupplier,
   getSupplierExtractionContext,
   learnSupplierMappings,
+  supplierHasCustomExtraction,
 } from "@/lib/supplier-extraction";
 
 async function resolveSupplierFromExtraction(
@@ -83,11 +85,7 @@ export async function processUploadedInvoice(params: {
       params.organizationId,
       supplier.id,
     );
-    const hasLearnings =
-      Boolean(supplierContext.extractionPrompt?.trim()) ||
-      Object.keys(supplierContext.fieldMappings).length > 0;
-
-    if (hasLearnings) {
+    if (supplierHasCustomExtraction(supplierContext)) {
       extraction = await extractInvoiceFromPdf(
         params.filePath,
         params.fileName,
@@ -189,12 +187,14 @@ export async function validateInvoice(input: ValidateInvoiceInput) {
   if (!supplierId && input.createSupplier?.name?.trim()) {
     const [created] = await db
       .insert(suppliers)
-      .values({
-        organizationId: input.organizationId,
-        name: input.createSupplier.name.trim(),
-        emailAddresses: JSON.stringify(input.createSupplier.emailAddresses ?? []),
-        emailDomains: JSON.stringify(input.createSupplier.emailDomains ?? []),
-      })
+      .values(
+        buildNewSupplierValues({
+          organizationId: input.organizationId,
+          name: input.createSupplier.name.trim(),
+          emailAddresses: input.createSupplier.emailAddresses,
+          emailDomains: input.createSupplier.emailDomains,
+        }),
+      )
       .returning();
     supplierId = created.id;
   }
