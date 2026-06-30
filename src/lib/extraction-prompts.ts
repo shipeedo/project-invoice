@@ -1,5 +1,5 @@
 export const EXTRACTION_JSON_SCHEMA = `{
-  "vendorName": "string — supplier/carrier name as printed on the invoice",
+  "vendorName": "string — supplier/carrier name (the party issuing the invoice, NOT bill-to or ship-to)",
   "vendorEmail": "string or null — supplier email if shown",
   "invoiceNumber": "string or null — invoice / tax invoice number",
   "invoiceDate": "ISO 8601 date string (YYYY-MM-DD) or null",
@@ -19,6 +19,15 @@ export const EXTRACTION_JSON_SCHEMA = `{
       "serviceType": "string or null — e.g. Express, Standard, Fuel levy, Detention, Storage"
     }
   ],
+  "fieldCandidates": {
+    "vendorName": [{ "value": "string", "label": "string — human label e.g. Issuer: Acme Transport", "source": "issuer | bill_to | ship_to | remit_to | header | footer | other" }],
+    "vendorEmail": [{ "value": "string", "label": "string", "source": "issuer | bill_to | remit_to | other" }],
+    "invoiceNumber": [{ "value": "string", "label": "string", "source": "header | footer | other" }],
+    "invoiceDate": [{ "value": "YYYY-MM-DD", "label": "string", "source": "header | footer | other" }],
+    "dueDate": [{ "value": "YYYY-MM-DD", "label": "string", "source": "header | footer | payment_terms | other" }],
+    "totalAmount": [{ "value": "number as string", "label": "string", "source": "summary | footer | other" }],
+    "currency": [{ "value": "AUD", "label": "string", "source": "summary | header | other" }]
+  },
   "confidence": "high | medium | low — your confidence in the extraction overall",
   "notes": "string or null — AP review notes: missing fields, ambiguous rows, total mismatch, unreadable sections"
 }` as const;
@@ -31,6 +40,12 @@ You receive text extracted from a PDF invoice. Treat this like a real invoice on
 1. Extract header fields accurately (vendor, invoice number, dates, totals, currency).
 2. Extract EVERY billable line item — do not summarise multiple charges into one row.
 3. Return structured JSON that downstream software can store and display without further cleanup.
+4. For each header field, list ALL plausible values you find on the invoice in fieldCandidates so a human can choose the correct one.
+
+## Supplier vs bill-to — critical
+- vendorName is the party ISSUING the invoice (carrier, freight company, supplier). This is often in the letterhead, logo area, or "From" section.
+- Do NOT use the bill-to, ship-to, sold-to, or customer name as vendorName unless that party is clearly the invoice issuer.
+- When multiple company names appear, include each distinct candidate in fieldCandidates.vendorName with an accurate source (issuer, bill_to, ship_to, remit_to, etc.) and set vendorName to your best guess for the issuer.
 
 ## Line items — critical rules
 - A line item is one charge row on the invoice: freight, cartage, fuel surcharge, detention, redelivery, storage, admin fee, etc.
@@ -52,9 +67,17 @@ You receive text extracted from a PDF invoice. Treat this like a real invoice on
 - "lineItems" must always be an array (empty only if the invoice truly has no itemised charges).
 - Dates must be ISO 8601 (YYYY-MM-DD).`;
 
-export function buildInvoiceExtractionUserPrompt(fileName: string, invoiceText: string) {
-  return `Review the following transport/supplier invoice and extract structured data for accounts payable.
+export function buildInvoiceExtractionUserPrompt(
+  fileName: string,
+  invoiceText: string,
+  supplierSection?: string | null,
+) {
+  const supplierBlock = supplierSection
+    ? `\n\n${supplierSection}\n`
+    : "";
 
+  return `Review the following transport/supplier invoice and extract structured data for accounts payable.
+${supplierBlock}
 File name: ${fileName}
 
 Return JSON matching this schema exactly:
@@ -68,5 +91,6 @@ ${invoiceText}
 Before responding, mentally verify:
 - Every charge row from the invoice is represented in lineItems
 - lineNumber reflects document order when rows are numbered or sequenced
-- totalAmount matches the invoice's stated total (or explain in notes if not)`;
+- totalAmount matches the invoice's stated total (or explain in notes if not)
+- fieldCandidates lists alternative values for header fields when the document shows more than one possibility`;
 }

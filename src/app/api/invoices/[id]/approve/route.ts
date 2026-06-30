@@ -35,6 +35,13 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
+  if (!invoice.validatedAt) {
+    return NextResponse.json(
+      { error: "Invoice must be validated before approval" },
+      { status: 400 },
+    );
+  }
+
   const updated = await db.transaction(async (tx) => {
     if (body.note?.trim()) {
       await tx.insert(notes).values({

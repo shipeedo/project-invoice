@@ -50,6 +50,7 @@ export const invoices = sqliteTable("invoices", {
     enum: [
       "RECEIVED",
       "PROCESSING",
+      "PENDING_VALIDATION",
       "PENDING_APPROVAL",
       "APPROVED",
       "READY_FOR_PAYMENT",
@@ -73,8 +74,16 @@ export const invoices = sqliteTable("invoices", {
   totalAmount: real("total_amount"),
   currency: text("currency").default("AUD"),
   lineItems: text("line_items"),
+  extractionCandidates: text("extraction_candidates"),
   extractionRaw: text("extraction_raw"),
   parseError: text("parse_error"),
+  supplierId: text("supplier_id").references(() => suppliers.id, {
+    onDelete: "set null",
+  }),
+  validatedAt: integer("validated_at", { mode: "timestamp_ms" }),
+  validatedById: text("validated_by_id").references(() => users.id, {
+    onDelete: "set null",
+  }),
   assignedToId: text("assigned_to_id").references(() => users.id, {
     onDelete: "set null",
   }),
@@ -126,6 +135,8 @@ export const suppliers = sqliteTable("suppliers", {
   name: text("name").notNull(),
   emailAddresses: text("email_addresses").notNull().default("[]"),
   emailDomains: text("email_domains").notNull().default("[]"),
+  extractionPrompt: text("extraction_prompt"),
+  fieldMappings: text("field_mappings").notNull().default("{}"),
   createdAt: timestamp(),
   updatedAt: updatedAt(),
 });
@@ -182,8 +193,16 @@ export const invoicesRelations = relations(invoices, ({ one, many }) => ({
     fields: [invoices.organizationId],
     references: [organizations.id],
   }),
+  supplier: one(suppliers, {
+    fields: [invoices.supplierId],
+    references: [suppliers.id],
+  }),
   assignedTo: one(users, {
     fields: [invoices.assignedToId],
+    references: [users.id],
+  }),
+  validatedBy: one(users, {
+    fields: [invoices.validatedById],
     references: [users.id],
   }),
   notes: many(notes),
@@ -209,11 +228,12 @@ export const routingRulesRelations = relations(routingRules, ({ one }) => ({
   }),
 }));
 
-export const suppliersRelations = relations(suppliers, ({ one }) => ({
+export const suppliersRelations = relations(suppliers, ({ one, many }) => ({
   organization: one(organizations, {
     fields: [suppliers.organizationId],
     references: [organizations.id],
   }),
+  invoices: many(invoices),
 }));
 
 export const auditEventsRelations = relations(auditEvents, ({ one }) => ({

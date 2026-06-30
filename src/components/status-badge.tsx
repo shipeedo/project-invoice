@@ -4,6 +4,7 @@ import { statusLabel } from "@/lib/session";
 const variants: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
   RECEIVED: "secondary",
   PROCESSING: "outline",
+  PENDING_VALIDATION: "outline",
   PENDING_APPROVAL: "outline",
   APPROVED: "default",
   READY_FOR_PAYMENT: "default",

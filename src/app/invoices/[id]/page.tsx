@@ -1,8 +1,9 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { CreditDraftForm } from "@/components/credit-draft-form";
 import { InvoiceActions } from "@/components/invoice-actions";
+import { InvoiceValidationPanel } from "@/components/invoice-validation-panel";
 import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { buttonVariants } from "@/components/ui/button";
@@ -15,14 +16,20 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { auditEvents, db, invoices, notes } from "@/lib/db";
-import { requireSession, formatCurrency, formatDate } from "@/lib/session";
+import { auditEvents, db, invoices, notes, suppliers } from "@/lib/db";
+import { parseExtractionCandidates } from "@/lib/extraction-types";
 import type { ExtractedLineItem } from "@/lib/extraction";
+import { requireSession, formatCurrency, formatDate } from "@/lib/session";
 import { cn } from "@/lib/utils";
 
 type PageProps = {
   params: Promise<{ id: string }>;
 };
+
+function toDateInput(value: Date | null | undefined) {
+  if (!value) return "";
+  return value.toISOString().slice(0, 10);
+}
 
 export default async function InvoiceDetailPage({ params }: PageProps) {
   const session = await requireSession();
@@ -35,6 +42,8 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
     ),
     with: {
       assignedTo: { columns: { name: true, email: true } },
+      supplier: { columns: { id: true, name: true } },
+      validatedBy: { columns: { name: true, email: true } },
       notes: { orderBy: desc(notes.createdAt) },
       auditEvents: {
         with: { user: { columns: { name: true, email: true } } },
@@ -51,9 +60,20 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
     notFound();
   }
 
+  const supplierOptions = await db.query.suppliers.findMany({
+    where: eq(suppliers.organizationId, session.user.organizationId),
+    columns: { id: true, name: true },
+    orderBy: asc(suppliers.name),
+  });
+
   const lineItems = invoice.lineItems
     ? (JSON.parse(invoice.lineItems) as ExtractedLineItem[])
     : [];
+
+  const candidates = parseExtractionCandidates(invoice.extractionCandidates);
+  const awaitingValidation = ["PENDING_VALIDATION", "NEEDS_REVIEW"].includes(
+    invoice.status,
+  );
 
   return (
     <AppShell
@@ -71,9 +91,19 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
               {invoice.vendorName ?? invoice.originalFileName ?? "Invoice"}
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Received {formatDate(invoice.createdAt)} · Assigned to{" "}
-              {invoice.assignedTo?.name ?? invoice.assignedTo?.email ?? "Unassigned"}
+              Received {formatDate(invoice.createdAt)}
+              {invoice.validatedAt
+                ? ` · Validated ${formatDate(invoice.validatedAt)} by ${invoice.validatedBy?.name ?? invoice.validatedBy?.email ?? "unknown"}`
+                : null}
+              {invoice.assignedTo
+                ? ` · Assigned to ${invoice.assignedTo.name ?? invoice.assignedTo.email}`
+                : null}
             </p>
+            {invoice.supplier ? (
+              <p className="mt-1 text-sm text-muted-foreground">
+                Supplier: {invoice.supplier.name}
+              </p>
+            ) : null}
           </div>
           <StatusBadge status={invoice.status} />
         </div>
@@ -84,10 +114,34 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
           </Alert>
         ) : null}
 
+        {awaitingValidation ? (
+          <InvoiceValidationPanel
+            invoiceId={invoice.id}
+            status={invoice.status}
+            candidates={candidates}
+            initialFields={{
+              vendorName: invoice.vendorName ?? "",
+              vendorEmail: invoice.vendorEmail ?? "",
+              invoiceNumber: invoice.invoiceNumber ?? "",
+              invoiceDate: toDateInput(invoice.invoiceDate),
+              dueDate: toDateInput(invoice.dueDate),
+              totalAmount:
+                invoice.totalAmount != null ? String(invoice.totalAmount) : "",
+              currency: invoice.currency ?? "AUD",
+            }}
+            lineItems={lineItems}
+            supplierId={invoice.supplierId}
+            supplierName={invoice.supplier?.name ?? null}
+            suppliers={supplierOptions}
+          />
+        ) : null}
+
         <div className="grid gap-6 lg:grid-cols-2">
           <Card>
             <CardHeader>
-              <CardTitle>Extracted header</CardTitle>
+              <CardTitle>
+                {awaitingValidation ? "Current extraction" : "Extracted header"}
+              </CardTitle>
             </CardHeader>
             <CardContent>
               <dl className="grid grid-cols-2 gap-3 text-sm">
@@ -103,14 +157,14 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
                   <dt className="text-muted-foreground">Invoice number</dt>
                   <dd className="font-medium">{invoice.invoiceNumber ?? "—"}</dd>
                 </div>
-              <div>
-                <dt className="text-muted-foreground">Invoice date</dt>
-                <dd className="font-medium">{formatDate(invoice.invoiceDate)}</dd>
-              </div>
-              <div>
-                <dt className="text-muted-foreground">Due date</dt>
-                <dd className="font-medium">{formatDate(invoice.dueDate)}</dd>
-              </div>
+                <div>
+                  <dt className="text-muted-foreground">Invoice date</dt>
+                  <dd className="font-medium">{formatDate(invoice.invoiceDate)}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Due date</dt>
+                  <dd className="font-medium">{formatDate(invoice.dueDate)}</dd>
+                </div>
                 <div>
                   <dt className="text-muted-foreground">Total</dt>
                   <dd className="font-medium">
@@ -189,7 +243,11 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
           </CardContent>
         </Card>
 
-        <InvoiceActions invoiceId={invoice.id} status={invoice.status} />
+        <InvoiceActions
+          invoiceId={invoice.id}
+          status={invoice.status}
+          validatedAt={invoice.validatedAt}
+        />
 
         <CreditDraftForm
           invoiceId={invoice.id}

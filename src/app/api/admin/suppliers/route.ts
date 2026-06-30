@@ -19,6 +19,7 @@ export async function GET() {
       ...supplier,
       emailAddresses: JSON.parse(supplier.emailAddresses) as string[],
       emailDomains: JSON.parse(supplier.emailDomains) as string[],
+      fieldMappings: JSON.parse(supplier.fieldMappings) as Record<string, unknown>,
     })),
   );
 }

@@ -5,6 +5,11 @@ import {
   buildInvoiceExtractionUserPrompt,
   INVOICE_EXTRACTION_SYSTEM_PROMPT,
 } from "@/lib/extraction-prompts";
+import type { ExtractionCandidates, FieldCandidate } from "@/lib/extraction-types";
+import {
+  buildSupplierPromptSection,
+  type SupplierExtractionContext,
+} from "@/lib/supplier-extraction";
 
 export type ExtractedLineItem = {
   lineNumber?: number;
@@ -27,6 +32,7 @@ export type ExtractedInvoice = {
   taxAmount?: number;
   currency?: string;
   lineItems: ExtractedLineItem[];
+  fieldCandidates?: ExtractionCandidates;
   confidence?: string;
   notes?: string;
 };
@@ -43,12 +49,19 @@ export async function extractTextFromPdf(filePath: string): Promise<string> {
 export async function extractInvoiceFromPdf(
   filePath: string,
   fileName: string,
-): Promise<{ data: ExtractedInvoice | null; raw: unknown; error?: string }> {
+  supplierContext?: SupplierExtractionContext | null,
+): Promise<{
+  data: ExtractedInvoice | null;
+  raw: unknown;
+  fieldCandidates: ExtractionCandidates | null;
+  error?: string;
+}> {
   const apiKey = process.env.AI_GATEWAY_API_KEY;
   if (!apiKey) {
     return {
       data: null,
       raw: null,
+      fieldCandidates: null,
       error: "AI_GATEWAY_API_KEY is not configured",
     };
   }
@@ -60,6 +73,7 @@ export async function extractInvoiceFromPdf(
     return {
       data: null,
       raw: null,
+      fieldCandidates: null,
       error: error instanceof Error ? error.message : "Failed to read PDF",
     };
   }
@@ -68,6 +82,7 @@ export async function extractInvoiceFromPdf(
     return {
       data: null,
       raw: null,
+      fieldCandidates: null,
       error: "PDF contains no extractable text",
     };
   }
@@ -76,9 +91,14 @@ export async function extractInvoiceFromPdf(
     process.env.AI_GATEWAY_URL ?? "https://ai-gateway.vercel.sh/v1/chat/completions";
   const model = process.env.AI_GATEWAY_MODEL ?? "openai/gpt-4o-mini";
 
+  const supplierSection = supplierContext
+    ? buildSupplierPromptSection(supplierContext)
+    : null;
+
   const userPrompt = buildInvoiceExtractionUserPrompt(
     fileName,
     text.slice(0, MAX_INVOICE_TEXT_CHARS),
+    supplierSection,
   );
 
   try {
@@ -110,6 +130,7 @@ export async function extractInvoiceFromPdf(
       return {
         data: null,
         raw: body,
+        fieldCandidates: null,
         error: `AI Gateway error (${response.status})`,
       };
     }
@@ -123,6 +144,7 @@ export async function extractInvoiceFromPdf(
       return {
         data: null,
         raw: completion,
+        fieldCandidates: null,
         error: "AI Gateway returned an empty response",
       };
     }
@@ -138,11 +160,16 @@ export async function extractInvoiceFromPdf(
       parsed.confidence = parsed.confidence ?? "low";
     }
 
-    return { data: parsed, raw: completion };
+    return {
+      data: parsed,
+      raw: completion,
+      fieldCandidates: parsed.fieldCandidates ?? null,
+    };
   } catch (error) {
     return {
       data: null,
       raw: null,
+      fieldCandidates: null,
       error: error instanceof Error ? error.message : "Extraction failed",
     };
   }
@@ -206,6 +233,52 @@ function normalizeLineItem(raw: Record<string, unknown>, index: number): Extract
   };
 }
 
+function normalizeFieldCandidate(raw: Record<string, unknown>): FieldCandidate | null {
+  const value =
+    typeof raw.value === "string"
+      ? raw.value.trim()
+      : raw.value != null
+        ? String(raw.value).trim()
+        : "";
+  if (!value) return null;
+
+  const label = typeof raw.label === "string" ? raw.label.trim() : value;
+  const source = typeof raw.source === "string" ? raw.source.trim() : "other";
+
+  return { value, label, source };
+}
+
+function normalizeFieldCandidates(
+  raw: Record<string, unknown> | undefined,
+): ExtractionCandidates | undefined {
+  if (!raw) return undefined;
+
+  const result: ExtractionCandidates = {};
+
+  for (const field of [
+    "vendorName",
+    "vendorEmail",
+    "invoiceNumber",
+    "invoiceDate",
+    "dueDate",
+    "totalAmount",
+    "currency",
+  ] as const) {
+    const entries = raw[field];
+    if (!Array.isArray(entries)) continue;
+
+    const candidates = entries
+      .map((entry) => normalizeFieldCandidate(entry as Record<string, unknown>))
+      .filter((entry): entry is FieldCandidate => entry !== null);
+
+    if (candidates.length > 0) {
+      result[field] = candidates;
+    }
+  }
+
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
 export function normalizeExtractedInvoice(raw: ExtractedInvoice): ExtractedInvoice {
   const lineItemsSource = Array.isArray(raw.lineItems) ? raw.lineItems : [];
 
@@ -227,6 +300,9 @@ export function normalizeExtractedInvoice(raw: ExtractedInvoice): ExtractedInvoi
     taxAmount: toNumber(raw.taxAmount),
     currency: raw.currency?.trim().toUpperCase() || "AUD",
     lineItems,
+    fieldCandidates: normalizeFieldCandidates(
+      raw.fieldCandidates as unknown as Record<string, unknown> | undefined,
+    ),
     confidence: raw.confidence ?? undefined,
     notes: raw.notes?.trim() || undefined,
   };

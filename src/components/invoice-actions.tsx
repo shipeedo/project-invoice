@@ -10,9 +10,10 @@ import { Textarea } from "@/components/ui/textarea";
 type InvoiceActionsProps = {
   invoiceId: string;
   status: string;
+  validatedAt?: Date | string | null;
 };
 
-export function InvoiceActions({ invoiceId, status }: InvoiceActionsProps) {
+export function InvoiceActions({ invoiceId, status, validatedAt }: InvoiceActionsProps) {
   const router = useRouter();
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -39,7 +40,8 @@ export function InvoiceActions({ invoiceId, status }: InvoiceActionsProps) {
     router.refresh();
   }
 
-  const canApprove = ["PENDING_APPROVAL", "NEEDS_REVIEW"].includes(status);
+  const canApprove =
+    ["PENDING_APPROVAL", "NEEDS_REVIEW"].includes(status) && Boolean(validatedAt);
   const canReject = ["PENDING_APPROVAL", "NEEDS_REVIEW", "APPROVED"].includes(status);
   const canMarkReady = status === "APPROVED";
 

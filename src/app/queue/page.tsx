@@ -30,7 +30,7 @@ export default async function QueuePage() {
   const myQueue = rows.filter(
     (invoice) =>
       invoice.assignedToId === session.user.id ||
-      ["PENDING_APPROVAL", "NEEDS_REVIEW"].includes(invoice.status),
+      ["PENDING_VALIDATION", "PENDING_APPROVAL", "NEEDS_REVIEW"].includes(invoice.status),
   );
 
   return (

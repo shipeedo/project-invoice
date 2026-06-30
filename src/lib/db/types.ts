@@ -4,6 +4,7 @@ export type UserRole = (typeof userRoles)[number];
 export const invoiceStatuses = [
   "RECEIVED",
   "PROCESSING",
+  "PENDING_VALIDATION",
   "PENDING_APPROVAL",
   "APPROVED",
   "READY_FOR_PAYMENT",
