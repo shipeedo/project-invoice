@@ -151,52 +151,93 @@ export async function resolveGraphMailboxByAddress(
 
 export async function listInboxMessages(params: {
   accessToken: string;
-  mailboxUpn: string;
+  mailbox: string;
   since?: Date | null;
   top?: number;
 }) {
+  const select =
+    "id,conversationId,internetMessageId,subject,receivedDateTime,sentDateTime,hasAttachments,from,toRecipients,ccRecipients,bodyPreview";
+  const top = params.top ?? 50;
   const sinceFilter = params.since
     ? `receivedDateTime ge ${params.since.toISOString()}`
     : null;
-  const filter = sinceFilter ? `&$filter=${encodeURIComponent(sinceFilter)}` : "";
+  const filterQuery = sinceFilter ? `&$filter=${encodeURIComponent(sinceFilter)}` : "";
+  const mailboxPath = `/users/${encodeURIComponent(params.mailbox)}`;
 
-  return graphFetch<GraphListResponse<GraphMessage>>(
+  const sortByReceived = (messages: GraphMessage[]) =>
+    [...messages].sort((a, b) => {
+      const aTime = a.receivedDateTime ? Date.parse(a.receivedDateTime) : 0;
+      const bTime = b.receivedDateTime ? Date.parse(b.receivedDateTime) : 0;
+      return bTime - aTime;
+    });
+
+  try {
+    const result = await graphFetch<GraphListResponse<GraphMessage>>(
+      params.accessToken,
+      `${mailboxPath}/messages?$select=${select}&$top=${top}${filterQuery}`,
+    );
+    return { value: sortByReceived(result.value) };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (!message.includes("404") && !message.includes("ErrorItemNotFound")) {
+      throw error;
+    }
+  }
+
+  type MailFolder = { id: string; displayName?: string; wellKnownName?: string };
+  const folders = await graphFetch<GraphListResponse<MailFolder>>(
     params.accessToken,
-    `/users/${encodeURIComponent(params.mailboxUpn)}/mailFolders/inbox/messages?$select=id,conversationId,internetMessageId,subject,receivedDateTime,sentDateTime,hasAttachments,from,toRecipients,ccRecipients,bodyPreview&$orderby=receivedDateTime desc&$top=${params.top ?? 25}${filter}`,
+    `${mailboxPath}/mailFolders?$select=id,displayName,wellKnownName&$top=50`,
   );
+
+  const inboxFolder =
+    folders.value.find((folder) => folder.wellKnownName?.toLowerCase() === "inbox") ??
+    folders.value.find((folder) => folder.displayName?.toLowerCase() === "inbox");
+
+  if (!inboxFolder?.id) {
+    throw new Error(
+      "Could not access mailbox messages — verify the shared mailbox exists and you have access",
+    );
+  }
+
+  const result = await graphFetch<GraphListResponse<GraphMessage>>(
+    params.accessToken,
+    `${mailboxPath}/mailFolders/${encodeURIComponent(inboxFolder.id)}/messages?$select=${select}&$top=${top}${filterQuery}`,
+  );
+  return { value: sortByReceived(result.value) };
 }
 
 export async function getMessageDetails(params: {
   accessToken: string;
-  mailboxUpn: string;
+  mailbox: string;
   messageId: string;
 }) {
   return graphFetch<GraphMessage>(
     params.accessToken,
-    `/users/${encodeURIComponent(params.mailboxUpn)}/messages/${encodeURIComponent(params.messageId)}?$select=id,conversationId,internetMessageId,subject,receivedDateTime,sentDateTime,hasAttachments,from,toRecipients,ccRecipients,body,bodyPreview`,
+    `/users/${encodeURIComponent(params.mailbox)}/messages/${encodeURIComponent(params.messageId)}?$select=id,conversationId,internetMessageId,subject,receivedDateTime,sentDateTime,hasAttachments,from,toRecipients,ccRecipients,body,bodyPreview`,
   );
 }
 
 export async function listMessageAttachments(params: {
   accessToken: string;
-  mailboxUpn: string;
+  mailbox: string;
   messageId: string;
 }) {
   return graphFetch<GraphListResponse<GraphAttachment>>(
     params.accessToken,
-    `/users/${encodeURIComponent(params.mailboxUpn)}/messages/${encodeURIComponent(params.messageId)}/attachments?$select=id,name,contentType,size`,
+    `/users/${encodeURIComponent(params.mailbox)}/messages/${encodeURIComponent(params.messageId)}/attachments?$select=id,name,contentType,size`,
   );
 }
 
 export async function downloadFileAttachment(params: {
   accessToken: string;
-  mailboxUpn: string;
+  mailbox: string;
   messageId: string;
   attachmentId: string;
 }) {
   const attachment = await graphFetch<GraphAttachment & { contentBytes?: string }>(
     params.accessToken,
-    `/users/${encodeURIComponent(params.mailboxUpn)}/messages/${encodeURIComponent(params.messageId)}/attachments/${encodeURIComponent(params.attachmentId)}`,
+    `/users/${encodeURIComponent(params.mailbox)}/messages/${encodeURIComponent(params.messageId)}/attachments/${encodeURIComponent(params.attachmentId)}`,
   );
 
   if (!attachment.contentBytes) {
@@ -216,7 +257,7 @@ const MESSAGE_SELECT =
 
 export async function listThreadMessages(params: {
   accessToken: string;
-  mailboxUpn: string;
+  mailbox: string;
   conversationId: string;
 }) {
   const filter = encodeURIComponent(
@@ -224,7 +265,7 @@ export async function listThreadMessages(params: {
   );
   return graphFetch<GraphListResponse<GraphMessage>>(
     params.accessToken,
-    `/users/${encodeURIComponent(params.mailboxUpn)}/messages?$filter=${filter}&$select=${MESSAGE_SELECT}&$orderby=receivedDateTime asc&$top=50`,
+    `/users/${encodeURIComponent(params.mailbox)}/messages?$filter=${filter}&$select=${MESSAGE_SELECT}&$top=50`,
   );
 }
 
@@ -236,7 +277,7 @@ export type SendMailAttachment = {
 
 export async function sendMail(params: {
   accessToken: string;
-  mailboxUpn: string;
+  mailbox: string;
   subject: string;
   bodyHtml: string;
   to: string[];
@@ -268,7 +309,7 @@ export async function sendMail(params: {
 
   await graphFetch<null>(
     params.accessToken,
-    `/users/${encodeURIComponent(params.mailboxUpn)}/sendMail`,
+    `/users/${encodeURIComponent(params.mailbox)}/sendMail`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -279,7 +320,7 @@ export async function sendMail(params: {
 
 export async function replyToMessage(params: {
   accessToken: string;
-  mailboxUpn: string;
+  mailbox: string;
   messageId: string;
   bodyHtml: string;
   attachments?: SendMailAttachment[];
@@ -299,7 +340,7 @@ export async function replyToMessage(params: {
 
   await graphFetch<null>(
     params.accessToken,
-    `/users/${encodeURIComponent(params.mailboxUpn)}/messages/${encodeURIComponent(params.messageId)}/reply`,
+    `/users/${encodeURIComponent(params.mailbox)}/messages/${encodeURIComponent(params.messageId)}/reply`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },

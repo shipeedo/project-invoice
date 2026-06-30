@@ -73,6 +73,13 @@ export async function updateO365Mailbox(params: {
   return updated ?? null;
 }
 
+export function resolveGraphMailboxUser(connection: {
+  selectedMailboxId: string | null;
+  selectedMailboxUpn: string | null;
+}) {
+  return connection.selectedMailboxId ?? connection.selectedMailboxUpn;
+}
+
 export async function disconnectO365(organizationId: string) {
   const [updated] = await db
     .update(o365Connections)

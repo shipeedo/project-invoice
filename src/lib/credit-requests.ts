@@ -13,7 +13,7 @@ import {
   mailboxMessages,
 } from "@/lib/db";
 import type { CarrierDecision, CreditRequestStatus } from "@/lib/db/types";
-import { getO365Connection, getValidAccessToken } from "@/lib/o365/connection";
+import { getO365Connection, getValidAccessToken, resolveGraphMailboxUser } from "@/lib/o365/connection";
 import {
   getMessageDetails,
   listInboxMessages,
@@ -43,13 +43,14 @@ async function toGraphAttachments(
 
 async function findSentMessage(params: {
   accessToken: string;
+  mailbox: string;
   mailboxUpn: string;
   subject: string;
   since: Date;
 }) {
   const messages = await listInboxMessages({
     accessToken: params.accessToken,
-    mailboxUpn: params.mailboxUpn,
+    mailbox: params.mailbox,
     since: params.since,
     top: 10,
   });
@@ -89,6 +90,7 @@ export async function createAndSendCreditRequest(params: {
   }
 
   const accessToken = await getValidAccessToken(connection);
+  const graphMailbox = resolveGraphMailboxUser(connection)!;
   const graphAttachments = params.attachments?.length
     ? await toGraphAttachments(params.attachments)
     : undefined;
@@ -98,7 +100,7 @@ export async function createAndSendCreditRequest(params: {
 
   await sendMail({
     accessToken,
-    mailboxUpn: connection.selectedMailboxUpn,
+    mailbox: graphMailbox,
     subject: params.subject,
     bodyHtml,
     to: [params.recipientEmail],
@@ -107,6 +109,7 @@ export async function createAndSendCreditRequest(params: {
 
   const sentSummary = await findSentMessage({
     accessToken,
+    mailbox: graphMailbox,
     mailboxUpn: connection.selectedMailboxUpn,
     subject: params.subject,
     since: sentAt,
@@ -119,6 +122,7 @@ export async function createAndSendCreditRequest(params: {
     const synced = await syncGraphMessage({
       connection,
       accessToken,
+      mailbox: graphMailbox,
       mailboxUpn: connection.selectedMailboxUpn,
       summary: sentSummary,
     });
@@ -127,12 +131,13 @@ export async function createAndSendCreditRequest(params: {
   } else if (sentSummary) {
     const details = await getMessageDetails({
       accessToken,
-      mailboxUpn: connection.selectedMailboxUpn,
+      mailbox: graphMailbox,
       messageId: sentSummary.id,
     });
     const synced = await syncGraphMessage({
       connection,
       accessToken,
+      mailbox: graphMailbox,
       mailboxUpn: connection.selectedMailboxUpn,
       summary: details,
     });
@@ -200,13 +205,14 @@ export async function sendThreadReply(params: {
   }
 
   const accessToken = await getValidAccessToken(connection);
+  const graphMailbox = resolveGraphMailboxUser(connection)!;
   const graphAttachments = params.attachments?.length
     ? await toGraphAttachments(params.attachments)
     : undefined;
 
   await replyToMessage({
     accessToken,
-    mailboxUpn: connection.selectedMailboxUpn,
+    mailbox: graphMailbox,
     messageId: thread.messages[0].graphMessageId,
     bodyHtml: params.message.replace(/\n/g, "<br/>"),
     attachments: graphAttachments,

@@ -24,6 +24,7 @@ async function pollOrganizationConnection(connection: {
   refreshTokenEncrypted: string | null;
   tokenExpiresAt: Date | null;
   microsoftTenantId: string | null;
+  selectedMailboxId: string | null;
   selectedMailboxUpn: string | null;
   lastSyncedAt: Date | null;
 }) {

@@ -12,7 +12,7 @@ import {
   resolveSupplierIdForEmail,
   upsertEmailContact,
 } from "@/lib/email-contacts";
-import { getValidAccessToken } from "@/lib/o365/connection";
+import { getValidAccessToken, updateO365Mailbox, resolveGraphMailboxUser } from "@/lib/o365/connection";
 import {
   downloadFileAttachment,
   extractEmailAddresses,
@@ -20,6 +20,7 @@ import {
   getMessageDetails,
   listInboxMessages,
   listMessageAttachments,
+  resolveGraphMailboxByAddress,
   type GraphMessage,
 } from "@/lib/o365/graph";
 import { processEmailInvoice } from "@/lib/o365/process-email";
@@ -32,6 +33,7 @@ type SyncConnection = {
   refreshTokenEncrypted: string | null;
   tokenExpiresAt: Date | null;
   microsoftTenantId: string | null;
+  selectedMailboxId: string | null;
   selectedMailboxUpn: string | null;
   lastSyncedAt: Date | null;
 };
@@ -93,13 +95,13 @@ async function upsertThread(params: {
 
 async function syncMessageAttachments(params: {
   accessToken: string;
-  mailboxUpn: string;
+  mailbox: string;
   dbMessageId: string;
   graphMessageId: string;
 }) {
   const attachmentList = await listMessageAttachments({
     accessToken: params.accessToken,
-    mailboxUpn: params.mailboxUpn,
+    mailbox: params.mailbox,
     messageId: params.graphMessageId,
   });
 
@@ -119,7 +121,7 @@ async function syncMessageAttachments(params: {
 
     const downloaded = await downloadFileAttachment({
       accessToken: params.accessToken,
-      mailboxUpn: params.mailboxUpn,
+      mailbox: params.mailbox,
       messageId: params.graphMessageId,
       attachmentId: attachment.id,
     });
@@ -169,6 +171,7 @@ async function handleCreditThreadReply(params: {
 export async function syncGraphMessage(params: {
   connection: SyncConnection;
   accessToken: string;
+  mailbox: string;
   mailboxUpn: string;
   summary: GraphMessage;
 }) {
@@ -178,7 +181,7 @@ export async function syncGraphMessage(params: {
       ? summary
       : await getMessageDetails({
           accessToken: params.accessToken,
-          mailboxUpn: params.mailboxUpn,
+          mailbox: params.mailbox,
           messageId: summary.id,
         });
 
@@ -248,7 +251,7 @@ export async function syncGraphMessage(params: {
   if (message.hasAttachments) {
     await syncMessageAttachments({
       accessToken: params.accessToken,
-      mailboxUpn: params.mailboxUpn,
+      mailbox: params.mailbox,
       dbMessageId: storedMessage.id,
       graphMessageId: message.id,
     });
@@ -267,7 +270,7 @@ export async function syncGraphMessage(params: {
 async function tryProcessInvoiceFromMessage(params: {
   organizationId: string;
   accessToken: string;
-  mailboxUpn: string;
+  mailbox: string;
   message: GraphMessage;
   dbMessageId: string;
 }) {
@@ -277,7 +280,7 @@ async function tryProcessInvoiceFromMessage(params: {
 
   const attachmentList = await listMessageAttachments({
     accessToken: params.accessToken,
-    mailboxUpn: params.mailboxUpn,
+    mailbox: params.mailbox,
     messageId: params.message.id,
   });
 
@@ -286,7 +289,7 @@ async function tryProcessInvoiceFromMessage(params: {
     if (!attachment.id || !attachment.name) continue;
     const downloaded = await downloadFileAttachment({
       accessToken: params.accessToken,
-      mailboxUpn: params.mailboxUpn,
+      mailbox: params.mailbox,
       messageId: params.message.id,
       attachmentId: attachment.id,
     });
@@ -330,13 +333,28 @@ export async function syncOrganizationInbox(connection: SyncConnection) {
 
   try {
     const accessToken = await getValidAccessToken(connection);
+    let graphMailbox = resolveGraphMailboxUser(connection);
+
+    if (!connection.selectedMailboxId && connection.selectedMailboxUpn) {
+      const resolved = await resolveGraphMailboxByAddress(
+        accessToken,
+        connection.selectedMailboxUpn,
+      );
+      graphMailbox = resolved.id;
+      await updateO365Mailbox({
+        organizationId: connection.organizationId,
+        mailboxId: resolved.id,
+        mailboxUpn: connection.selectedMailboxUpn,
+      });
+    }
+
     const since = connection.lastSyncedAt
       ? new Date(connection.lastSyncedAt.getTime() - 5 * 60 * 1000)
       : null;
 
     const messages = await listInboxMessages({
       accessToken,
-      mailboxUpn: connection.selectedMailboxUpn,
+      mailbox: graphMailbox!,
       since,
       top: 50,
     });
@@ -346,6 +364,7 @@ export async function syncOrganizationInbox(connection: SyncConnection) {
         const synced = await syncGraphMessage({
           connection,
           accessToken,
+          mailbox: graphMailbox!,
           mailboxUpn: connection.selectedMailboxUpn,
           summary,
         });
@@ -364,7 +383,7 @@ export async function syncOrganizationInbox(connection: SyncConnection) {
           const invoiceOutcome = await tryProcessInvoiceFromMessage({
             organizationId: connection.organizationId,
             accessToken,
-            mailboxUpn: connection.selectedMailboxUpn,
+            mailbox: graphMailbox!,
             message: summary,
             dbMessageId: synced.message.id,
           });
