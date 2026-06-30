@@ -1,11 +1,11 @@
 "use client";
 
-import { PencilIcon, Trash2Icon } from "lucide-react";
+import { PencilIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -180,10 +180,15 @@ function RuleConditionFields({
 export function RoutingRulesManager({ initialRules, users }: RoutingRulesManagerProps) {
   const [rules, setRules] = useState(initialRules);
   const [error, setError] = useState<string | null>(null);
-  const [createForm, setCreateForm] = useState<RuleFormState>(EMPTY_FORM);
+  const [sheetMode, setSheetMode] = useState<"create" | "edit" | null>(null);
   const [editingRule, setEditingRule] = useState<RoutingRule | null>(null);
-  const [editForm, setEditForm] = useState<RuleFormState>(EMPTY_FORM);
+  const [form, setForm] = useState<RuleFormState>(EMPTY_FORM);
   const [isSaving, setIsSaving] = useState(false);
+
+  const isSheetOpen = sheetMode != null;
+  const existingDefaultRule = rules.find((rule) => rule.isDefault);
+  const defaultTypeDisabled =
+    existingDefaultRule != null && editingRule?.id !== existingDefaultRule.id;
 
   async function refreshRules() {
     const response = await fetch("/api/admin/routing-rules");
@@ -250,10 +255,18 @@ export function RoutingRulesManager({ initialRules, users }: RoutingRulesManager
     await refreshRules();
   }
 
+  function openCreateSheet() {
+    setSheetMode("create");
+    setEditingRule(null);
+    setForm(EMPTY_FORM);
+    setError(null);
+  }
+
   function openEditSheet(rule: RoutingRule) {
     const fields = conditionFieldsFromRule(rule.type as RoutingRuleType, rule.condition);
+    setSheetMode("edit");
     setEditingRule(rule);
-    setEditForm({
+    setForm({
       name: rule.name,
       type: rule.type as RoutingRuleType,
       approverId: rule.approver?.id ?? "",
@@ -262,13 +275,13 @@ export function RoutingRulesManager({ initialRules, users }: RoutingRulesManager
     setError(null);
   }
 
-  function closeEditSheet() {
+  function closeSheet() {
+    setSheetMode(null);
     setEditingRule(null);
-    setEditForm(EMPTY_FORM);
+    setForm(EMPTY_FORM);
   }
 
-  async function saveRule(mode: "create" | "edit") {
-    const form = mode === "create" ? createForm : editForm;
+  async function saveRule() {
     const trimmedName = form.name.trim();
 
     if (!trimmedName) {
@@ -296,7 +309,7 @@ export function RoutingRulesManager({ initialRules, users }: RoutingRulesManager
     setError(null);
 
     try {
-      if (mode === "create") {
+      if (sheetMode === "create") {
         const lowestPriority =
           rules.length > 0 ? Math.min(...rules.map((rule) => rule.priority)) - 10 : 10;
 
@@ -317,9 +330,7 @@ export function RoutingRulesManager({ initialRules, users }: RoutingRulesManager
           setError("Failed to create rule");
           return;
         }
-
-        setCreateForm(EMPTY_FORM);
-      } else if (editingRule) {
+      } else if (sheetMode === "edit" && editingRule) {
         const response = await fetch(`/api/admin/routing-rules/${editingRule.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -336,82 +347,18 @@ export function RoutingRulesManager({ initialRules, users }: RoutingRulesManager
           setError("Failed to update rule");
           return;
         }
-
-        closeEditSheet();
       }
 
+      closeSheet();
       await refreshRules();
     } finally {
       setIsSaving(false);
     }
   }
 
-  function renderApproverSelect(
-    value: string,
-    onChange: (value: string) => void,
-    id: string,
-  ) {
-    return (
-      <div className="space-y-2">
-        <Label htmlFor={id}>Assign to</Label>
-        <Select value={value} onValueChange={(next) => next && onChange(next)}>
-          <SelectTrigger id={id}>
-            <SelectValue placeholder="Select approver" />
-          </SelectTrigger>
-          <SelectContent>
-            {users.map((user) => (
-              <SelectItem key={user.id} value={user.id}>
-                {user.name ?? user.email} ({user.email})
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <p className="text-xs text-muted-foreground">
-          The user who will receive matching invoices in their approval queue.
-        </p>
-      </div>
-    );
-  }
-
-  function renderRuleTypeSelect(
-    value: RoutingRuleType,
-    onChange: (value: RoutingRuleType) => void,
-    id: string,
-    disableDefault?: boolean,
-  ) {
-    return (
-      <div className="space-y-3">
-        <div className="space-y-2">
-          <Label htmlFor={id}>Rule type</Label>
-          <Select
-            value={value}
-            onValueChange={(next) => next && onChange(next as RoutingRuleType)}
-          >
-            <SelectTrigger id={id}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="SENDER_EMAIL">{RULE_TYPE_INFO.SENDER_EMAIL.label}</SelectItem>
-              <SelectItem value="AMOUNT_THRESHOLD">
-                {RULE_TYPE_INFO.AMOUNT_THRESHOLD.label}
-              </SelectItem>
-              <SelectItem value="PARSE_FAILURE">
-                {RULE_TYPE_INFO.PARSE_FAILURE.label}
-              </SelectItem>
-              <SelectItem value="DEFAULT" disabled={disableDefault}>
-                {RULE_TYPE_INFO.DEFAULT.label}
-              </SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <RuleTypeHelp type={value} />
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-6">
-      {error ? (
+      {error && !isSheetOpen ? (
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
@@ -437,7 +384,7 @@ export function RoutingRulesManager({ initialRules, users }: RoutingRulesManager
               {rules.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={2} className="text-muted-foreground">
-                    No routing rules yet. Add one below or upload an invoice to seed
+                    No routing rules yet. Create one below or upload an invoice to seed
                     defaults.
                   </TableCell>
                 </TableRow>
@@ -520,118 +467,129 @@ export function RoutingRulesManager({ initialRules, users }: RoutingRulesManager
             </TableBody>
           </Table>
         </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Add routing rule</CardTitle>
-          <CardDescription>
-            Create a new rule. It starts at the lowest priority — move it up once saved
-            if it should be checked earlier.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="create-name">Rule name</Label>
-            <Input
-              id="create-name"
-              value={createForm.name}
-              onChange={(event) =>
-                setCreateForm((current) => ({ ...current, name: event.target.value }))
-              }
-              placeholder="High-value Acme invoices"
-            />
-          </div>
-
-          {renderRuleTypeSelect(
-            createForm.type,
-            (type) => setCreateForm((current) => ({ ...current, type })),
-            "create-type",
-          )}
-
-          <RuleConditionFields
-            type={createForm.type}
-            senderEmail={createForm.senderEmail}
-            senderDomain={createForm.senderDomain}
-            minAmount={createForm.minAmount}
-            onSenderEmailChange={(value) =>
-              setCreateForm((current) => ({ ...current, senderEmail: value }))
-            }
-            onSenderDomainChange={(value) =>
-              setCreateForm((current) => ({ ...current, senderDomain: value }))
-            }
-            onMinAmountChange={(value) =>
-              setCreateForm((current) => ({ ...current, minAmount: value }))
-            }
-            idPrefix="create"
-          />
-
-          {renderApproverSelect(createForm.approverId, (approverId) =>
-            setCreateForm((current) => ({ ...current, approverId })),
-          "create-approver")}
-
-          <Button type="button" disabled={isSaving} onClick={() => saveRule("create")}>
-            {isSaving ? "Saving…" : "Create rule"}
+        <CardFooter className="border-t">
+          <Button type="button" onClick={openCreateSheet}>
+            <PlusIcon />
+            New rule
           </Button>
-        </CardContent>
+        </CardFooter>
       </Card>
 
-      <Sheet open={editingRule != null} onOpenChange={(open) => !open && closeEditSheet()}>
+      <Sheet open={isSheetOpen} onOpenChange={(open) => !open && closeSheet()}>
         <SheetContent className="overflow-y-auto sm:max-w-lg">
           <SheetHeader>
-            <SheetTitle>Edit routing rule</SheetTitle>
+            <SheetTitle>
+              {sheetMode === "create" ? "New routing rule" : "Edit routing rule"}
+            </SheetTitle>
             <SheetDescription>
-              Update how this rule matches invoices and who they are assigned to.
+              {sheetMode === "create"
+                ? "Define when this rule matches and who receives the invoice. New rules start at the lowest priority — move them up once saved if needed."
+                : "Update how this rule matches invoices and who they are assigned to."}
             </SheetDescription>
           </SheetHeader>
 
           <div className="space-y-4 px-4">
+            {error && isSheetOpen ? (
+              <Alert variant="destructive">
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            ) : null}
+
             <div className="space-y-2">
-              <Label htmlFor="edit-name">Rule name</Label>
+              <Label htmlFor="rule-name">Rule name</Label>
               <Input
-                id="edit-name"
-                value={editForm.name}
+                id="rule-name"
+                value={form.name}
                 onChange={(event) =>
-                  setEditForm((current) => ({ ...current, name: event.target.value }))
+                  setForm((current) => ({ ...current, name: event.target.value }))
                 }
+                placeholder="High-value Acme invoices"
               />
             </div>
 
-            {renderRuleTypeSelect(
-              editForm.type,
-              (type) => setEditForm((current) => ({ ...current, type })),
-              "edit-type",
-              editingRule?.isDefault,
-            )}
+            <div className="space-y-3">
+              <div className="space-y-2">
+                <Label htmlFor="rule-type">Rule type</Label>
+                <Select
+                  value={form.type}
+                  onValueChange={(next) =>
+                    next && setForm((current) => ({ ...current, type: next as RoutingRuleType }))
+                  }
+                >
+                  <SelectTrigger id="rule-type">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="SENDER_EMAIL">
+                      {RULE_TYPE_INFO.SENDER_EMAIL.label}
+                    </SelectItem>
+                    <SelectItem value="AMOUNT_THRESHOLD">
+                      {RULE_TYPE_INFO.AMOUNT_THRESHOLD.label}
+                    </SelectItem>
+                    <SelectItem value="PARSE_FAILURE">
+                      {RULE_TYPE_INFO.PARSE_FAILURE.label}
+                    </SelectItem>
+                    <SelectItem value="DEFAULT" disabled={defaultTypeDisabled}>
+                      {RULE_TYPE_INFO.DEFAULT.label}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <RuleTypeHelp type={form.type} />
+            </div>
 
             <RuleConditionFields
-              type={editForm.type}
-              senderEmail={editForm.senderEmail}
-              senderDomain={editForm.senderDomain}
-              minAmount={editForm.minAmount}
+              type={form.type}
+              senderEmail={form.senderEmail}
+              senderDomain={form.senderDomain}
+              minAmount={form.minAmount}
               onSenderEmailChange={(value) =>
-                setEditForm((current) => ({ ...current, senderEmail: value }))
+                setForm((current) => ({ ...current, senderEmail: value }))
               }
               onSenderDomainChange={(value) =>
-                setEditForm((current) => ({ ...current, senderDomain: value }))
+                setForm((current) => ({ ...current, senderDomain: value }))
               }
               onMinAmountChange={(value) =>
-                setEditForm((current) => ({ ...current, minAmount: value }))
+                setForm((current) => ({ ...current, minAmount: value }))
               }
-              idPrefix="edit"
+              idPrefix="rule"
             />
 
-            {renderApproverSelect(editForm.approverId, (approverId) =>
-              setEditForm((current) => ({ ...current, approverId })),
-            "edit-approver")}
+            <div className="space-y-2">
+              <Label htmlFor="rule-approver">Assign to</Label>
+              <Select
+                value={form.approverId}
+                onValueChange={(next) =>
+                  next && setForm((current) => ({ ...current, approverId: next }))
+                }
+              >
+                <SelectTrigger id="rule-approver">
+                  <SelectValue placeholder="Select approver" />
+                </SelectTrigger>
+                <SelectContent>
+                  {users.map((user) => (
+                    <SelectItem key={user.id} value={user.id}>
+                      {user.name ?? user.email} ({user.email})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                The user who will receive matching invoices in their approval queue.
+              </p>
+            </div>
           </div>
 
           <SheetFooter className="px-4">
-            <Button type="button" variant="outline" onClick={closeEditSheet}>
+            <Button type="button" variant="outline" onClick={closeSheet}>
               Cancel
             </Button>
-            <Button type="button" disabled={isSaving} onClick={() => saveRule("edit")}>
-              {isSaving ? "Saving…" : "Save changes"}
+            <Button type="button" disabled={isSaving} onClick={saveRule}>
+              {isSaving
+                ? "Saving…"
+                : sheetMode === "create"
+                  ? "Create rule"
+                  : "Save changes"}
             </Button>
           </SheetFooter>
         </SheetContent>
