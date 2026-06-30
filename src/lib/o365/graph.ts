@@ -85,35 +85,62 @@ export async function listGraphMailboxes(accessToken: string, search?: string) {
     "/me?$select=id,displayName,mail,userPrincipalName",
   );
   if (me.mail || me.userPrincipalName) {
-    mailboxes.push({
-      id: me.id,
-      displayName: me.displayName ?? me.mail ?? me.userPrincipalName,
-      mail: me.mail ?? me.userPrincipalName,
-      userPrincipalName: me.userPrincipalName,
-    });
+    mailboxes.push(normalizeGraphMailbox(me));
   }
 
-  const filter = search?.trim()
-    ? `&$filter=startswith(displayName,'${search.trim().replace(/'/g, "''")}') or startswith(mail,'${search.trim().replace(/'/g, "''")}')`
-    : "";
+  const trimmedSearch = search?.trim();
+  let usersPath = `/users?$select=id,displayName,mail,userPrincipalName&$top=999&$orderby=displayName`;
+  if (trimmedSearch) {
+    const escaped = trimmedSearch.replace(/'/g, "''");
+    const filter = encodeURIComponent(
+      `startswith(displayName,'${escaped}') or startswith(mail,'${escaped}') or startswith(userPrincipalName,'${escaped}') or contains(displayName,'${escaped}') or contains(mail,'${escaped}') or contains(userPrincipalName,'${escaped}')`,
+    );
+    usersPath = `/users?$select=id,displayName,mail,userPrincipalName&$top=999&$filter=${filter}&$orderby=displayName`;
+  }
 
   const users = await graphFetch<GraphListResponse<GraphMailbox>>(
     accessToken,
-    `/users?$select=id,displayName,mail,userPrincipalName&$top=100${filter}`,
+    usersPath,
   );
 
   for (const user of users.value) {
     if (!user.mail && !user.userPrincipalName) continue;
     if (mailboxes.some((entry) => entry.id === user.id)) continue;
-    mailboxes.push({
-      id: user.id,
-      displayName: user.displayName ?? user.mail ?? user.userPrincipalName,
-      mail: user.mail ?? user.userPrincipalName,
-      userPrincipalName: user.userPrincipalName,
-    });
+    mailboxes.push(normalizeGraphMailbox(user));
   }
 
   return mailboxes.sort((a, b) => a.displayName.localeCompare(b.displayName));
+}
+
+function normalizeGraphMailbox(user: GraphMailbox): GraphMailbox {
+  const address = user.mail || user.userPrincipalName;
+  return {
+    id: user.id,
+    displayName: user.displayName ?? address,
+    mail: address,
+    userPrincipalName: user.userPrincipalName,
+  };
+}
+
+export async function resolveGraphMailboxByAddress(
+  accessToken: string,
+  address: string,
+) {
+  const trimmed = address.trim();
+  if (!trimmed) {
+    throw new Error("Mailbox address is required");
+  }
+
+  const user = await graphFetch<GraphMailbox>(
+    accessToken,
+    `/users/${encodeURIComponent(trimmed)}?$select=id,displayName,mail,userPrincipalName`,
+  );
+
+  if (!user.mail && !user.userPrincipalName) {
+    throw new Error("No mailbox found for that address");
+  }
+
+  return normalizeGraphMailbox(user);
 }
 
 export async function listInboxMessages(params: {
