@@ -1,9 +1,9 @@
-import { signIn } from "@/lib/auth";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { cn } from "@/lib/utils";
 
 const useMockAuth =
   process.env.AUTH_MOCK === "true" ||
@@ -15,6 +15,7 @@ export default async function LoginPage({
   searchParams: Promise<{ callbackUrl?: string; error?: string }>;
 }) {
   const params = await searchParams;
+  const callbackUrl = params.callbackUrl ?? "/queue";
 
   return (
     <div className="flex min-h-screen items-center justify-center px-4">
@@ -36,18 +37,9 @@ export default async function LoginPage({
           ) : null}
 
           {useMockAuth ? (
-            <form
-              action={async (formData) => {
-                "use server";
-                await signIn("mock", {
-                  email: String(formData.get("email")),
-                  name: String(formData.get("name")),
-                  role: String(formData.get("role")),
-                  redirectTo: params.callbackUrl ?? "/",
-                });
-              }}
-              className="space-y-4"
-            >
+            <form action="/api/auth/mock-login" method="POST" className="space-y-4">
+              <input type="hidden" name="callbackUrl" value={callbackUrl} />
+
               <Alert>
                 <AlertDescription>
                   Development mock auth is enabled because `AUTH_MOCK=true` or `CLIENT_SECRET` is
@@ -90,16 +82,12 @@ export default async function LoginPage({
               </Button>
             </form>
           ) : (
-            <form
-              action={async () => {
-                "use server";
-                await signIn("shipeedo", { redirectTo: params.callbackUrl ?? "/" });
-              }}
+            <a
+              href={`/api/auth/signin/shipeedo?callbackUrl=${encodeURIComponent(callbackUrl)}`}
+              className={cn(buttonVariants(), "w-full")}
             >
-              <Button type="submit" className="w-full">
-                Sign in with Shipeedo
-              </Button>
-            </form>
+              Sign in with Shipeedo
+            </a>
           )}
 
           <p className="text-xs text-muted-foreground">

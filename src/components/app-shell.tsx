@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { signOut } from "@/lib/auth";
 import type { UserRole } from "@/lib/db/types";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -43,12 +42,7 @@ export function AppShell({ children, user, activePath }: AppShellProps) {
               <p className="font-medium">{user.name ?? user.email}</p>
               <p className="text-muted-foreground">{user.role.toLowerCase()}</p>
             </div>
-            <form
-              action={async () => {
-                "use server";
-                await signOut({ redirectTo: "/login" });
-              }}
-            >
+            <form action="/api/auth/logout" method="POST">
               <Button type="submit" variant="outline" size="sm">
                 Sign out
               </Button>
