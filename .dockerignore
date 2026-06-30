@@ -1,0 +1,12 @@
+node_modules
+.next
+.git
+.github
+.env
+.env.*
+*.db
+*.db-journal
+uploads
+README.md
+docs
+AGENTS.md
