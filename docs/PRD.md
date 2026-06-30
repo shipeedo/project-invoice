@@ -25,22 +25,26 @@ Invoice handling is fragmented: email forwarding between approvers, manual notes
 |-------------|--------|
 | Provider | Office 365 |
 | Mailbox | Shared temporary mailbox; **must be configurable in the application** (not hardcoded) |
+| App registration | Jay will register the O365 application (see Action Items) |
 | Trigger | On new email arrival, start an AI agent to process the message |
 | Agent behaviour | Find attachments, extract supplier invoice data |
 | User visibility | Raw email and all attachments must be viewable in the portal |
 
 ### 2. Approver Routing Rules
 
-Routing rules are **configured in the application** (admin UI or config). Initial rule types:
+Routing rules are **configured in the application** (admin UI). Each rule has a **priority**; rules are evaluated in priority order — **higher priority wins**. Users can **reorder rules** in the UI to change evaluation order.
+
+Initial rule types:
 
 | Rule | Example |
 |------|---------|
 | Supplier / sender email | Invoices from `accounts@carrier.com` → User XYZ |
 | Amount threshold | Total > $123,456 → User ABC |
-| Parse failure | OCR/parsing could not complete → User ABC |
-| Unknown supplier | No matching supplier record → User XYZ |
+| Parse failure | AI extraction could not complete → User ABC |
 
-Rules should be extensible; evaluation order TBD at implementation.
+**Default (404) rule:** A catch-all routing rule assigns an approver when **no other rule matches**. This replaces ad-hoc "unknown supplier" handling — if nothing else matches, the 404 rule applies.
+
+Rules should be extensible for additional conditions over time.
 
 ### 3. Authentication
 
@@ -58,11 +62,13 @@ No structured credit line items in v1. When credits are needed:
 - User attaches file(s)
 - System creates a **draft email** for the user to review and send
 
-### 5. Pilot Vendor / Invoice Types
+### 5. Pilot / Invoice Types
 
-- Primary: **PDF invoices from transport companies**
-- Secondary: **CSV attachments** in the same email — both PDF and CSV must be processed/evaluated
-- Portal must give users access to all source attachments and extracted data
+**Pilot approach:** Start with **manually uploaded PDF invoices** from transport companies — no specific carrier list required. Sample PDFs are uploaded via the portal for testing.
+
+**Extraction:** Use **AI Gateway** to process uploaded invoices — extract header fields (vendor, date, total, etc.) and line items.
+
+**Email path (MVP, post-pilot):** Emails may include CSV attachments alongside PDFs; the system must evaluate both and expose all source files in the portal.
 
 ---
 
@@ -71,13 +77,13 @@ No structured credit line items in v1. When credits are needed:
 ### Simple Approval (MVP primary flow)
 
 ```
-Email arrives (O365) or manual upload
+PDF uploaded (pilot) or email arrives (O365)
         ↓
-AI agent: extract attachments, OCR invoice data
+AI Gateway: extract header, line items, etc.
         ↓
-Apply routing rules → assign approver
+Apply routing rules by priority → assign approver
         ↓
-Approver reviews (raw email, attachments, extracted data)
+Approver reviews (source files, extracted data)
         ↓
 Approve / Reject + notes
         ↓
@@ -111,16 +117,17 @@ Received → Processing → Pending Approval → Approved → Ready for Payment
 ## Functional Requirements
 
 ### Intake
+- [ ] Manual PDF upload (pilot entry point)
 - [ ] Configure O365 shared mailbox connection in app
 - [ ] Poll or webhook-trigger on new email (implementation TBD)
 - [ ] AI agent processes email + attachments on arrival
-- [ ] Manual PDF/image upload as fallback
+- [ ] Manual PDF/image upload for ad-hoc use
 
 ### Extraction
-- [ ] OCR PDF invoices (vendor, date, total, line items where feasible)
-- [ ] Parse CSV attachments from transport carriers
+- [ ] AI Gateway: extract header fields and line items from PDF invoices
+- [ ] Parse CSV attachments from transport carriers (email path)
 - [ ] When both PDF and CSV present, evaluate both; surface conflicts if any
-- [ ] Flag unparseable invoices for routing per rules
+- [ ] Flag unparseable invoices for routing per parse-failure rule
 
 ### Portal
 - [ ] View raw email content
@@ -131,8 +138,10 @@ Received → Processing → Pending Approval → Approved → Ready for Payment
 
 ### Routing & Admin
 - [ ] CRUD for suppliers (name, email domains/addresses)
-- [ ] CRUD for routing rules (sender, amount, parse failure, unknown supplier)
-- [ ] Assign approver on match; fallback rule for unmatched
+- [ ] CRUD for routing rules (sender, amount, parse failure, etc.)
+- [ ] Priority-based rule evaluation — higher priority wins
+- [ ] Drag-and-drop or reorder UI for rule priority
+- [ ] Default (404) catch-all rule — assigns approver when no other rule matches
 
 ### Auth
 - [ ] Shipeedo OAuth login
@@ -156,17 +165,16 @@ Received → Processing → Pending Approval → Approved → Ready for Payment
 
 | Phase | Focus |
 |-------|-------|
-| **1 — MVP** | O365 intake, OCR/PDF+CSV, routing rules, Shipeedo auth, simple approval, credit draft email |
+| **1a — Pilot** | PDF upload, AI Gateway extraction, routing rules (priority + 404), Shipeedo auth, simple approval, credit draft email |
+| **1b — MVP** | O365 mailbox intake, CSV attachment handling, email visibility in portal |
 | **2** | Line-item review actions, bulk approve for high-volume invoices |
 | **3** | WMS integration, consignment matching, productisation |
 
 ---
 
-## Open Items
+## Action Items
 
 | Item | Owner | Status |
 |------|-------|--------|
 | Shipeedo OAuth client + secret | Jay | **Pending** |
-| O365 shared mailbox credentials / app registration | Jay | TBD |
-| Routing rule evaluation order | Team | TBD at implementation |
-| Specific pilot transport carriers | Team | TBD |
+| O365 app registration + shared mailbox credentials | Jay | **Pending** |
