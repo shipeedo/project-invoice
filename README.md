@@ -14,16 +14,18 @@ Invoice intake, OCR, and approval portal for transport company supplier invoices
 
    | Variable | Description |
    |----------|-------------|
-   | `CLIENT_ID` | OAuth client ID from Shipeedo |
-   | `CLIENT_SECRET` | OAuth client secret (keep private) |
+   | `CLIENT_ID` | `project-invoice` (already set in `.env.example`) |
+   | `CLIENT_SECRET` | From your Shipeedo client registration |
    | `OIDC_ISSUER` | Issuer URL for your OAuth server |
+   | `REDIRECT_URI` | `http://localhost:3000/api/auth/callback/shipeedo` for local dev |
 
-   The app uses OpenID Connect discovery (`{OIDC_ISSUER}/.well-known/openid-configuration`) to resolve authorization, token, userinfo, and other endpoints — you do not need to configure those separately.
+   The app uses OpenID Connect discovery (`{OIDC_ISSUER}/.well-known/openid-configuration`) to resolve authorization, token, userinfo, and other endpoints.
 
-   Set `REDIRECT_URI` in `.env` once the app is running locally (must match the URL registered on the OAuth client).
+   See [docs/auth.md](docs/auth.md) for registered redirect URIs and OAuth client details.
 
-3. For production/staging, set the same variables in your host’s secret store (e.g. GitHub Actions secrets, Azure Key Vault, etc.), not in the repo.
+3. For production (`https://pi.shipeedo.com`), set the same variables in your host’s secret store with `REDIRECT_URI=https://pi.shipeedo.com/api/auth/callback/shipeedo`.
 
 ## Docs
 
 - [Product Requirements (PRD)](docs/PRD.md)
+- [Authentication (Shipeedo OAuth)](docs/auth.md)

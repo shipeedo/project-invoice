@@ -52,18 +52,30 @@ Authentication via **Shipeedo OAuth2 / OpenID Connect**.
 
 The OAuth server exposes **`/.well-known/openid-configuration`**. The application discovers all required endpoints (authorization, token, userinfo, JWKS, etc.) from that document — only the **issuer URL** needs to be configured, not individual endpoint URLs.
 
+**Registered OAuth client:** `project-invoice`
+
+| Setting | Value |
+|---------|-------|
+| Grant types | `authorization_code`, `refresh_token` |
+| Response types | `code` |
+| Local redirect URI | `http://localhost:3000/api/auth/callback/shipeedo` |
+| Production redirect URI | `https://pi.shipeedo.com/api/auth/callback/shipeedo` |
+| Callback route | `/api/auth/callback/shipeedo` |
+
+See [docs/auth.md](auth.md) for full client registration details.
+
 **Environment variables:**
 
 | Variable | Required | Notes |
 |----------|----------|-------|
-| `CLIENT_ID` | Yes | From Shipeedo OAuth client registration |
+| `CLIENT_ID` | Yes | `project-invoice` |
 | `CLIENT_SECRET` | Yes | Keep private; never commit |
 | `OIDC_ISSUER` | Yes | Base issuer URL; discovery at `{OIDC_ISSUER}/.well-known/openid-configuration` |
-| `REDIRECT_URI` | Yes | Must match value registered on the OAuth client |
+| `REDIRECT_URI` | Yes | Must match a registered redirect URI for the environment |
 
-> **Action item (Jay):** Register an OAuth client in Shipeedo and provide `CLIENT_ID`, `CLIENT_SECRET`, and `OIDC_ISSUER` for local `.env` setup.
+> **Action item (Jay):** Add `CLIENT_SECRET` and `OIDC_ISSUER` to local `.env` (client is registered).
 
-Until credentials are available, development may use a stub/mock auth provider.
+Until `OIDC_ISSUER` is available locally, development may use a stub/mock auth provider.
 
 ### 4. Credit Handling (MVP)
 
@@ -187,5 +199,6 @@ Received → Processing → Pending Approval → Approved → Ready for Payment
 
 | Item | Owner | Status |
 |------|-------|--------|
-| Shipeedo OAuth client + secret + issuer URL | Jay | **Pending** |
+| Shipeedo OAuth client registered (`project-invoice`) | Jay | **Done** |
+| Add `CLIENT_SECRET` + `OIDC_ISSUER` to local `.env` | Jay | **Pending** |
 | O365 app registration + shared mailbox credentials | Jay | **Pending** |
