@@ -35,8 +35,9 @@ export default async function RoutingRulesPage() {
         <div>
           <h2 className="text-2xl font-semibold">Routing rules</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Rules are evaluated by priority. Higher priority wins. The default rule catches
-            unmatched invoices.
+            Decide which approver receives each invoice after validation. Rules are checked
+            from top to bottom — the first match wins. The catch-all default rule handles
+            anything that does not match above it.
           </p>
         </div>
         <RoutingRulesManager initialRules={rules} users={orgUsers} />

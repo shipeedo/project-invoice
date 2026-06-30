@@ -38,6 +38,9 @@ export async function PUT(request: Request) {
 
   const updated = await db.query.routingRules.findMany({
     where: eq(routingRules.organizationId, session.user.organizationId),
+    with: {
+      approver: { columns: { id: true, name: true, email: true } },
+    },
     orderBy: desc(routingRules.priority),
   });
 
