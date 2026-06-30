@@ -6,6 +6,7 @@ export const MICROSOFT_SCOPES = [
   "profile",
   "offline_access",
   "User.Read",
+  "User.ReadBasic.All",
   "Mail.Read",
   "Mail.Read.Shared",
   "Mail.Send",

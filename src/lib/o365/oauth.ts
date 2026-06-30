@@ -21,7 +21,7 @@ export function buildMicrosoftAuthorizeUrl(state: string) {
     redirect_uri: config.redirectUri,
     response_mode: "query",
     scope:
-      "openid profile offline_access User.Read Mail.Read Mail.Read.Shared Mail.Send Mail.Send.Shared",
+      "openid profile offline_access User.Read User.ReadBasic.All Mail.Read Mail.Read.Shared Mail.Send Mail.Send.Shared",
     state,
     prompt: "consent",
   });
@@ -42,7 +42,7 @@ export async function exchangeMicrosoftCode(code: string) {
     code,
     redirect_uri: config.redirectUri,
     scope:
-      "openid profile offline_access User.Read Mail.Read Mail.Read.Shared Mail.Send Mail.Send.Shared",
+      "openid profile offline_access User.Read User.ReadBasic.All Mail.Read Mail.Read.Shared Mail.Send Mail.Send.Shared",
   });
 
   const response = await fetch(
@@ -80,7 +80,7 @@ export async function refreshMicrosoftTokens(refreshToken: string, tenantId?: st
     grant_type: "refresh_token",
     refresh_token: refreshToken,
     scope:
-      "openid profile offline_access User.Read Mail.Read Mail.Read.Shared Mail.Send Mail.Send.Shared",
+      "openid profile offline_access User.Read User.ReadBasic.All Mail.Read Mail.Read.Shared Mail.Send Mail.Send.Shared",
   });
 
   const response = await fetch(tokenUrl, {
