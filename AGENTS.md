@@ -35,6 +35,8 @@ npx shadcn@latest add <component>
 
 Callback route: `http://localhost:3000/api/auth/callback/shipeedo`
 
+> **Cloud gotcha:** `CLIENT_SECRET` is injected as a Cloud Agent secret, so mock auth does NOT auto-enable — you must explicitly set `AUTH_MOCK=true` in a local `.env` to get the mock login form (otherwise the app uses real Shipeedo OIDC, which needs interactive credentials). `AUTH_SECRET` is NOT injected, so generate one (`openssl rand -base64 32`) into `.env`. `.env` is gitignored and not persisted across runs, so recreate it for local dev. `npm run db:push` works without `.env` (drizzle.config.ts defaults `DATABASE_URL` to `file:./dev.db`).
+
 ### Platform secrets
 
 Injected as Cloud Agent secrets (no need to populate `.env` for these in cloud): `CLIENT_ID`, `CLIENT_SECRET`, `OIDC_ISSUER`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET`, `AI_GATEWAY_API_KEY`. See `docs/environment-setup.md`.
