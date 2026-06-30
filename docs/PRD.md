@@ -23,9 +23,10 @@ Invoice handling is fragmented: email forwarding between approvers, manual notes
 
 | Requirement | Detail |
 |-------------|--------|
-| Provider | Office 365 |
+| Provider | Office 365 / Microsoft Graph |
 | Mailbox | Shared temporary mailbox; **must be configurable in the application** (not hardcoded) |
-| App registration | Jay will register the O365 application (see Action Items) |
+| App registration | Azure Entra app — Jay has registered (see Action Items) |
+| Env vars | `MS_CLIENT_ID`, `MS_CLIENT_SECRET`, `MS_TENANT_ID` |
 | Trigger | On new email arrival, start an AI agent to process the message |
 | Agent behaviour | Find attachments, extract supplier invoice data |
 | User visibility | Raw email and all attachments must be viewable in the portal |
@@ -201,4 +202,5 @@ Received → Processing → Pending Approval → Approved → Ready for Payment
 |------|-------|--------|
 | Shipeedo OAuth client registered (`project-invoice`) | Jay | **Done** |
 | Add `CLIENT_SECRET` to local `.env` | Jay | **Pending** |
-| O365 app registration + shared mailbox credentials | Jay | **Pending** |
+| O365 app registration (`MS_CLIENT_ID`, `MS_CLIENT_SECRET`, `MS_TENANT_ID`) | Jay | **Done** |
+| Add Microsoft secrets to local `.env` | Jay | **Pending** |

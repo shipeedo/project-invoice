@@ -10,7 +10,9 @@ Invoice intake, OCR, and approval portal for transport company supplier invoices
    cp .env.example .env
    ```
 
-2. Put your Shipeedo OAuth values in **`.env`** (repo root):
+2. Fill in **`.env`** (repo root):
+
+   **Shipeedo OAuth (user login)**
 
    | Variable | Description |
    |----------|-------------|
@@ -19,13 +21,22 @@ Invoice intake, OCR, and approval portal for transport company supplier invoices
    | `OIDC_ISSUER` | `https://auth.shipeedo.com` |
    | `REDIRECT_URI` | `http://localhost:3000/api/auth/callback/shipeedo` for local dev |
 
-   The app uses OpenID Connect discovery (`{OIDC_ISSUER}/.well-known/openid-configuration`) to resolve authorization, token, userinfo, and other endpoints.
+   See [docs/auth.md](docs/auth.md) for OAuth client details.
 
-   See [docs/auth.md](docs/auth.md) for registered redirect URIs and OAuth client details.
+   **Office 365 / Microsoft Graph (mailbox intake — Phase 1b)**
 
-3. For production (`https://pi.shipeedo.com`), set the same variables in your host’s secret store with `REDIRECT_URI=https://pi.shipeedo.com/api/auth/callback/shipeedo`.
+   | Variable | Description |
+   |----------|-------------|
+   | `MS_CLIENT_ID` | Azure app registration client ID |
+   | `MS_CLIENT_SECRET` | Azure client secret |
+   | `MS_TENANT_ID` | Azure directory (tenant) ID |
+
+   See [docs/o365.md](docs/o365.md). The shared mailbox address is configured in the app UI, not in env.
+
+3. For production (`https://pi.shipeedo.com`), set the same variables in your host’s secret store. Use `REDIRECT_URI=https://pi.shipeedo.com/api/auth/callback/shipeedo` for Shipeedo OAuth.
 
 ## Docs
 
 - [Product Requirements (PRD)](docs/PRD.md)
 - [Authentication (Shipeedo OAuth)](docs/auth.md)
+- [Office 365 / Microsoft Graph](docs/o365.md)
