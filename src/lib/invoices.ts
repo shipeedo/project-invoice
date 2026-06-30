@@ -44,6 +44,7 @@ export async function processUploadedInvoice(params: {
       vendorEmail: extraction.data?.vendorEmail ?? null,
       invoiceNumber: extraction.data?.invoiceNumber,
       invoiceDate: parseInvoiceDate(extraction.data?.invoiceDate),
+      dueDate: parseInvoiceDate(extraction.data?.dueDate),
       totalAmount: extraction.data?.totalAmount,
       currency: extraction.data?.currency ?? "AUD",
       lineItems: extraction.data?.lineItems

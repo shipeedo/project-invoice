@@ -1,13 +1,19 @@
 import { readFile } from "fs/promises";
 import pdf from "pdf-parse";
 import { getUploadAbsolutePath } from "@/lib/uploads";
+import {
+  buildInvoiceExtractionUserPrompt,
+  INVOICE_EXTRACTION_SYSTEM_PROMPT,
+} from "@/lib/extraction-prompts";
 
 export type ExtractedLineItem = {
+  lineNumber?: number;
   description: string;
   quantity?: number;
   unitPrice?: number;
   amount?: number;
   reference?: string;
+  serviceType?: string;
 };
 
 export type ExtractedInvoice = {
@@ -15,32 +21,17 @@ export type ExtractedInvoice = {
   vendorEmail?: string;
   invoiceNumber?: string;
   invoiceDate?: string;
+  dueDate?: string;
   totalAmount?: number;
+  subtotal?: number;
+  taxAmount?: number;
   currency?: string;
   lineItems: ExtractedLineItem[];
   confidence?: string;
   notes?: string;
 };
 
-const EXTRACTION_SCHEMA = `{
-  "vendorName": "string",
-  "vendorEmail": "string or null",
-  "invoiceNumber": "string or null",
-  "invoiceDate": "ISO date string or null",
-  "totalAmount": "number",
-  "currency": "3-letter code, default AUD",
-  "lineItems": [
-    {
-      "description": "string",
-      "quantity": "number or null",
-      "unitPrice": "number or null",
-      "amount": "number or null",
-      "reference": "consignment or reference id or null"
-    }
-  ],
-  "confidence": "high | medium | low",
-  "notes": "any extraction caveats"
-}`;
+const MAX_INVOICE_TEXT_CHARS = 24_000;
 
 export async function extractTextFromPdf(filePath: string): Promise<string> {
   const absolutePath = getUploadAbsolutePath(filePath);
@@ -85,30 +76,18 @@ export async function extractInvoiceFromPdf(
     process.env.AI_GATEWAY_URL ?? "https://ai-gateway.vercel.sh/v1/chat/completions";
   const model = process.env.AI_GATEWAY_MODEL ?? "openai/gpt-4o-mini";
 
-  const prompt = `You are an invoice extraction assistant for a transport company accounts team.
-Extract structured data from the invoice text below.
-
-Return ONLY valid JSON matching this schema:
-${EXTRACTION_SCHEMA}
-
-File name: ${fileName}
-
-Invoice text:
-"""
-${text.slice(0, 12000)}
-"""`;
+  const userPrompt = buildInvoiceExtractionUserPrompt(
+    fileName,
+    text.slice(0, MAX_INVOICE_TEXT_CHARS),
+  );
 
   try {
     const requestBody: Record<string, unknown> = {
       model,
       temperature: 0,
       messages: [
-        {
-          role: "system",
-          content:
-            "You extract invoice data accurately. Respond with JSON only, no markdown.",
-        },
-        { role: "user", content: prompt },
+        { role: "system", content: INVOICE_EXTRACTION_SYSTEM_PROMPT },
+        { role: "user", content: userPrompt },
       ],
     };
 
@@ -148,7 +127,17 @@ ${text.slice(0, 12000)}
       };
     }
 
-    const parsed = JSON.parse(parseJsonContent(content)) as ExtractedInvoice;
+    const parsed = normalizeExtractedInvoice(
+      JSON.parse(parseJsonContent(content)) as ExtractedInvoice,
+    );
+
+    if (parsed.lineItems.length === 0) {
+      parsed.notes = [parsed.notes, "No line items were extracted — manual review required."]
+        .filter(Boolean)
+        .join(" ");
+      parsed.confidence = parsed.confidence ?? "low";
+    }
+
     return { data: parsed, raw: completion };
   } catch (error) {
     return {
@@ -169,4 +158,76 @@ function parseJsonContent(content: string) {
   const trimmed = content.trim();
   const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
   return fenced?.[1]?.trim() ?? trimmed;
+}
+
+function toNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const cleaned = value.replace(/[^0-9.-]/g, "");
+    const parsed = Number(cleaned);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+}
+
+function normalizeLineItem(raw: Record<string, unknown>, index: number): ExtractedLineItem | null {
+  const description =
+    typeof raw.description === "string"
+      ? raw.description.trim()
+      : typeof raw.chargeDescription === "string"
+        ? raw.chargeDescription.trim()
+        : "";
+
+  if (!description) return null;
+
+  const lineNumber = toNumber(raw.lineNumber) ?? index + 1;
+  const amount = toNumber(raw.amount) ?? toNumber(raw.lineTotal) ?? toNumber(raw.total);
+
+  return {
+    lineNumber: Number.isInteger(lineNumber) ? lineNumber : index + 1,
+    description,
+    quantity: toNumber(raw.quantity),
+    unitPrice: toNumber(raw.unitPrice) ?? toNumber(raw.unit_price),
+    amount,
+    reference:
+      typeof raw.reference === "string"
+        ? raw.reference.trim() || undefined
+        : typeof raw.consignmentNumber === "string"
+          ? raw.consignmentNumber.trim() || undefined
+          : typeof raw.consignment === "string"
+            ? raw.consignment.trim() || undefined
+            : undefined,
+    serviceType:
+      typeof raw.serviceType === "string"
+        ? raw.serviceType.trim() || undefined
+        : typeof raw.service === "string"
+          ? raw.service.trim() || undefined
+          : undefined,
+  };
+}
+
+export function normalizeExtractedInvoice(raw: ExtractedInvoice): ExtractedInvoice {
+  const lineItemsSource = Array.isArray(raw.lineItems) ? raw.lineItems : [];
+
+  const lineItems = lineItemsSource
+    .map((item, index) =>
+      normalizeLineItem(item as unknown as Record<string, unknown>, index),
+    )
+    .filter((item): item is ExtractedLineItem => item !== null)
+    .sort((a, b) => (a.lineNumber ?? 0) - (b.lineNumber ?? 0));
+
+  return {
+    vendorName: raw.vendorName?.trim() || undefined,
+    vendorEmail: raw.vendorEmail?.trim() || undefined,
+    invoiceNumber: raw.invoiceNumber?.trim() || undefined,
+    invoiceDate: raw.invoiceDate ?? undefined,
+    dueDate: raw.dueDate ?? undefined,
+    totalAmount: toNumber(raw.totalAmount),
+    subtotal: toNumber(raw.subtotal),
+    taxAmount: toNumber(raw.taxAmount),
+    currency: raw.currency?.trim().toUpperCase() || "AUD",
+    lineItems,
+    confidence: raw.confidence ?? undefined,
+    notes: raw.notes?.trim() || undefined,
+  };
 }

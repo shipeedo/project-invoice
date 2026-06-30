@@ -103,10 +103,14 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
                   <dt className="text-muted-foreground">Invoice number</dt>
                   <dd className="font-medium">{invoice.invoiceNumber ?? "—"}</dd>
                 </div>
-                <div>
-                  <dt className="text-muted-foreground">Invoice date</dt>
-                  <dd className="font-medium">{formatDate(invoice.invoiceDate)}</dd>
-                </div>
+              <div>
+                <dt className="text-muted-foreground">Invoice date</dt>
+                <dd className="font-medium">{formatDate(invoice.invoiceDate)}</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">Due date</dt>
+                <dd className="font-medium">{formatDate(invoice.dueDate)}</dd>
+              </div>
                 <div>
                   <dt className="text-muted-foreground">Total</dt>
                   <dd className="font-medium">
@@ -150,7 +154,9 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-12">#</TableHead>
                     <TableHead>Description</TableHead>
+                    <TableHead>Service</TableHead>
                     <TableHead>Qty</TableHead>
                     <TableHead>Unit</TableHead>
                     <TableHead>Amount</TableHead>
@@ -159,8 +165,10 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
                 </TableHeader>
                 <TableBody>
                   {lineItems.map((item, index) => (
-                    <TableRow key={`${item.description}-${index}`}>
+                    <TableRow key={`${item.lineNumber ?? index}-${item.description}`}>
+                      <TableCell>{item.lineNumber ?? index + 1}</TableCell>
                       <TableCell>{item.description}</TableCell>
+                      <TableCell>{item.serviceType ?? "—"}</TableCell>
                       <TableCell>{item.quantity ?? "—"}</TableCell>
                       <TableCell>
                         {item.unitPrice != null

@@ -69,6 +69,7 @@ export const invoices = sqliteTable("invoices", {
   vendorEmail: text("vendor_email"),
   invoiceNumber: text("invoice_number"),
   invoiceDate: integer("invoice_date", { mode: "timestamp_ms" }),
+  dueDate: integer("due_date", { mode: "timestamp_ms" }),
   totalAmount: real("total_amount"),
   currency: text("currency").default("AUD"),
   lineItems: text("line_items"),
