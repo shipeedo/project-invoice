@@ -7,10 +7,16 @@
 .idea/
 .vscode/
 
-# Dependencies / build (add stack-specific entries when scaffolded)
+# Dependencies / build
 node_modules/
 dist/
 build/
+.next/
+out/
+uploads/
+drizzle/meta/
+*.db
+*.db-journal
 __pycache__/
 *.pyc
 .venv/

@@ -69,7 +69,9 @@ Customer tenant IDs, tokens, and mailbox selection are **not** env vars — conf
 
 | Variable | Secret? | Notes |
 |----------|---------|-------|
-| `AI_GATEWAY_API_KEY` | **Yes** | API key for header + line item extraction |
+| `AI_GATEWAY_API_KEY` | **Yes** | Vercel AI Gateway key (`vck_...`) for header + line item extraction |
+| `AI_GATEWAY_URL` | No | Default: `https://ai-gateway.vercel.sh/v1/chat/completions` |
+| `AI_GATEWAY_MODEL` | No | Default: `openai/gpt-4o-mini` |
 
 ---
 

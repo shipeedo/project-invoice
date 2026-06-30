@@ -2,13 +2,55 @@
 
 Invoice intake, OCR, and approval portal for transport company supplier invoices.
 
+## Stack
+
+- **Next.js 16** (App Router) on port `3000`
+- **Auth.js** with Shipeedo OIDC (`/api/auth/callback/shipeedo`)
+- **Drizzle ORM** + SQLite (local dev)
+- **shadcn/ui** for all UI components
+- **AI Gateway** for PDF extraction
+
+## Quick start
+
+```bash
+cp .env.example .env
+# Fill in secrets — see docs/environment-setup.md
+
+npm install
+npm run db:push
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000).
+
+For local pilot development without Shipeedo secrets, set `AUTH_MOCK=true` in `.env` and use the mock login form on `/login`.
+
+## UI components
+
+All UI uses [shadcn/ui](https://ui.shadcn.com/). Add new components with:
+
+```bash
+npx shadcn@latest add <component>
+```
+
+## Phase 1a (pilot) — implemented
+
+- PDF upload and storage
+- AI Gateway extraction (header + line items)
+- Priority-based routing rules with default (404) catch-all
+- Approval queue, approve / reject / ready-for-payment
+- Credit request draft email composer
+- Admin CRUD for routing rules and suppliers
+- Tenancy-scoped data model and audit trail
+
+## Phase 1b — not yet implemented
+
+- Office 365 connect flow and shared mailbox intake
+- CSV attachment handling from email
+
 ## Environment setup
 
 Platform secrets (OAuth, Azure app, AI Gateway) are configured via environment variables — see **[docs/environment-setup.md](docs/environment-setup.md)**.
-
-```bash
-cp .env.example .env   # local dev — then fill in secrets
-```
 
 Per-tenancy config (O365 connection, mailbox, routing rules) is done in the application UI after deploy.
 
