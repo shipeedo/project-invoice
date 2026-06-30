@@ -163,6 +163,7 @@ export async function listInboxMessages(params: {
     : null;
   const filterQuery = sinceFilter ? `&$filter=${encodeURIComponent(sinceFilter)}` : "";
   const mailboxPath = `/users/${encodeURIComponent(params.mailbox)}`;
+  const messageQuery = `?$select=${select}&$top=${top}${filterQuery}`;
 
   const sortByReceived = (messages: GraphMessage[]) =>
     [...messages].sort((a, b) => {
@@ -171,40 +172,72 @@ export async function listInboxMessages(params: {
       return bTime - aTime;
     });
 
-  try {
+  const tryFetchMessages = async (path: string) => {
     const result = await graphFetch<GraphListResponse<GraphMessage>>(
       params.accessToken,
-      `${mailboxPath}/messages?$select=${select}&$top=${top}${filterQuery}`,
+      `${path}${messageQuery}`,
     );
     return { value: sortByReceived(result.value) };
-  } catch (error) {
+  };
+
+  const isMissingMailboxError = (error: unknown) => {
     const message = error instanceof Error ? error.message : "";
-    if (!message.includes("404") && !message.includes("ErrorItemNotFound")) {
+    return (
+      message.includes("404") ||
+      message.includes("ErrorItemNotFound") ||
+      message.includes("Default folder Inbox not found")
+    );
+  };
+
+  const strategies = [
+    () => tryFetchMessages(`${mailboxPath}/messages`),
+    () => tryFetchMessages(`${mailboxPath}/mailFolders/inbox/messages`),
+  ];
+
+  for (const strategy of strategies) {
+    try {
+      return await strategy();
+    } catch (error) {
+      if (!isMissingMailboxError(error)) {
+        throw error;
+      }
+    }
+  }
+
+  type MailFolder = { id: string; displayName?: string };
+  let inboxFolder: MailFolder | undefined;
+
+  try {
+    inboxFolder = await graphFetch<MailFolder>(
+      params.accessToken,
+      `${mailboxPath}/mailFolders/inbox?$select=id,displayName`,
+    );
+  } catch (error) {
+    if (!isMissingMailboxError(error)) {
       throw error;
     }
   }
 
-  type MailFolder = { id: string; displayName?: string; wellKnownName?: string };
-  const folders = await graphFetch<GraphListResponse<MailFolder>>(
-    params.accessToken,
-    `${mailboxPath}/mailFolders?$select=id,displayName,wellKnownName&$top=50`,
-  );
-
-  const inboxFolder =
-    folders.value.find((folder) => folder.wellKnownName?.toLowerCase() === "inbox") ??
-    folders.value.find((folder) => folder.displayName?.toLowerCase() === "inbox");
-
   if (!inboxFolder?.id) {
-    throw new Error(
-      "Could not access mailbox messages — verify the shared mailbox exists and you have access",
+    const folders = await graphFetch<GraphListResponse<MailFolder>>(
+      params.accessToken,
+      `${mailboxPath}/mailFolders?$select=id,displayName&$top=50`,
+    );
+
+    inboxFolder = folders.value.find(
+      (folder) => folder.displayName?.toLowerCase() === "inbox",
     );
   }
 
-  const result = await graphFetch<GraphListResponse<GraphMessage>>(
-    params.accessToken,
-    `${mailboxPath}/mailFolders/${encodeURIComponent(inboxFolder.id)}/messages?$select=${select}&$top=${top}${filterQuery}`,
+  if (!inboxFolder?.id) {
+    throw new Error(
+      "Could not access mailbox messages — verify the shared mailbox exists and you have Full Access in Exchange",
+    );
+  }
+
+  return tryFetchMessages(
+    `${mailboxPath}/mailFolders/${encodeURIComponent(inboxFolder.id)}/messages`,
   );
-  return { value: sortByReceived(result.value) };
 }
 
 export async function getMessageDetails(params: {
