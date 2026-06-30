@@ -19,17 +19,23 @@ Invoice handling is fragmented: email forwarding between approvers, manual notes
 
 ## Resolved Requirements
 
-### 1. Mailbox Integration
+### 1. Mailbox Integration (O365)
+- **Tenancy owner** connects Office 365 via UI ("Connect Office 365")
+- Owner **selects the shared mailbox** to monitor from a picker
+- Connection details (tenant, tokens, mailbox) stored **per tenancy in the database**
+- Once connected, **all users in the tenancy** can access invoices from that shared mailbox
 
 | Requirement | Detail |
 |-------------|--------|
 | Provider | Office 365 / Microsoft Graph |
-| Mailbox | Shared temporary mailbox; **must be configurable in the application** (not hardcoded) |
-| App registration | Azure Entra app — Jay has registered (see Action Items) |
-| Env vars | `MS_CLIENT_ID`, `MS_CLIENT_SECRET`, `MS_TENANT_ID` |
-| Trigger | On new email arrival, start an AI agent to process the message |
-| Agent behaviour | Find attachments, extract supplier invoice data |
-| User visibility | Raw email and all attachments must be viewable in the portal |
+| Configuration | **UI-driven per tenancy** — not env-based per customer |
+| Connect flow | Tenancy owner OAuth consent → select shared mailbox |
+| Access | All tenancy users share access to the connected mailbox's invoices |
+| Platform env | `MS_CLIENT_ID`, `MS_CLIENT_SECRET` only (Shipeedo multi-tenant Azure app) |
+| Trigger | On new email in selected mailbox → AI agent processes the message |
+| User visibility | Raw email and all attachments viewable in the portal |
+
+See [docs/o365.md](o365.md) for connect flow and UI requirements.
 
 ### 2. Approver Routing Rules
 
@@ -142,9 +148,12 @@ Received → Processing → Pending Approval → Approved → Ready for Payment
 
 ### Intake
 - [ ] Manual PDF upload (pilot entry point)
-- [ ] Configure O365 shared mailbox connection in app
-- [ ] Poll or webhook-trigger on new email (implementation TBD)
+- [ ] Tenancy owner: **Connect Office 365** UI (OAuth consent flow)
+- [ ] Tenancy owner: **shared mailbox picker** — select mailbox to monitor
+- [ ] Store O365 connection + mailbox config per tenancy (DB)
+- [ ] Poll or webhook-trigger on new email in connected mailbox
 - [ ] AI agent processes email + attachments on arrival
+- [ ] All tenancy users can access invoices from the connected shared mailbox
 - [ ] Manual PDF/image upload for ad-hoc use
 
 ### Extraction
@@ -167,9 +176,18 @@ Received → Processing → Pending Approval → Approved → Ready for Payment
 - [ ] Drag-and-drop or reorder UI for rule priority
 - [ ] Default (404) catch-all rule — assigns approver when no other rule matches
 
-### Auth
+### Auth & Tenancy
 - [ ] Shipeedo OAuth login
-- [ ] Role-based access (approver, admin) — detail TBD
+- [ ] Role-based access: tenancy owner (O365 connect, admin), approver, user
+- [ ] Tenancy-scoped data — users only see their organisation's invoices
+
+### Office 365 (tenancy settings)
+- [ ] Connect Office 365 button (tenancy owner only)
+- [ ] Display connection status
+- [ ] Shared mailbox picker (list mailboxes via Graph after connect)
+- [ ] Save / change selected mailbox
+- [ ] Disconnect Office 365
+- [ ] All tenancy users inherit access to connected mailbox invoices
 
 ### Credits (MVP)
 - [ ] Compose message + attachments
@@ -202,5 +220,5 @@ Received → Processing → Pending Approval → Approved → Ready for Payment
 |------|-------|--------|
 | Shipeedo OAuth client registered (`project-invoice`) | Jay | **Done** |
 | Add `CLIENT_SECRET` to local `.env` | Jay | **Pending** |
-| O365 app registration (`MS_CLIENT_ID`, `MS_CLIENT_SECRET`, `MS_TENANT_ID`) | Jay | **Done** |
-| Add Microsoft secrets to local `.env` | Jay | **Pending** |
+| O365 platform Azure app registered (`MS_CLIENT_ID`, `MS_CLIENT_SECRET`) | Jay | **Done** |
+| Add `MS_CLIENT_SECRET` (+ Shipeedo `CLIENT_SECRET`) to local `.env` | Jay | **Pending** |

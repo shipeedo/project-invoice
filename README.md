@@ -23,15 +23,14 @@ Invoice intake, OCR, and approval portal for transport company supplier invoices
 
    See [docs/auth.md](docs/auth.md) for OAuth client details.
 
-   **Office 365 / Microsoft Graph (mailbox intake — Phase 1b)**
+   **Platform Azure app (powers "Connect Office 365" — Phase 1b)**
 
    | Variable | Description |
    |----------|-------------|
-   | `MS_CLIENT_ID` | Azure app registration client ID |
+   | `MS_CLIENT_ID` | Shipeedo multi-tenant Azure app client ID |
    | `MS_CLIENT_SECRET` | Azure client secret |
-   | `MS_TENANT_ID` | Azure directory (tenant) ID |
 
-   See [docs/o365.md](docs/o365.md). The shared mailbox address is configured in the app UI, not in env.
+   Customer O365 tenants and shared mailboxes are **not** configured via env — the tenancy owner connects Office 365 and selects a mailbox in the UI. See [docs/o365.md](docs/o365.md).
 
 3. For production (`https://pi.shipeedo.com`), set the same variables in your host’s secret store. Use `REDIRECT_URI=https://pi.shipeedo.com/api/auth/callback/shipeedo` for Shipeedo OAuth.
 
