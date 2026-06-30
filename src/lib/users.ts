@@ -9,8 +9,15 @@ function slugify(value: string) {
     .replace(/^-|-$/g, "");
 }
 
+function resolveEmail(profile: Record<string, unknown>) {
+  const email = profile.email ?? profile.username;
+  return typeof email === "string" && email.trim() ? email.trim() : null;
+}
+
 function resolveOrgFromProfile(profile: Record<string, unknown>, email: string) {
   const orgClaim =
+    profile.tenantId ??
+    profile.tenantGuid ??
     profile.org_id ??
     profile.organization_id ??
     profile.tenant_id ??
@@ -43,12 +50,13 @@ function resolveRole(profile: Record<string, unknown>): UserRole {
 
 export async function upsertUserFromProfile(profile: {
   email?: string | null;
+  username?: string | null;
   name?: string | null;
   sub?: string;
   role?: UserRole;
   [key: string]: unknown;
 }) {
-  const email = profile.email;
+  const email = resolveEmail(profile);
   if (!email) {
     throw new Error("OAuth profile is missing email");
   }

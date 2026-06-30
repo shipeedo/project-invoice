@@ -55,8 +55,20 @@ const providers: NextAuthConfig["providers"] = useMockAuth
         clientSecret: process.env.CLIENT_SECRET,
         authorization: {
           params: {
-            scope: "openid email profile offline_access",
+            scope: "openid profile tenantGuid tenant:2 offline_access",
           },
+        },
+        profile(profile) {
+          return {
+            id: String(profile.userId ?? profile.sub),
+            email: profile.username,
+            name: profile.name ?? profile.username,
+            image: profile.profileImageUrl,
+            tenantId: profile.tenantId,
+            tenantGuid: profile.tenantGuid,
+            roles: profile.roles,
+            permissions: profile.permissions,
+          };
         },
       },
     ];
@@ -73,9 +85,15 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         token.organizationId = (user as { organizationId?: string }).organizationId;
       }
 
-      if (account?.provider === "shipeedo" && profile) {
+      if (account?.provider === "shipeedo" && (user || profile)) {
         const dbUser = await upsertUserFromProfile(
-          profile as { email?: string; name?: string; sub?: string; [key: string]: unknown },
+          (user ?? profile) as {
+            email?: string;
+            username?: string;
+            name?: string;
+            sub?: string;
+            [key: string]: unknown;
+          },
         );
         token.userId = dbUser.id;
         token.role = dbUser.role;
