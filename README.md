@@ -30,7 +30,13 @@ Invoice intake, OCR, and approval portal for transport company supplier invoices
    | `MS_CLIENT_ID` | Shipeedo multi-tenant Azure app client ID |
    | `MS_CLIENT_SECRET` | Azure client secret |
 
-   Customer O365 tenants and shared mailboxes are **not** configured via env — the tenancy owner connects Office 365 and selects a mailbox in the UI. See [docs/o365.md](docs/o365.md).
+   Customer O365 tenants and shared mailboxes are **not** configured via env — an admin connects Office 365 and selects a mailbox in the UI. See [docs/o365.md](docs/o365.md).
+
+   **AI Gateway (invoice extraction — Phase 1a)**
+
+   | Variable | Description |
+   |----------|-------------|
+   | `AI_GATEWAY_API_KEY` | API key for AI Gateway (header + line item extraction) |
 
 3. For production (`https://pi.shipeedo.com`), set the same variables in your host’s secret store. Use `REDIRECT_URI=https://pi.shipeedo.com/api/auth/callback/shipeedo` for Shipeedo OAuth.
 

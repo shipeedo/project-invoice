@@ -20,8 +20,8 @@ Invoice handling is fragmented: email forwarding between approvers, manual notes
 ## Resolved Requirements
 
 ### 1. Mailbox Integration (O365)
-- **Tenancy owner** connects Office 365 via UI ("Connect Office 365")
-- Owner **selects the shared mailbox** to monitor from a picker
+- **Admin role** connects Office 365 via UI ("Connect Office 365")
+- Admin **selects the shared mailbox** to monitor from a picker
 - Connection details (tenant, tokens, mailbox) stored **per tenancy in the database**
 - Once connected, **all users in the tenancy** can access invoices from that shared mailbox
 
@@ -29,7 +29,7 @@ Invoice handling is fragmented: email forwarding between approvers, manual notes
 |-------------|--------|
 | Provider | Office 365 / Microsoft Graph |
 | Configuration | **UI-driven per tenancy** — not env-based per customer |
-| Connect flow | Tenancy owner OAuth consent → select shared mailbox |
+| Connect flow | Admin OAuth consent → select shared mailbox |
 | Access | All tenancy users share access to the connected mailbox's invoices |
 | Platform env | `MS_CLIENT_ID`, `MS_CLIENT_SECRET` only (Shipeedo multi-tenant Azure app) |
 | Trigger | On new email in selected mailbox → AI agent processes the message |
@@ -96,7 +96,7 @@ No structured credit line items in v1. When credits are needed:
 
 **Pilot approach:** Start with **manually uploaded PDF invoices** from transport companies — no specific carrier list required. Sample PDFs are uploaded via the portal for testing.
 
-**Extraction:** Use **AI Gateway** to process uploaded invoices — extract header fields (vendor, date, total, etc.) and line items.
+**Extraction:** Use **AI Gateway** to process uploaded invoices — extract header fields (vendor, date, total, etc.) and line items. Platform API key via `AI_GATEWAY_API_KEY` env var.
 
 **Email path (MVP, post-pilot):** Emails may include CSV attachments alongside PDFs; the system must evaluate both and expose all source files in the portal.
 
@@ -148,8 +148,8 @@ Received → Processing → Pending Approval → Approved → Ready for Payment
 
 ### Intake
 - [ ] Manual PDF upload (pilot entry point)
-- [ ] Tenancy owner: **Connect Office 365** UI (OAuth consent flow)
-- [ ] Tenancy owner: **shared mailbox picker** — select mailbox to monitor
+- [ ] Admin role: **Connect Office 365** UI (OAuth consent flow)
+- [ ] Admin role: **shared mailbox picker** — select mailbox to monitor
 - [ ] Store O365 connection + mailbox config per tenancy (DB)
 - [ ] Poll or webhook-trigger on new email in connected mailbox
 - [ ] AI agent processes email + attachments on arrival
@@ -178,11 +178,11 @@ Received → Processing → Pending Approval → Approved → Ready for Payment
 
 ### Auth & Tenancy
 - [ ] Shipeedo OAuth login
-- [ ] Role-based access: tenancy owner (O365 connect, admin), approver, user
+- [ ] Role-based access: admin (O365 connect, settings), approver, user
 - [ ] Tenancy-scoped data — users only see their organisation's invoices
 
 ### Office 365 (tenancy settings)
-- [ ] Connect Office 365 button (tenancy owner only)
+- [ ] Connect Office 365 button (admin role only)
 - [ ] Display connection status
 - [ ] Shared mailbox picker (list mailboxes via Graph after connect)
 - [ ] Save / change selected mailbox
@@ -219,6 +219,5 @@ Received → Processing → Pending Approval → Approved → Ready for Payment
 | Item | Owner | Status |
 |------|-------|--------|
 | Shipeedo OAuth client registered (`project-invoice`) | Jay | **Done** |
-| Add `CLIENT_SECRET` to local `.env` | Jay | **Pending** |
 | O365 platform Azure app registered (`MS_CLIENT_ID`, `MS_CLIENT_SECRET`) | Jay | **Done** |
-| Add `MS_CLIENT_SECRET` (+ Shipeedo `CLIENT_SECRET`) to local `.env` | Jay | **Pending** |
+| Add secrets to local `.env` (`CLIENT_SECRET`, `MS_CLIENT_SECRET`, `AI_GATEWAY_API_KEY`) | Jay | **Pending** |
