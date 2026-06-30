@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { and, desc, eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
@@ -57,14 +56,18 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
     : [];
 
   return (
-    <AppShell user={session.user}>
+    <AppShell
+      user={session.user}
+      activePath={`/invoices/${invoice.id}`}
+      breadcrumbs={[
+        { label: "Invoices", href: "/queue" },
+        { label: invoice.vendorName ?? invoice.originalFileName ?? "Invoice" },
+      ]}
+    >
       <div className="space-y-6">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <Link href="/queue" className="text-sm text-muted-foreground hover:underline">
-              ← Back to queue
-            </Link>
-            <h2 className="mt-2 text-2xl font-semibold">
+            <h2 className="text-2xl font-semibold">
               {invoice.vendorName ?? invoice.originalFileName ?? "Invoice"}
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">

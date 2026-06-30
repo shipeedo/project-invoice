@@ -6,7 +6,11 @@ export default async function UploadPage() {
   const session = await requireSession();
 
   return (
-    <AppShell user={session.user} activePath="/upload">
+    <AppShell
+      user={session.user}
+      activePath="/upload"
+      breadcrumbs={[{ label: "Invoices", href: "/queue" }, { label: "Upload" }]}
+    >
       <div className="max-w-2xl">
         <UploadForm />
       </div>

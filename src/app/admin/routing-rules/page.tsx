@@ -23,7 +23,14 @@ export default async function RoutingRulesPage() {
   ]);
 
   return (
-    <AppShell user={session.user} activePath="/admin/routing-rules">
+    <AppShell
+      user={session.user}
+      activePath="/admin/routing-rules"
+      breadcrumbs={[
+        { label: "Admin" },
+        { label: "Routing rules" },
+      ]}
+    >
       <div className="space-y-4">
         <div>
           <h2 className="text-2xl font-semibold">Routing rules</h2>

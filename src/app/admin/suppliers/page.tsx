@@ -13,7 +13,11 @@ export default async function SuppliersPage() {
   });
 
   return (
-    <AppShell user={session.user} activePath="/admin/suppliers">
+    <AppShell
+      user={session.user}
+      activePath="/admin/suppliers"
+      breadcrumbs={[{ label: "Admin" }, { label: "Suppliers" }]}
+    >
       <div className="space-y-4">
         <div>
           <h2 className="text-2xl font-semibold">Suppliers</h2>

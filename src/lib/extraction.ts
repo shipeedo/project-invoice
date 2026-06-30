@@ -82,8 +82,8 @@ export async function extractInvoiceFromPdf(
   }
 
   const gatewayUrl =
-    process.env.AI_GATEWAY_URL ?? "https://api.openai.com/v1/chat/completions";
-  const model = process.env.AI_GATEWAY_MODEL ?? "gpt-4o-mini";
+    process.env.AI_GATEWAY_URL ?? "https://ai-gateway.vercel.sh/v1/chat/completions";
+  const model = process.env.AI_GATEWAY_MODEL ?? "openai/gpt-4o-mini";
 
   const prompt = `You are an invoice extraction assistant for a transport company accounts team.
 Extract structured data from the invoice text below.
@@ -99,25 +99,31 @@ ${text.slice(0, 12000)}
 """`;
 
   try {
+    const requestBody: Record<string, unknown> = {
+      model,
+      temperature: 0,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You extract invoice data accurately. Respond with JSON only, no markdown.",
+        },
+        { role: "user", content: prompt },
+      ],
+    };
+
+    // Vercel AI Gateway rejects response_format on some models; OpenAI direct accepts it.
+    if (!gatewayUrl.includes("ai-gateway.vercel.sh")) {
+      requestBody.response_format = { type: "json_object" };
+    }
+
     const response = await fetch(gatewayUrl, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        model,
-        temperature: 0,
-        response_format: { type: "json_object" },
-        messages: [
-          {
-            role: "system",
-            content:
-              "You extract invoice data accurately. Respond with JSON only, no markdown.",
-          },
-          { role: "user", content: prompt },
-        ],
-      }),
+      body: JSON.stringify(requestBody),
     });
 
     if (!response.ok) {
@@ -142,7 +148,7 @@ ${text.slice(0, 12000)}
       };
     }
 
-    const parsed = JSON.parse(content) as ExtractedInvoice;
+    const parsed = JSON.parse(parseJsonContent(content)) as ExtractedInvoice;
     return { data: parsed, raw: completion };
   } catch (error) {
     return {
@@ -157,4 +163,10 @@ export function parseInvoiceDate(value?: string | null) {
   if (!value) return null;
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function parseJsonContent(content: string) {
+  const trimmed = content.trim();
+  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  return fenced?.[1]?.trim() ?? trimmed;
 }

@@ -34,7 +34,11 @@ export default async function QueuePage() {
   );
 
   return (
-    <AppShell user={session.user} activePath="/queue">
+    <AppShell
+      user={session.user}
+      activePath="/queue"
+      breadcrumbs={[{ label: "Invoices", href: "/queue" }, { label: "Queue" }]}
+    >
       <div className="space-y-6">
         <div className="flex items-end justify-between gap-4">
           <div>
