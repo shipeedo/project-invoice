@@ -70,14 +70,9 @@ You receive text extracted from a PDF invoice. Treat this like a real invoice on
 export function buildInvoiceExtractionUserPrompt(
   fileName: string,
   invoiceText: string,
-  supplierSection?: string | null,
 ) {
-  const supplierBlock = supplierSection
-    ? `\n\n${supplierSection}\n`
-    : "";
-
   return `Review the following transport/supplier invoice and extract structured data for accounts payable.
-${supplierBlock}
+
 File name: ${fileName}
 
 Return JSON matching this schema exactly:

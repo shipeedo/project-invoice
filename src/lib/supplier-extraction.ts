@@ -1,9 +1,11 @@
 import { and, eq } from "drizzle-orm";
 import { db, suppliers, type Supplier } from "@/lib/db";
-import type {
-  ExtractionCandidates,
-  SupplierFieldMappings,
-  ValidatableField,
+import { INVOICE_EXTRACTION_SYSTEM_PROMPT } from "@/lib/extraction-prompts";
+import {
+  FIELD_LABELS,
+  type ExtractionCandidates,
+  type SupplierFieldMappings,
+  type ValidatableField,
 } from "@/lib/extraction-types";
 import { parseSupplierFieldMappings } from "@/lib/extraction-types";
 
@@ -12,6 +14,29 @@ export type SupplierExtractionContext = {
   extractionPrompt: string | null;
   fieldMappings: SupplierFieldMappings;
 };
+
+const MAPPINGS_SECTION_HEADER = "## Supplier-specific field mappings";
+const EXTRACTION_NOTES_HEADER = "Extraction notes for this supplier's invoices:";
+
+export function getDefaultExtractionPrompt() {
+  return INVOICE_EXTRACTION_SYSTEM_PROMPT;
+}
+
+export function buildNewSupplierValues(params: {
+  organizationId: string;
+  name: string;
+  emailAddresses?: string[];
+  emailDomains?: string[];
+}) {
+  return {
+    organizationId: params.organizationId,
+    name: params.name.trim(),
+    emailAddresses: JSON.stringify(params.emailAddresses ?? []),
+    emailDomains: JSON.stringify(params.emailDomains ?? []),
+    extractionPrompt: getDefaultExtractionPrompt(),
+    fieldMappings: "{}",
+  };
+}
 
 function normalizeForMatch(value: string) {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
@@ -81,18 +106,40 @@ export async function getSupplierExtractionContext(
   };
 }
 
-export function buildSupplierPromptSection(
-  context: SupplierExtractionContext,
+export function resolveExtractionSystemPrompt(
+  context?: SupplierExtractionContext | null,
+): string {
+  const prompt = context?.extractionPrompt?.trim();
+  if (prompt) return prompt;
+  return getDefaultExtractionPrompt();
+}
+
+export function supplierHasCustomExtraction(context: SupplierExtractionContext): boolean {
+  if (Object.keys(context.fieldMappings).length > 0) return true;
+
+  const prompt = context.extractionPrompt?.trim();
+  if (!prompt) return false;
+
+  return prompt !== getDefaultExtractionPrompt().trim();
+}
+
+function removeSection(prompt: string, sectionHeader: string): string {
+  const headerIndex = prompt.indexOf(sectionHeader);
+  if (headerIndex < 0) return prompt.trim();
+
+  const before = prompt.slice(0, headerIndex).trimEnd();
+  const afterStart = prompt.slice(headerIndex + sectionHeader.length);
+  const nextHeader = afterStart.search(/\n## /);
+  const after =
+    nextHeader >= 0 ? afterStart.slice(nextHeader + 1).trimStart() : "";
+
+  return [before, after].filter(Boolean).join("\n\n").trim();
+}
+
+export function buildMappingsPromptSection(
+  mappings: SupplierFieldMappings,
 ): string | null {
-  const sections: string[] = [];
-
-  if (context.extractionPrompt?.trim()) {
-    sections.push(
-      `## Supplier-specific instructions (${context.supplier?.name ?? "known supplier"})\n${context.extractionPrompt.trim()}`,
-    );
-  }
-
-  const mappingLines = Object.entries(context.fieldMappings)
+  const mappingLines = Object.entries(mappings)
     .map(([field, mapping]) => {
       if (!mapping?.preferredSource) return null;
       const hint = mapping.label
@@ -102,24 +149,25 @@ export function buildSupplierPromptSection(
     })
     .filter(Boolean);
 
-  if (mappingLines.length > 0) {
-    sections.push(
-      `## Learned field mappings for this supplier\nWhen populating fieldCandidates and primary fields, prefer these sources:\n${mappingLines.join("\n")}`,
-    );
-  }
+  if (mappingLines.length === 0) return null;
 
-  return sections.length > 0 ? sections.join("\n\n") : null;
+  return `${MAPPINGS_SECTION_HEADER}
+When populating fieldCandidates and primary fields, prefer these sources:
+${mappingLines.join("\n")}`;
 }
 
-const FIELD_LABELS: Record<ValidatableField, string> = {
-  vendorName: "supplier / vendor name",
-  vendorEmail: "supplier email",
-  invoiceNumber: "invoice number",
-  invoiceDate: "invoice date",
-  dueDate: "due date",
-  totalAmount: "invoice total",
-  currency: "currency",
-};
+export function syncMappingsIntoExtractionPrompt(
+  prompt: string | null | undefined,
+  mappings: SupplierFieldMappings,
+): string {
+  const base = prompt?.trim() || getDefaultExtractionPrompt();
+  const withoutMappings = removeSection(base, MAPPINGS_SECTION_HEADER);
+  const mappingsSection = buildMappingsPromptSection(mappings);
+
+  if (!mappingsSection) return withoutMappings;
+
+  return `${withoutMappings}\n\n${mappingsSection}`;
+}
 
 export function buildLearnedExtractionPrompt(
   existingPrompt: string | null | undefined,
@@ -131,20 +179,29 @@ export function buildLearnedExtractionPrompt(
   const fieldLabel = FIELD_LABELS[field];
   const line = `- For ${fieldLabel}, use the value from "${label}" (${source}), not other parties such as bill-to or ship-to. Example value: "${value}".`;
 
-  const header = `Extraction notes for this supplier's invoices:`;
-  const base = existingPrompt?.trim() ?? header;
+  const base = existingPrompt?.trim() || getDefaultExtractionPrompt();
 
   if (base.includes(line)) {
     return base;
   }
 
-  const withoutOldFieldLine = base
-    .split("\n")
-    .filter((entry) => !entry.includes(`For ${fieldLabel},`))
-    .join("\n")
-    .trim();
+  let notesSection = "";
+  const notesIndex = base.indexOf(EXTRACTION_NOTES_HEADER);
+  if (notesIndex >= 0) {
+    const beforeNotes = base.slice(0, notesIndex).trimEnd();
+    const afterNotes = base
+      .slice(notesIndex + EXTRACTION_NOTES_HEADER.length)
+      .trim();
+    const noteLines = afterNotes
+      .split("\n")
+      .map((entry) => entry.trim())
+      .filter((entry) => entry && !entry.includes(`For ${fieldLabel},`));
 
-  return [withoutOldFieldLine || header, line].filter(Boolean).join("\n");
+    notesSection = [EXTRACTION_NOTES_HEADER, ...noteLines, line].join("\n");
+    return `${beforeNotes}\n\n${notesSection}`.trim();
+  }
+
+  return `${base}\n\n${EXTRACTION_NOTES_HEADER}\n${line}`;
 }
 
 export async function learnSupplierMappings(params: {
@@ -164,7 +221,7 @@ export async function learnSupplierMappings(params: {
   if (!supplier) return null;
 
   const mappings = parseSupplierFieldMappings(supplier.fieldMappings);
-  let extractionPrompt = supplier.extractionPrompt;
+  let extractionPrompt = supplier.extractionPrompt ?? getDefaultExtractionPrompt();
 
   for (const [field, source] of Object.entries(params.selectedSources) as Array<
     [ValidatableField, string]
@@ -192,10 +249,52 @@ export async function learnSupplierMappings(params: {
     );
   }
 
+  extractionPrompt = syncMappingsIntoExtractionPrompt(extractionPrompt, mappings);
+
   const [updated] = await db
     .update(suppliers)
     .set({
       fieldMappings: JSON.stringify(mappings),
+      extractionPrompt,
+      updatedAt: new Date(),
+    })
+    .where(eq(suppliers.id, supplier.id))
+    .returning();
+
+  return updated;
+}
+
+export async function updateSupplierExtractionSettings(params: {
+  supplierId: string;
+  organizationId: string;
+  extractionPrompt?: string | null;
+  fieldMappings?: SupplierFieldMappings;
+}) {
+  const supplier = await db.query.suppliers.findFirst({
+    where: and(
+      eq(suppliers.id, params.supplierId),
+      eq(suppliers.organizationId, params.organizationId),
+    ),
+  });
+
+  if (!supplier) return null;
+
+  const fieldMappings =
+    params.fieldMappings ?? parseSupplierFieldMappings(supplier.fieldMappings);
+
+  let extractionPrompt =
+    params.extractionPrompt !== undefined
+      ? params.extractionPrompt?.trim() || getDefaultExtractionPrompt()
+      : supplier.extractionPrompt ?? getDefaultExtractionPrompt();
+
+  if (params.fieldMappings) {
+    extractionPrompt = syncMappingsIntoExtractionPrompt(extractionPrompt, fieldMappings);
+  }
+
+  const [updated] = await db
+    .update(suppliers)
+    .set({
+      fieldMappings: JSON.stringify(fieldMappings),
       extractionPrompt,
       updatedAt: new Date(),
     })

@@ -36,6 +36,16 @@ export const VALIDATABLE_FIELDS: ValidatableField[] = [
   "currency",
 ];
 
+export const FIELD_LABELS: Record<ValidatableField, string> = {
+  vendorName: "supplier / vendor name",
+  vendorEmail: "supplier email",
+  invoiceNumber: "invoice number",
+  invoiceDate: "invoice date",
+  dueDate: "due date",
+  totalAmount: "invoice total",
+  currency: "currency",
+};
+
 export function parseExtractionCandidates(
   raw: string | null | undefined,
 ): ExtractionCandidates | null {

@@ -2,6 +2,8 @@ import { asc, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db, suppliers } from "@/lib/db";
+import { buildNewSupplierValues } from "@/lib/supplier-extraction";
+import { parseSupplierFieldMappings } from "@/lib/extraction-types";
 
 export async function GET() {
   const session = await auth();
@@ -19,7 +21,7 @@ export async function GET() {
       ...supplier,
       emailAddresses: JSON.parse(supplier.emailAddresses) as string[],
       emailDomains: JSON.parse(supplier.emailDomains) as string[],
-      fieldMappings: JSON.parse(supplier.fieldMappings) as Record<string, unknown>,
+      fieldMappings: parseSupplierFieldMappings(supplier.fieldMappings),
     })),
   );
 }
@@ -46,12 +48,14 @@ export async function POST(request: Request) {
 
   const [supplier] = await db
     .insert(suppliers)
-    .values({
-      organizationId: session.user.organizationId,
-      name: body.name.trim(),
-      emailAddresses: JSON.stringify(body.emailAddresses ?? []),
-      emailDomains: JSON.stringify(body.emailDomains ?? []),
-    })
+    .values(
+      buildNewSupplierValues({
+        organizationId: session.user.organizationId,
+        name: body.name.trim(),
+        emailAddresses: body.emailAddresses,
+        emailDomains: body.emailDomains,
+      }),
+    )
     .returning();
 
   return NextResponse.json(
@@ -59,6 +63,7 @@ export async function POST(request: Request) {
       ...supplier,
       emailAddresses: body.emailAddresses ?? [],
       emailDomains: body.emailDomains ?? [],
+      fieldMappings: parseSupplierFieldMappings(supplier.fieldMappings),
     },
     { status: 201 },
   );
