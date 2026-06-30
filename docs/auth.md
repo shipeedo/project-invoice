@@ -34,14 +34,7 @@ Discovery URL: `https://auth.shipeedo.com/.well-known/openid-configuration`
 
 ## Environment variables
 
-See [`.env.example`](../.env.example). Required values:
-
-| Variable | Notes |
-|----------|-------|
-| `CLIENT_ID` | `project-invoice` (public) |
-| `CLIENT_SECRET` | From Shipeedo client registration — **never commit** |
-| `OIDC_ISSUER` | Base issuer URL for discovery |
-| `REDIRECT_URI` | Must exactly match a registered redirect URI for the environment |
+See [environment-setup.md](environment-setup.md) for platform env configuration.
 
 ## Implementation notes
 

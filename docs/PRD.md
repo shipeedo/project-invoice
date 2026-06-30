@@ -80,9 +80,9 @@ See [docs/auth.md](auth.md) for full client registration details.
 | `OIDC_ISSUER` | Yes | `https://auth.shipeedo.com` |
 | `REDIRECT_URI` | Yes | Must match a registered redirect URI for the environment |
 
-> **Action item (Jay):** Add `CLIENT_SECRET` to local `.env` (client and issuer are configured).
+> **Action item (Jay):** Complete [environment setup](environment-setup.md) with `CLIENT_SECRET`.
 
-Until `CLIENT_SECRET` is in local `.env`, development may use a stub/mock auth provider.
+Until environment setup is complete locally, development may use a stub/mock auth provider.
 
 ### 4. Credit Handling (MVP)
 
@@ -219,5 +219,5 @@ Received → Processing → Pending Approval → Approved → Ready for Payment
 | Item | Owner | Status |
 |------|-------|--------|
 | Shipeedo OAuth client registered (`project-invoice`) | Jay | **Done** |
-| O365 platform Azure app registered (`MS_CLIENT_ID`, `MS_CLIENT_SECRET`) | Jay | **Done** |
-| Add secrets to local `.env` (`CLIENT_SECRET`, `MS_CLIENT_SECRET`, `AI_GATEWAY_API_KEY`) | Jay | **Pending** |
+| O365 platform Azure app registered | Jay | **Done** |
+| Complete [environment setup](environment-setup.md) (local + production secrets) | Jay | **Pending** |

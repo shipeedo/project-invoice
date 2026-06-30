@@ -2,46 +2,19 @@
 
 Invoice intake, OCR, and approval portal for transport company supplier invoices.
 
-## Local setup
+## Environment setup
 
-1. Copy the example env file:
+Platform secrets (OAuth, Azure app, AI Gateway) are configured via environment variables — see **[docs/environment-setup.md](docs/environment-setup.md)**.
 
-   ```bash
-   cp .env.example .env
-   ```
+```bash
+cp .env.example .env   # local dev — then fill in secrets
+```
 
-2. Fill in **`.env`** (repo root):
-
-   **Shipeedo OAuth (user login)**
-
-   | Variable | Description |
-   |----------|-------------|
-   | `CLIENT_ID` | `project-invoice` (already set in `.env.example`) |
-   | `CLIENT_SECRET` | From your Shipeedo client registration |
-   | `OIDC_ISSUER` | `https://auth.shipeedo.com` |
-   | `REDIRECT_URI` | `http://localhost:3000/api/auth/callback/shipeedo` for local dev |
-
-   See [docs/auth.md](docs/auth.md) for OAuth client details.
-
-   **Platform Azure app (powers "Connect Office 365" — Phase 1b)**
-
-   | Variable | Description |
-   |----------|-------------|
-   | `MS_CLIENT_ID` | Shipeedo multi-tenant Azure app client ID |
-   | `MS_CLIENT_SECRET` | Azure client secret |
-
-   Customer O365 tenants and shared mailboxes are **not** configured via env — an admin connects Office 365 and selects a mailbox in the UI. See [docs/o365.md](docs/o365.md).
-
-   **AI Gateway (invoice extraction — Phase 1a)**
-
-   | Variable | Description |
-   |----------|-------------|
-   | `AI_GATEWAY_API_KEY` | API key for AI Gateway (header + line item extraction) |
-
-3. For production (`https://pi.shipeedo.com`), set the same variables in your host’s secret store. Use `REDIRECT_URI=https://pi.shipeedo.com/api/auth/callback/shipeedo` for Shipeedo OAuth.
+Per-tenancy config (O365 connection, mailbox, routing rules) is done in the application UI after deploy.
 
 ## Docs
 
+- [Environment setup](docs/environment-setup.md)
 - [Product Requirements (PRD)](docs/PRD.md)
 - [Authentication (Shipeedo OAuth)](docs/auth.md)
 - [Office 365 / Microsoft Graph](docs/o365.md)
