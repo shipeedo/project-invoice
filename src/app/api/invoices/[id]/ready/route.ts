@@ -1,6 +1,7 @@
+import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { db } from "@/lib/db";
+import { db, invoices } from "@/lib/db";
 import { recordAuditEvent } from "@/lib/audit";
 
 type RouteContext = {
@@ -14,8 +15,11 @@ export async function POST(_request: Request, context: RouteContext) {
   }
 
   const { id } = await context.params;
-  const invoice = await db.invoice.findFirst({
-    where: { id, organizationId: session.user.organizationId },
+  const invoice = await db.query.invoices.findFirst({
+    where: and(
+      eq(invoices.id, id),
+      eq(invoices.organizationId, session.user.organizationId),
+    ),
   });
 
   if (!invoice) {
@@ -23,13 +27,17 @@ export async function POST(_request: Request, context: RouteContext) {
   }
 
   if (invoice.status !== "APPROVED") {
-    return NextResponse.json({ error: "Only approved invoices can be marked ready for payment" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Only approved invoices can be marked ready for payment" },
+      { status: 400 },
+    );
   }
 
-  const updated = await db.invoice.update({
-    where: { id },
-    data: { status: "READY_FOR_PAYMENT" },
-  });
+  const [updated] = await db
+    .update(invoices)
+    .set({ status: "READY_FOR_PAYMENT", updatedAt: new Date() })
+    .where(eq(invoices.id, id))
+    .returning();
 
   await recordAuditEvent({
     invoiceId: id,

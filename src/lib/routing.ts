@@ -1,5 +1,5 @@
-import { db } from "@/lib/db";
-import type { Invoice, RoutingRule, User } from "@prisma/client";
+import { and, count, desc, eq } from "drizzle-orm";
+import { db, routingRules, users, type Invoice, type RoutingRule, type User } from "@/lib/db";
 
 type RuleCondition =
   | { senderEmail?: string; senderDomain?: string }
@@ -50,10 +50,13 @@ export async function assignApproverForInvoice(
   organizationId: string,
   invoice: Invoice,
 ): Promise<User | null> {
-  const rules = await db.routingRule.findMany({
-    where: { organizationId, enabled: true },
-    orderBy: { priority: "desc" },
-    include: { approver: true },
+  const rules = await db.query.routingRules.findMany({
+    where: and(
+      eq(routingRules.organizationId, organizationId),
+      eq(routingRules.enabled, true),
+    ),
+    orderBy: desc(routingRules.priority),
+    with: { approver: true },
   });
 
   for (const rule of rules) {
@@ -84,43 +87,50 @@ export async function assignApproverForInvoice(
 }
 
 export async function ensureDefaultRoutingRules(organizationId: string) {
-  const existing = await db.routingRule.count({ where: { organizationId } });
+  const [{ value: existing }] = await db
+    .select({ value: count() })
+    .from(routingRules)
+    .where(eq(routingRules.organizationId, organizationId));
+
   if (existing > 0) return;
 
-  const admin = await db.user.findFirst({
-    where: { organizationId, role: "ADMIN" },
+  const admin = await db.query.users.findFirst({
+    where: and(eq(users.organizationId, organizationId), eq(users.role, "ADMIN")),
   });
 
-  const approver = admin ?? (await db.user.findFirst({ where: { organizationId } }));
+  const approver =
+    admin ??
+    (await db.query.users.findFirst({
+      where: eq(users.organizationId, organizationId),
+    }));
+
   if (!approver) return;
 
-  await db.routingRule.createMany({
-    data: [
-      {
-        organizationId,
-        name: "High value invoices",
-        priority: 100,
-        type: "AMOUNT_THRESHOLD",
-        condition: JSON.stringify({ minAmount: 100000 }),
-        approverId: approver.id,
-      },
-      {
-        organizationId,
-        name: "Parse failures",
-        priority: 50,
-        type: "PARSE_FAILURE",
-        condition: JSON.stringify({ parseFailure: true }),
-        approverId: approver.id,
-      },
-      {
-        organizationId,
-        name: "Default approver",
-        priority: 0,
-        type: "DEFAULT",
-        condition: "{}",
-        approverId: approver.id,
-        isDefault: true,
-      },
-    ],
-  });
+  await db.insert(routingRules).values([
+    {
+      organizationId,
+      name: "High value invoices",
+      priority: 100,
+      type: "AMOUNT_THRESHOLD",
+      condition: JSON.stringify({ minAmount: 100000 }),
+      approverId: approver.id,
+    },
+    {
+      organizationId,
+      name: "Parse failures",
+      priority: 50,
+      type: "PARSE_FAILURE",
+      condition: JSON.stringify({ parseFailure: true }),
+      approverId: approver.id,
+    },
+    {
+      organizationId,
+      name: "Default approver",
+      priority: 0,
+      type: "DEFAULT",
+      condition: "{}",
+      approverId: approver.id,
+      isDefault: true,
+    },
+  ]);
 }

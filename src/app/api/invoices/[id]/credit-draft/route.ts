@@ -1,6 +1,7 @@
+import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { db } from "@/lib/db";
+import { creditDrafts, db, invoices } from "@/lib/db";
 import { recordAuditEvent } from "@/lib/audit";
 import { saveUploadedFile } from "@/lib/uploads";
 
@@ -15,8 +16,11 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   const { id } = await context.params;
-  const invoice = await db.invoice.findFirst({
-    where: { id, organizationId: session.user.organizationId },
+  const invoice = await db.query.invoices.findFirst({
+    where: and(
+      eq(invoices.id, id),
+      eq(invoices.organizationId, session.user.organizationId),
+    ),
   });
 
   if (!invoice) {
@@ -45,15 +49,16 @@ export async function POST(request: Request, context: RouteContext) {
     }
   }
 
-  const draft = await db.creditDraft.create({
-    data: {
+  const [draft] = await db
+    .insert(creditDrafts)
+    .values({
       invoiceId: id,
       createdById: session.user.id,
       subject,
       message,
       attachments: JSON.stringify(attachmentMeta),
-    },
-  });
+    })
+    .returning();
 
   await recordAuditEvent({
     invoiceId: id,

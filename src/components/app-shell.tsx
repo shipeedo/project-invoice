@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { signOut } from "@/lib/auth";
-import type { UserRole } from "@prisma/client";
+import type { UserRole } from "@/lib/db/types";
+import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
+import { cn } from "@/lib/utils";
 
 type AppShellProps = {
   children: React.ReactNode;
@@ -9,6 +12,7 @@ type AppShellProps = {
     email?: string | null;
     role: UserRole;
   };
+  activePath?: string;
 };
 
 const navItems = [
@@ -21,13 +25,15 @@ const adminItems = [
   { href: "/admin/suppliers", label: "Suppliers" },
 ];
 
-export function AppShell({ children, user }: AppShellProps) {
+export function AppShell({ children, user, activePath }: AppShellProps) {
+  const items = user.role === "ADMIN" ? [...navItems, ...adminItems] : navItems;
+
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
-      <header className="border-b border-slate-200 bg-white">
+    <div className="min-h-screen bg-background">
+      <header className="border-b bg-card">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-4">
           <div>
-            <p className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Project Invoice
             </p>
             <h1 className="text-lg font-semibold">Invoice approval portal</h1>
@@ -35,7 +41,7 @@ export function AppShell({ children, user }: AppShellProps) {
           <div className="flex items-center gap-4 text-sm">
             <div className="text-right">
               <p className="font-medium">{user.name ?? user.email}</p>
-              <p className="text-slate-500">{user.role.toLowerCase()}</p>
+              <p className="text-muted-foreground">{user.role.toLowerCase()}</p>
             </div>
             <form
               action={async () => {
@@ -43,37 +49,28 @@ export function AppShell({ children, user }: AppShellProps) {
                 await signOut({ redirectTo: "/login" });
               }}
             >
-              <button
-                type="submit"
-                className="rounded-md border border-slate-300 px-3 py-1.5 hover:bg-slate-100"
-              >
+              <Button type="submit" variant="outline" size="sm">
                 Sign out
-              </button>
+              </Button>
             </form>
           </div>
         </div>
-        <nav className="border-t border-slate-100 bg-white">
-          <div className="mx-auto flex max-w-6xl gap-1 px-4">
-            {navItems.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                className="border-b-2 border-transparent px-3 py-3 text-sm font-medium text-slate-600 hover:border-slate-300 hover:text-slate-900"
-              >
-                {item.label}
-              </Link>
-            ))}
-            {user.role === "ADMIN" &&
-              adminItems.map((item) => (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className="border-b-2 border-transparent px-3 py-3 text-sm font-medium text-slate-600 hover:border-slate-300 hover:text-slate-900"
-                >
-                  {item.label}
-                </Link>
-              ))}
-          </div>
+        <Separator />
+        <nav className="mx-auto flex max-w-6xl gap-1 px-4">
+          {items.map((item) => (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={cn(
+                "border-b-2 px-3 py-3 text-sm font-medium transition-colors",
+                activePath === item.href
+                  ? "border-primary text-foreground"
+                  : "border-transparent text-muted-foreground hover:border-border hover:text-foreground",
+              )}
+            >
+              {item.label}
+            </Link>
+          ))}
         </nav>
       </header>
       <main className="mx-auto max-w-6xl px-4 py-8">{children}</main>

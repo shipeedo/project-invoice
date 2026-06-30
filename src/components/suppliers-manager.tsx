@@ -1,6 +1,19 @@
 "use client";
 
 import { useState } from "react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 
 type Supplier = {
   id: string;
@@ -56,45 +69,77 @@ export function SuppliersManager({ initialSuppliers }: SuppliersManagerProps) {
 
   return (
     <div className="space-y-6">
-      {error ? <p className="text-sm text-rose-600">{error}</p> : null}
+      {error ? (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
 
-      <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 px-4 py-3">
-          <h3 className="font-medium">Suppliers ({suppliers.length})</h3>
-        </div>
-        <ul className="divide-y divide-slate-100">
-          {suppliers.length === 0 ? (
-            <li className="px-4 py-6 text-sm text-slate-500">No suppliers yet.</li>
-          ) : (
-            suppliers.map((supplier) => (
-              <li key={supplier.id} className="px-4 py-4 text-sm">
-                <p className="font-medium">{supplier.name}</p>
-                <p className="text-slate-500">
-                  Emails: {supplier.emailAddresses.join(", ") || "—"}
-                </p>
-                <p className="text-slate-500">
-                  Domains: {supplier.emailDomains.join(", ") || "—"}
-                </p>
-              </li>
-            ))
-          )}
-        </ul>
-      </section>
+      <Card>
+        <CardHeader>
+          <CardTitle>Suppliers ({suppliers.length})</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Emails</TableHead>
+                <TableHead>Domains</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {suppliers.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={3} className="text-muted-foreground">
+                    No suppliers yet.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                suppliers.map((supplier) => (
+                  <TableRow key={supplier.id}>
+                    <TableCell className="font-medium">{supplier.name}</TableCell>
+                    <TableCell>{supplier.emailAddresses.join(", ") || "—"}</TableCell>
+                    <TableCell>{supplier.emailDomains.join(", ") || "—"}</TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
 
-      <form
-        action={async (formData) => {
-          await createSupplier(formData);
-        }}
-        className="space-y-3 rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
-      >
-        <h3 className="font-medium">Add supplier</h3>
-        <input name="name" required placeholder="Supplier name" className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm" />
-        <input name="emailAddresses" placeholder="Email addresses (comma-separated)" className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm" />
-        <input name="emailDomains" placeholder="Email domains (comma-separated)" className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm" />
-        <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white">
-          Create supplier
-        </button>
-      </form>
+      <Card>
+        <CardHeader>
+          <CardTitle>Add supplier</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form
+            action={async (formData) => {
+              await createSupplier(formData);
+            }}
+            className="space-y-4"
+          >
+            <div className="space-y-2">
+              <Label htmlFor="name">Supplier name</Label>
+              <Input id="name" name="name" required placeholder="Supplier name" />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="emailAddresses">Email addresses</Label>
+              <Input
+                id="emailAddresses"
+                name="emailAddresses"
+                placeholder="Comma-separated"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="emailDomains">Email domains</Label>
+              <Input id="emailDomains" name="emailDomains" placeholder="Comma-separated" />
+            </div>
+            <Button type="submit">Create supplier</Button>
+          </form>
+        </CardContent>
+      </Card>
     </div>
   );
 }

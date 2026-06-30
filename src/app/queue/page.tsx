@@ -1,111 +1,125 @@
 import Link from "next/link";
+import { desc, eq } from "drizzle-orm";
 import { AppShell } from "@/components/app-shell";
 import { StatusBadge } from "@/components/status-badge";
-import { db } from "@/lib/db";
+import { buttonVariants } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { db, invoices } from "@/lib/db";
 import { requireSession, formatCurrency, formatDate } from "@/lib/session";
+import { cn } from "@/lib/utils";
 
 export default async function QueuePage() {
   const session = await requireSession();
 
-  const invoices = await db.invoice.findMany({
-    where: { organizationId: session.user.organizationId },
-    include: {
-      assignedTo: { select: { name: true, email: true } },
+  const rows = await db.query.invoices.findMany({
+    where: eq(invoices.organizationId, session.user.organizationId),
+    with: {
+      assignedTo: { columns: { name: true, email: true } },
     },
-    orderBy: { createdAt: "desc" },
+    orderBy: desc(invoices.createdAt),
   });
 
-  const myQueue = invoices.filter(
+  const myQueue = rows.filter(
     (invoice) =>
       invoice.assignedToId === session.user.id ||
       ["PENDING_APPROVAL", "NEEDS_REVIEW"].includes(invoice.status),
   );
 
   return (
-    <AppShell user={session.user}>
+    <AppShell user={session.user} activePath="/queue">
       <div className="space-y-6">
         <div className="flex items-end justify-between gap-4">
           <div>
             <h2 className="text-2xl font-semibold">Approval queue</h2>
-            <p className="mt-1 text-sm text-slate-600">
+            <p className="mt-1 text-sm text-muted-foreground">
               Tenancy-scoped invoices from uploads and future mailbox intake.
             </p>
           </div>
-          <Link
-            href="/upload"
-            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
-          >
+          <Link href="/upload" className={cn(buttonVariants())}>
             Upload invoice
           </Link>
         </div>
 
-        <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-          <div className="border-b border-slate-100 px-4 py-3">
-            <h3 className="font-medium">All invoices ({invoices.length})</h3>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-left text-sm">
-              <thead className="bg-slate-50 text-slate-600">
-                <tr>
-                  <th className="px-4 py-3 font-medium">Vendor</th>
-                  <th className="px-4 py-3 font-medium">Status</th>
-                  <th className="px-4 py-3 font-medium">Total</th>
-                  <th className="px-4 py-3 font-medium">Assigned to</th>
-                  <th className="px-4 py-3 font-medium">Received</th>
-                </tr>
-              </thead>
-              <tbody>
-                {invoices.length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="px-4 py-8 text-center text-slate-500">
+        <Card>
+          <CardHeader>
+            <CardTitle>All invoices ({rows.length})</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Vendor</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Total</TableHead>
+                  <TableHead>Assigned to</TableHead>
+                  <TableHead>Received</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {rows.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-center text-muted-foreground">
                       No invoices yet. Upload a PDF to start the pilot flow.
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ) : (
-                  invoices.map((invoice) => (
-                    <tr key={invoice.id} className="border-t border-slate-100 hover:bg-slate-50">
-                      <td className="px-4 py-3">
+                  rows.map((invoice) => (
+                    <TableRow key={invoice.id}>
+                      <TableCell>
                         <Link href={`/invoices/${invoice.id}`} className="font-medium hover:underline">
                           {invoice.vendorName ?? invoice.originalFileName ?? "Unknown vendor"}
                         </Link>
                         {invoice.parseError ? (
-                          <p className="text-xs text-orange-700">Parse issue: {invoice.parseError}</p>
+                          <p className="text-xs text-destructive">Parse issue: {invoice.parseError}</p>
                         ) : null}
-                      </td>
-                      <td className="px-4 py-3">
+                      </TableCell>
+                      <TableCell>
                         <StatusBadge status={invoice.status} />
-                      </td>
-                      <td className="px-4 py-3">
+                      </TableCell>
+                      <TableCell>
                         {formatCurrency(invoice.totalAmount, invoice.currency ?? "AUD")}
-                      </td>
-                      <td className="px-4 py-3">
+                      </TableCell>
+                      <TableCell>
                         {invoice.assignedTo?.name ?? invoice.assignedTo?.email ?? "Unassigned"}
-                      </td>
-                      <td className="px-4 py-3">{formatDate(invoice.createdAt)}</td>
-                    </tr>
+                      </TableCell>
+                      <TableCell>{formatDate(invoice.createdAt)}</TableCell>
+                    </TableRow>
                   ))
                 )}
-              </tbody>
-            </table>
-          </div>
-        </section>
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
 
-        <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h3 className="font-medium">My queue ({myQueue.length})</h3>
-          <ul className="mt-3 space-y-2 text-sm">
-            {myQueue.length === 0 ? (
-              <li className="text-slate-500">Nothing assigned to you right now.</li>
-            ) : (
-              myQueue.map((invoice) => (
-                <li key={invoice.id}>
-                  <Link href={`/invoices/${invoice.id}`} className="hover:underline">
-                    {invoice.vendorName ?? invoice.originalFileName} — {invoice.status.toLowerCase().replaceAll("_", " ")}
-                  </Link>
-                </li>
-              ))
-            )}
-          </ul>
-        </section>
+        <Card>
+          <CardHeader>
+            <CardTitle>My queue ({myQueue.length})</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ul className="space-y-2 text-sm">
+              {myQueue.length === 0 ? (
+                <li className="text-muted-foreground">Nothing assigned to you right now.</li>
+              ) : (
+                myQueue.map((invoice) => (
+                  <li key={invoice.id}>
+                    <Link href={`/invoices/${invoice.id}`} className="hover:underline">
+                      {invoice.vendorName ?? invoice.originalFileName} —{" "}
+                      {invoice.status.toLowerCase().replaceAll("_", " ")}
+                    </Link>
+                  </li>
+                ))
+              )}
+            </ul>
+          </CardContent>
+        </Card>
       </div>
     </AppShell>
   );

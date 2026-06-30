@@ -1,7 +1,8 @@
+import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { readFile } from "fs/promises";
 import { auth } from "@/lib/auth";
-import { db } from "@/lib/db";
+import { db, invoices } from "@/lib/db";
 import { getUploadAbsolutePath } from "@/lib/uploads";
 
 type RouteContext = {
@@ -15,8 +16,11 @@ export async function GET(_request: Request, context: RouteContext) {
   }
 
   const { id } = await context.params;
-  const invoice = await db.invoice.findFirst({
-    where: { id, organizationId: session.user.organizationId },
+  const invoice = await db.query.invoices.findFirst({
+    where: and(
+      eq(invoices.id, id),
+      eq(invoices.organizationId, session.user.organizationId),
+    ),
   });
 
   if (!invoice?.filePath) {

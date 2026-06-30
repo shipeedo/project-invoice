@@ -2,6 +2,10 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Textarea } from "@/components/ui/textarea";
 
 type InvoiceActionsProps = {
   invoiceId: string;
@@ -44,47 +48,53 @@ export function InvoiceActions({ invoiceId, status }: InvoiceActionsProps) {
   }
 
   return (
-    <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-      <h3 className="text-base font-semibold">Approval actions</h3>
-      <textarea
-        value={note}
-        onChange={(event) => setNote(event.target.value)}
-        placeholder="Optional note for the audit trail"
-        className="min-h-24 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-      />
-      {error ? <p className="text-sm text-rose-600">{error}</p> : null}
-      <div className="flex flex-wrap gap-2">
-        {canApprove ? (
-          <button
-            type="button"
-            onClick={() => runAction("approve")}
-            disabled={loading !== null}
-            className="rounded-md bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-600 disabled:opacity-60"
-          >
-            {loading === "approve" ? "Approving..." : "Approve"}
-          </button>
+    <Card>
+      <CardHeader>
+        <CardTitle>Approval actions</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <Textarea
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+          placeholder="Optional note for the audit trail"
+        />
+        {error ? (
+          <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
         ) : null}
-        {canReject ? (
-          <button
-            type="button"
-            onClick={() => runAction("reject")}
-            disabled={loading !== null}
-            className="rounded-md bg-rose-700 px-4 py-2 text-sm font-medium text-white hover:bg-rose-600 disabled:opacity-60"
-          >
-            {loading === "reject" ? "Rejecting..." : "Reject"}
-          </button>
-        ) : null}
-        {canMarkReady ? (
-          <button
-            type="button"
-            onClick={() => runAction("ready")}
-            disabled={loading !== null}
-            className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
-          >
-            {loading === "ready" ? "Updating..." : "Mark ready for payment"}
-          </button>
-        ) : null}
-      </div>
-    </div>
+        <div className="flex flex-wrap gap-2">
+          {canApprove ? (
+            <Button
+              type="button"
+              onClick={() => runAction("approve")}
+              disabled={loading !== null}
+            >
+              {loading === "approve" ? "Approving..." : "Approve"}
+            </Button>
+          ) : null}
+          {canReject ? (
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => runAction("reject")}
+              disabled={loading !== null}
+            >
+              {loading === "reject" ? "Rejecting..." : "Reject"}
+            </Button>
+          ) : null}
+          {canMarkReady ? (
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => runAction("ready")}
+              disabled={loading !== null}
+            >
+              {loading === "ready" ? "Updating..." : "Mark ready for payment"}
+            </Button>
+          ) : null}
+        </div>
+      </CardContent>
+    </Card>
   );
 }

@@ -1,6 +1,26 @@
 "use client";
 
 import { useState } from "react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 
 type UserOption = { id: string; name: string | null; email: string };
 type RoutingRule = {
@@ -22,6 +42,8 @@ type RoutingRulesManagerProps = {
 export function RoutingRulesManager({ initialRules, users }: RoutingRulesManagerProps) {
   const [rules, setRules] = useState(initialRules);
   const [error, setError] = useState<string | null>(null);
+  const [ruleType, setRuleType] = useState("SENDER_EMAIL");
+  const [approverId, setApproverId] = useState("");
 
   async function refreshRules() {
     const response = await fetch("/api/admin/routing-rules");
@@ -95,78 +117,127 @@ export function RoutingRulesManager({ initialRules, users }: RoutingRulesManager
 
   return (
     <div className="space-y-6">
-      {error ? <p className="text-sm text-rose-600">{error}</p> : null}
+      {error ? (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
 
-      <section className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-100 px-4 py-3">
-          <h3 className="font-medium">Active rules (higher priority first)</h3>
-        </div>
-        <ul className="divide-y divide-slate-100">
-          {rules.map((rule, index) => (
-            <li key={rule.id} className="flex items-center justify-between gap-4 px-4 py-4 text-sm">
-              <div>
-                <p className="font-medium">
-                  {rule.name} {rule.isDefault ? <span className="text-slate-500">(404 default)</span> : null}
-                </p>
-                <p className="text-slate-500">
-                  Priority {rule.priority} · {rule.type} · Approver:{" "}
-                  {rule.approver?.name ?? rule.approver?.email ?? "None"}
-                </p>
-                <p className="text-xs text-slate-400">{rule.condition}</p>
-              </div>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => moveRule(rule.id, "up")}
-                  disabled={index === 0}
-                  className="rounded border border-slate-300 px-2 py-1 disabled:opacity-40"
-                >
-                  ↑
-                </button>
-                <button
-                  type="button"
-                  onClick={() => moveRule(rule.id, "down")}
-                  disabled={index === rules.length - 1}
-                  className="rounded border border-slate-300 px-2 py-1 disabled:opacity-40"
-                >
-                  ↓
-                </button>
-              </div>
-            </li>
-          ))}
-        </ul>
-      </section>
+      <Card>
+        <CardHeader>
+          <CardTitle>Active rules (higher priority first)</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Rule</TableHead>
+                <TableHead className="w-28">Reorder</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rules.map((rule, index) => (
+                <TableRow key={rule.id}>
+                  <TableCell>
+                    <p className="font-medium">
+                      {rule.name}{" "}
+                      {rule.isDefault ? (
+                        <span className="text-muted-foreground">(404 default)</span>
+                      ) : null}
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      Priority {rule.priority} · {rule.type} · Approver:{" "}
+                      {rule.approver?.name ?? rule.approver?.email ?? "None"}
+                    </p>
+                    <p className="text-xs text-muted-foreground">{rule.condition}</p>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => moveRule(rule.id, "up")}
+                        disabled={index === 0}
+                      >
+                        ↑
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => moveRule(rule.id, "down")}
+                        disabled={index === rules.length - 1}
+                      >
+                        ↓
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
 
-      <form
-        action={async (formData) => {
-          await createRule(formData);
-        }}
-        className="space-y-3 rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
-      >
-        <h3 className="font-medium">Add routing rule</h3>
-        <input name="name" required placeholder="Rule name" className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm" />
-        <select name="type" className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
-          <option value="SENDER_EMAIL">Sender email / domain</option>
-          <option value="AMOUNT_THRESHOLD">Amount threshold</option>
-          <option value="PARSE_FAILURE">Parse failure</option>
-          <option value="DEFAULT">Default (404)</option>
-        </select>
-        <input name="senderEmail" placeholder="Sender email (optional)" className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm" />
-        <input name="senderDomain" placeholder="Sender domain (optional)" className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm" />
-        <input name="minAmount" type="number" placeholder="Minimum amount" className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm" />
-        <input name="priority" type="number" defaultValue={20} className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm" />
-        <select name="approverId" required className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
-          <option value="">Select approver</option>
-          {users.map((user) => (
-            <option key={user.id} value={user.id}>
-              {user.name ?? user.email} ({user.email})
-            </option>
-          ))}
-        </select>
-        <button type="submit" className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white">
-          Create rule
-        </button>
-      </form>
+      <Card>
+        <CardHeader>
+          <CardTitle>Add routing rule</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form
+            action={async (formData) => {
+              await createRule(formData);
+            }}
+            className="space-y-4"
+          >
+            <div className="space-y-2">
+              <Label htmlFor="name">Rule name</Label>
+              <Input id="name" name="name" required placeholder="Rule name" />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="type">Rule type</Label>
+              <Select value={ruleType} onValueChange={(value) => value && setRuleType(value)}>
+                <SelectTrigger id="type">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="SENDER_EMAIL">Sender email / domain</SelectItem>
+                  <SelectItem value="AMOUNT_THRESHOLD">Amount threshold</SelectItem>
+                  <SelectItem value="PARSE_FAILURE">Parse failure</SelectItem>
+                  <SelectItem value="DEFAULT">Default (404)</SelectItem>
+                </SelectContent>
+              </Select>
+              <input type="hidden" name="type" value={ruleType} />
+            </div>
+
+            <Input name="senderEmail" placeholder="Sender email (optional)" />
+            <Input name="senderDomain" placeholder="Sender domain (optional)" />
+            <Input name="minAmount" type="number" placeholder="Minimum amount" />
+            <Input name="priority" type="number" defaultValue={20} />
+
+            <div className="space-y-2">
+              <Label htmlFor="approverId">Approver</Label>
+              <Select value={approverId} onValueChange={(value) => value && setApproverId(value)}>
+                <SelectTrigger id="approverId">
+                  <SelectValue placeholder="Select approver" />
+                </SelectTrigger>
+                <SelectContent>
+                  {users.map((user) => (
+                    <SelectItem key={user.id} value={user.id}>
+                      {user.name ?? user.email} ({user.email})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <input type="hidden" name="approverId" value={approverId} required />
+            </div>
+
+            <Button type="submit">Create rule</Button>
+          </form>
+        </CardContent>
+      </Card>
     </div>
   );
 }

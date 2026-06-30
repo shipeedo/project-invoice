@@ -1,6 +1,7 @@
+import { desc, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { db } from "@/lib/db";
+import { db, routingRules } from "@/lib/db";
 
 export async function GET() {
   const session = await auth();
@@ -12,12 +13,12 @@ export async function GET() {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const rules = await db.routingRule.findMany({
-    where: { organizationId: session.user.organizationId },
-    include: {
-      approver: { select: { id: true, name: true, email: true } },
+  const rules = await db.query.routingRules.findMany({
+    where: eq(routingRules.organizationId, session.user.organizationId),
+    with: {
+      approver: { columns: { id: true, name: true, email: true } },
     },
-    orderBy: { priority: "desc" },
+    orderBy: desc(routingRules.priority),
   });
 
   return NextResponse.json(rules);
@@ -47,14 +48,15 @@ export async function POST(request: Request) {
   }
 
   if (body.isDefault) {
-    await db.routingRule.updateMany({
-      where: { organizationId: session.user.organizationId, isDefault: true },
-      data: { isDefault: false },
-    });
+    await db
+      .update(routingRules)
+      .set({ isDefault: false, updatedAt: new Date() })
+      .where(eq(routingRules.organizationId, session.user.organizationId));
   }
 
-  const rule = await db.routingRule.create({
-    data: {
+  const [rule] = await db
+    .insert(routingRules)
+    .values({
       organizationId: session.user.organizationId,
       name: body.name,
       priority: body.priority,
@@ -62,11 +64,15 @@ export async function POST(request: Request) {
       condition: JSON.stringify(body.condition ?? {}),
       approverId: body.approverId,
       isDefault: Boolean(body.isDefault),
-    },
-    include: {
-      approver: { select: { id: true, name: true, email: true } },
+    })
+    .returning();
+
+  const withApprover = await db.query.routingRules.findFirst({
+    where: eq(routingRules.id, rule.id),
+    with: {
+      approver: { columns: { id: true, name: true, email: true } },
     },
   });
 
-  return NextResponse.json(rule, { status: 201 });
+  return NextResponse.json(withApprover, { status: 201 });
 }

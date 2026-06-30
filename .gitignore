@@ -14,8 +14,9 @@ build/
 .next/
 out/
 uploads/
-prisma/*.db
-prisma/*.db-journal
+drizzle/meta/
+*.db
+*.db-journal
 __pycache__/
 *.pyc
 .venv/

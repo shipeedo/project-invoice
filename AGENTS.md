@@ -2,7 +2,7 @@
 
 ## Cursor Cloud specific instructions
 
-The app is a **Next.js 16** project in the repo root (`package.json`, `src/`, `prisma/`).
+The app is a **Next.js 16** project in the repo root (`package.json`, `src/`, `drizzle/`).
 
 ### Dev server
 
@@ -12,10 +12,20 @@ npm run dev   # http://localhost:3000
 
 ### Database
 
-SQLite for local dev (`DATABASE_URL="file:./dev.db"` in `.env`). After schema changes:
+**Drizzle ORM** with SQLite for local dev (`DATABASE_URL="file:./dev.db"` in `.env`). After schema changes:
 
 ```bash
 npm run db:push
+```
+
+Schema lives in `src/lib/db/schema.ts`. Do not use Prisma.
+
+### UI
+
+Always use **shadcn/ui** components from `src/components/ui/`. Add new primitives with:
+
+```bash
+npx shadcn@latest add <component>
 ```
 
 ### Auth

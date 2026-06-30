@@ -2,6 +2,10 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 
 export function UploadForm() {
   const router = useRouter();
@@ -41,30 +45,33 @@ export function UploadForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-      <div>
-        <h2 className="text-lg font-semibold">Upload transport invoice (PDF)</h2>
-        <p className="mt-1 text-sm text-slate-600">
-          The pilot flow extracts header fields and line items via AI Gateway, then routes the invoice to an approver.
-        </p>
-      </div>
+    <Card>
+      <CardHeader>
+        <CardTitle>Upload transport invoice (PDF)</CardTitle>
+        <CardDescription>
+          The pilot flow extracts header fields and line items via AI Gateway, then routes the
+          invoice to an approver.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <Input
+            type="file"
+            accept="application/pdf,.pdf"
+            onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+          />
 
-      <input
-        type="file"
-        accept="application/pdf,.pdf"
-        onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-        className="block w-full text-sm"
-      />
+          {error ? (
+            <Alert variant="destructive">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          ) : null}
 
-      {error ? <p className="text-sm text-rose-600">{error}</p> : null}
-
-      <button
-        type="submit"
-        disabled={loading}
-        className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-60"
-      >
-        {loading ? "Processing..." : "Upload and extract"}
-      </button>
-    </form>
+          <Button type="submit" disabled={loading}>
+            {loading ? "Processing..." : "Upload and extract"}
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
   );
 }

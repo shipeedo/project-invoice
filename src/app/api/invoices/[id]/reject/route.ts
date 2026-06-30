@@ -1,6 +1,7 @@
+import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { db } from "@/lib/db";
+import { db, invoices, notes } from "@/lib/db";
 import { recordAuditEvent } from "@/lib/audit";
 
 type RouteContext = {
@@ -16,8 +17,11 @@ export async function POST(request: Request, context: RouteContext) {
   const { id } = await context.params;
   const body = (await request.json()) as { note?: string };
 
-  const invoice = await db.invoice.findFirst({
-    where: { id, organizationId: session.user.organizationId },
+  const invoice = await db.query.invoices.findFirst({
+    where: and(
+      eq(invoices.id, id),
+      eq(invoices.organizationId, session.user.organizationId),
+    ),
   });
 
   if (!invoice) {
@@ -25,24 +29,28 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   if (!["PENDING_APPROVAL", "NEEDS_REVIEW", "APPROVED"].includes(invoice.status)) {
-    return NextResponse.json({ error: "Invoice cannot be rejected in its current status" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Invoice cannot be rejected in its current status" },
+      { status: 400 },
+    );
   }
 
-  const updated = await db.$transaction(async (tx) => {
+  const updated = await db.transaction(async (tx) => {
     if (body.note?.trim()) {
-      await tx.note.create({
-        data: {
-          invoiceId: id,
-          userId: session.user.id,
-          content: body.note.trim(),
-        },
+      await tx.insert(notes).values({
+        invoiceId: id,
+        userId: session.user.id,
+        content: body.note.trim(),
       });
     }
 
-    return tx.invoice.update({
-      where: { id },
-      data: { status: "REJECTED" },
-    });
+    const [row] = await tx
+      .update(invoices)
+      .set({ status: "REJECTED", updatedAt: new Date() })
+      .where(eq(invoices.id, id))
+      .returning();
+
+    return row;
   });
 
   await recordAuditEvent({

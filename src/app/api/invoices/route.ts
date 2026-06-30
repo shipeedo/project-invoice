@@ -1,6 +1,7 @@
+import { desc, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { db } from "@/lib/db";
+import { db, invoices } from "@/lib/db";
 import { saveUploadedFile } from "@/lib/uploads";
 import { processUploadedInvoice } from "@/lib/invoices";
 
@@ -10,15 +11,17 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const invoices = await db.invoice.findMany({
-    where: { organizationId: session.user.organizationId },
-    include: {
-      assignedTo: { select: { id: true, name: true, email: true } },
+  const rows = await db.query.invoices.findMany({
+    where: eq(invoices.organizationId, session.user.organizationId),
+    with: {
+      assignedTo: {
+        columns: { id: true, name: true, email: true },
+      },
     },
-    orderBy: { createdAt: "desc" },
+    orderBy: desc(invoices.createdAt),
   });
 
-  return NextResponse.json(invoices);
+  return NextResponse.json(rows);
 }
 
 export async function POST(request: Request) {
@@ -35,7 +38,10 @@ export async function POST(request: Request) {
   }
 
   if (!file.name.toLowerCase().endsWith(".pdf")) {
-    return NextResponse.json({ error: "Only PDF uploads are supported in the pilot" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Only PDF uploads are supported in the pilot" },
+      { status: 400 },
+    );
   }
 
   const saved = await saveUploadedFile(file);

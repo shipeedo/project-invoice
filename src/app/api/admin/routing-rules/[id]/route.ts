@@ -1,6 +1,7 @@
+import { and, eq, ne } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { db } from "@/lib/db";
+import { db, routingRules } from "@/lib/db";
 
 type RouteContext = {
   params: Promise<{ id: string }>;
@@ -27,8 +28,11 @@ export async function PATCH(request: Request, context: RouteContext) {
     isDefault?: boolean;
   };
 
-  const existing = await db.routingRule.findFirst({
-    where: { id, organizationId: session.user.organizationId },
+  const existing = await db.query.routingRules.findFirst({
+    where: and(
+      eq(routingRules.id, id),
+      eq(routingRules.organizationId, session.user.organizationId),
+    ),
   });
 
   if (!existing) {
@@ -36,19 +40,20 @@ export async function PATCH(request: Request, context: RouteContext) {
   }
 
   if (body.isDefault) {
-    await db.routingRule.updateMany({
-      where: {
-        organizationId: session.user.organizationId,
-        isDefault: true,
-        NOT: { id },
-      },
-      data: { isDefault: false },
-    });
+    await db
+      .update(routingRules)
+      .set({ isDefault: false, updatedAt: new Date() })
+      .where(
+        and(
+          eq(routingRules.organizationId, session.user.organizationId),
+          ne(routingRules.id, id),
+        ),
+      );
   }
 
-  const rule = await db.routingRule.update({
-    where: { id },
-    data: {
+  await db
+    .update(routingRules)
+    .set({
       name: body.name,
       priority: body.priority,
       type: body.type,
@@ -56,9 +61,14 @@ export async function PATCH(request: Request, context: RouteContext) {
       approverId: body.approverId,
       enabled: body.enabled,
       isDefault: body.isDefault,
-    },
-    include: {
-      approver: { select: { id: true, name: true, email: true } },
+      updatedAt: new Date(),
+    })
+    .where(eq(routingRules.id, id));
+
+  const rule = await db.query.routingRules.findFirst({
+    where: eq(routingRules.id, id),
+    with: {
+      approver: { columns: { id: true, name: true, email: true } },
     },
   });
 
@@ -76,8 +86,11 @@ export async function DELETE(_request: Request, context: RouteContext) {
   }
 
   const { id } = await context.params;
-  const existing = await db.routingRule.findFirst({
-    where: { id, organizationId: session.user.organizationId },
+  const existing = await db.query.routingRules.findFirst({
+    where: and(
+      eq(routingRules.id, id),
+      eq(routingRules.organizationId, session.user.organizationId),
+    ),
   });
 
   if (!existing) {
@@ -85,9 +98,12 @@ export async function DELETE(_request: Request, context: RouteContext) {
   }
 
   if (existing.isDefault) {
-    return NextResponse.json({ error: "Cannot delete the default routing rule" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Cannot delete the default routing rule" },
+      { status: 400 },
+    );
   }
 
-  await db.routingRule.delete({ where: { id } });
+  await db.delete(routingRules).where(eq(routingRules.id, id));
   return NextResponse.json({ ok: true });
 }

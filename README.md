@@ -6,7 +6,8 @@ Invoice intake, OCR, and approval portal for transport company supplier invoices
 
 - **Next.js 16** (App Router) on port `3000`
 - **Auth.js** with Shipeedo OIDC (`/api/auth/callback/shipeedo`)
-- **Prisma** + SQLite (local dev)
+- **Drizzle ORM** + SQLite (local dev)
+- **shadcn/ui** for all UI components
 - **AI Gateway** for PDF extraction
 
 ## Quick start
@@ -23,6 +24,14 @@ npm run dev
 Open [http://localhost:3000](http://localhost:3000).
 
 For local pilot development without Shipeedo secrets, set `AUTH_MOCK=true` in `.env` and use the mock login form on `/login`.
+
+## UI components
+
+All UI uses [shadcn/ui](https://ui.shadcn.com/). Add new components with:
+
+```bash
+npx shadcn@latest add <component>
+```
 
 ## Phase 1a (pilot) — implemented
 

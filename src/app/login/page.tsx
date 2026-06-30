@@ -1,4 +1,9 @@
 import { signIn } from "@/lib/auth";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 const useMockAuth =
   process.env.AUTH_MOCK === "true" ||
@@ -13,89 +18,98 @@ export default async function LoginPage({
 
   return (
     <div className="flex min-h-screen items-center justify-center px-4">
-      <div className="w-full max-w-md space-y-6 rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
-        <div>
-          <p className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+      <Card className="w-full max-w-md">
+        <CardHeader>
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             Project Invoice
           </p>
-          <h1 className="mt-2 text-2xl font-semibold">Sign in</h1>
-          <p className="mt-2 text-sm text-slate-600">
+          <CardTitle className="text-2xl">Sign in</CardTitle>
+          <CardDescription>
             Authenticate with Shipeedo to access your organisation&apos;s invoice queue.
-          </p>
-        </div>
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {params.error ? (
+            <Alert variant="destructive">
+              <AlertDescription>Sign-in failed. Please try again.</AlertDescription>
+            </Alert>
+          ) : null}
 
-        {params.error ? (
-          <p className="rounded-md bg-rose-50 px-3 py-2 text-sm text-rose-700">
-            Sign-in failed. Please try again.
-          </p>
-        ) : null}
-
-        {useMockAuth ? (
-          <form
-            action={async (formData) => {
-              "use server";
-              await signIn("mock", {
-                email: String(formData.get("email")),
-                name: String(formData.get("name")),
-                role: String(formData.get("role")),
-                redirectTo: params.callbackUrl ?? "/",
-              });
-            }}
-            className="space-y-3"
-          >
-            <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-900">
-              Development mock auth is enabled because `AUTH_MOCK=true` or `CLIENT_SECRET` is unset.
-            </p>
-            <input
-              name="email"
-              type="email"
-              required
-              defaultValue="admin@example.com"
-              placeholder="Email"
-              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-            />
-            <input
-              name="name"
-              type="text"
-              defaultValue="Pilot Admin"
-              placeholder="Name"
-              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-            />
-            <select name="role" className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
-              <option value="ADMIN">Admin</option>
-              <option value="APPROVER">Approver</option>
-              <option value="USER">User</option>
-            </select>
-            <button
-              type="submit"
-              className="w-full rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
+          {useMockAuth ? (
+            <form
+              action={async (formData) => {
+                "use server";
+                await signIn("mock", {
+                  email: String(formData.get("email")),
+                  name: String(formData.get("name")),
+                  role: String(formData.get("role")),
+                  redirectTo: params.callbackUrl ?? "/",
+                });
+              }}
+              className="space-y-4"
             >
-              Continue with mock login
-            </button>
-          </form>
-        ) : (
-          <form
-            action={async () => {
-              "use server";
-              await signIn("shipeedo", { redirectTo: params.callbackUrl ?? "/" });
-            }}
-          >
-            <button
-              type="submit"
-              className="w-full rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
-            >
-              Sign in with Shipeedo
-            </button>
-          </form>
-        )}
+              <Alert>
+                <AlertDescription>
+                  Development mock auth is enabled because `AUTH_MOCK=true` or `CLIENT_SECRET` is
+                  unset.
+                </AlertDescription>
+              </Alert>
 
-        <p className="text-xs text-slate-500">
-          OAuth callback: <code>/api/auth/callback/shipeedo</code>
-        </p>
-        <p className="text-xs text-slate-500">
-          See <code>docs/environment-setup.md</code> for local secret configuration.
-        </p>
-      </div>
+              <div className="space-y-2">
+                <Label htmlFor="email">Email</Label>
+                <Input
+                  id="email"
+                  name="email"
+                  type="email"
+                  required
+                  defaultValue="admin@example.com"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="name">Name</Label>
+                <Input id="name" name="name" type="text" defaultValue="Pilot Admin" />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="role">Role</Label>
+                <select
+                  id="role"
+                  name="role"
+                  defaultValue="ADMIN"
+                  className="flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm"
+                >
+                  <option value="ADMIN">Admin</option>
+                  <option value="APPROVER">Approver</option>
+                  <option value="USER">User</option>
+                </select>
+              </div>
+
+              <Button type="submit" className="w-full">
+                Continue with mock login
+              </Button>
+            </form>
+          ) : (
+            <form
+              action={async () => {
+                "use server";
+                await signIn("shipeedo", { redirectTo: params.callbackUrl ?? "/" });
+              }}
+            >
+              <Button type="submit" className="w-full">
+                Sign in with Shipeedo
+              </Button>
+            </form>
+          )}
+
+          <p className="text-xs text-muted-foreground">
+            OAuth callback: <code>/api/auth/callback/shipeedo</code>
+          </p>
+          <p className="text-xs text-muted-foreground">
+            See <code>docs/environment-setup.md</code> for local secret configuration.
+          </p>
+        </CardContent>
+      </Card>
     </div>
   );
 }

@@ -1,6 +1,7 @@
+import { asc, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { db } from "@/lib/db";
+import { db, users } from "@/lib/db";
 
 export async function GET() {
   const session = await auth();
@@ -12,11 +13,11 @@ export async function GET() {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const users = await db.user.findMany({
-    where: { organizationId: session.user.organizationId },
-    select: { id: true, name: true, email: true, role: true },
-    orderBy: { name: "asc" },
+  const rows = await db.query.users.findMany({
+    where: eq(users.organizationId, session.user.organizationId),
+    columns: { id: true, name: true, email: true, role: true },
+    orderBy: asc(users.name),
   });
 
-  return NextResponse.json(users);
+  return NextResponse.json(rows);
 }

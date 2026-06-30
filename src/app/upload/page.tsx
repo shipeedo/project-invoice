@@ -6,7 +6,7 @@ export default async function UploadPage() {
   const session = await requireSession();
 
   return (
-    <AppShell user={session.user}>
+    <AppShell user={session.user} activePath="/upload">
       <div className="max-w-2xl">
         <UploadForm />
       </div>

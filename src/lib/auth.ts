@@ -1,85 +1,8 @@
 import NextAuth from "next-auth";
 import type { NextAuthConfig } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
-import { db } from "@/lib/db";
-import type { UserRole } from "@prisma/client";
-
-function slugify(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
-}
-
-function resolveOrgFromProfile(profile: Record<string, unknown>, email: string) {
-  const orgClaim =
-    profile.org_id ??
-    profile.organization_id ??
-    profile.tenant_id ??
-    profile.organization;
-
-  if (typeof orgClaim === "string" && orgClaim.trim()) {
-    return {
-      slug: slugify(orgClaim),
-      name: typeof profile.organization === "string" ? profile.organization : orgClaim,
-    };
-  }
-
-  const domain = email.split("@")[1] ?? "default";
-  return {
-    slug: slugify(domain),
-    name: domain,
-  };
-}
-
-function resolveRole(profile: Record<string, unknown>): UserRole {
-  const role = profile.role ?? profile.roles;
-  if (typeof role === "string") {
-    const normalized = role.toUpperCase();
-    if (normalized === "ADMIN") return "ADMIN";
-    if (normalized === "USER") return "USER";
-  }
-  if (Array.isArray(role) && role.includes("admin")) return "ADMIN";
-  return "APPROVER";
-}
-
-async function upsertUserFromProfile(profile: {
-  email?: string | null;
-  name?: string | null;
-  sub?: string;
-  [key: string]: unknown;
-}) {
-  const email = profile.email;
-  if (!email) {
-    throw new Error("OAuth profile is missing email");
-  }
-
-  const orgInfo = resolveOrgFromProfile(profile, email);
-  const organization =
-    (await db.organization.findUnique({ where: { slug: orgInfo.slug } })) ??
-    (await db.organization.create({
-      data: { slug: orgInfo.slug, name: orgInfo.name },
-    }));
-
-  const role = resolveRole(profile);
-  const user = await db.user.upsert({
-    where: { email },
-    update: {
-      name: profile.name ?? undefined,
-      role,
-      organizationId: organization.id,
-    },
-    create: {
-      email,
-      name: profile.name ?? email,
-      role,
-      organizationId: organization.id,
-    },
-    include: { organization: true },
-  });
-
-  return user;
-}
+import type { UserRole } from "@/lib/db/types";
+import { upsertUserFromProfile } from "@/lib/users";
 
 const useMockAuth =
   process.env.AUTH_MOCK === "true" ||

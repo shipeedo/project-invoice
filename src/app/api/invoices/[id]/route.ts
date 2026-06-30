@@ -1,6 +1,7 @@
+import { and, desc, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { db } from "@/lib/db";
+import { db, invoices, notes } from "@/lib/db";
 
 type RouteContext = {
   params: Promise<{ id: string }>;
@@ -13,18 +14,21 @@ export async function GET(_request: Request, context: RouteContext) {
   }
 
   const { id } = await context.params;
-  const invoice = await db.invoice.findFirst({
-    where: { id, organizationId: session.user.organizationId },
-    include: {
-      assignedTo: { select: { id: true, name: true, email: true } },
-      notes: { orderBy: { createdAt: "desc" } },
+  const invoice = await db.query.invoices.findFirst({
+    where: and(
+      eq(invoices.id, id),
+      eq(invoices.organizationId, session.user.organizationId),
+    ),
+    with: {
+      assignedTo: { columns: { id: true, name: true, email: true } },
+      notes: { orderBy: desc(notes.createdAt) },
       auditEvents: {
-        include: { user: { select: { name: true, email: true } } },
-        orderBy: { createdAt: "desc" },
+        with: { user: { columns: { name: true, email: true } } },
+        orderBy: (events, { desc: orderDesc }) => [orderDesc(events.createdAt)],
       },
       creditDrafts: {
-        include: { createdBy: { select: { name: true, email: true } } },
-        orderBy: { createdAt: "desc" },
+        with: { createdBy: { columns: { name: true, email: true } } },
+        orderBy: (drafts, { desc: orderDesc }) => [orderDesc(drafts.createdAt)],
       },
     },
   });

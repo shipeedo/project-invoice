@@ -1,4 +1,5 @@
-import { db } from "@/lib/db";
+import { eq } from "drizzle-orm";
+import { db, invoices } from "@/lib/db";
 import { recordAuditEvent } from "@/lib/audit";
 import {
   extractInvoiceFromPdf,
@@ -15,16 +16,17 @@ export async function processUploadedInvoice(params: {
 }) {
   await ensureDefaultRoutingRules(params.organizationId);
 
-  const invoice = await db.invoice.create({
-    data: {
+  const [invoice] = await db
+    .insert(invoices)
+    .values({
       organizationId: params.organizationId,
       status: "PROCESSING",
       sourceType: "UPLOAD",
       originalFileName: params.fileName,
       filePath: params.filePath,
       fileMimeType: params.mimeType,
-    },
-  });
+    })
+    .returning();
 
   await recordAuditEvent({
     invoiceId: invoice.id,
@@ -35,11 +37,11 @@ export async function processUploadedInvoice(params: {
 
   const extraction = await extractInvoiceFromPdf(params.filePath, params.fileName);
 
-  const updatedInvoice = await db.invoice.update({
-    where: { id: invoice.id },
-    data: {
+  const [updatedInvoice] = await db
+    .update(invoices)
+    .set({
       vendorName: extraction.data?.vendorName,
-      vendorEmail: extraction.data?.vendorEmail ?? undefined,
+      vendorEmail: extraction.data?.vendorEmail ?? null,
       invoiceNumber: extraction.data?.invoiceNumber,
       invoiceDate: parseInvoiceDate(extraction.data?.invoiceDate),
       totalAmount: extraction.data?.totalAmount,
@@ -48,26 +50,27 @@ export async function processUploadedInvoice(params: {
         ? JSON.stringify(extraction.data.lineItems)
         : null,
       extractionRaw: extraction.raw ? JSON.stringify(extraction.raw) : null,
-      parseError: extraction.error,
+      parseError: extraction.error ?? null,
       status: extraction.error ? "NEEDS_REVIEW" : "PENDING_APPROVAL",
-    },
-  });
+      updatedAt: new Date(),
+    })
+    .where(eq(invoices.id, invoice.id))
+    .returning();
 
   const approver = await assignApproverForInvoice(
     params.organizationId,
     updatedInvoice,
   );
 
-  const routedInvoice = await db.invoice.update({
-    where: { id: invoice.id },
-    data: {
-      assignedToId: approver?.id,
+  const [routedInvoice] = await db
+    .update(invoices)
+    .set({
+      assignedToId: approver?.id ?? null,
       status: approver ? updatedInvoice.status : "NEEDS_REVIEW",
-    },
-    include: {
-      assignedTo: true,
-    },
-  });
+      updatedAt: new Date(),
+    })
+    .where(eq(invoices.id, invoice.id))
+    .returning();
 
   await recordAuditEvent({
     invoiceId: invoice.id,
@@ -88,5 +91,10 @@ export async function processUploadedInvoice(params: {
     });
   }
 
-  return routedInvoice;
+  const withApprover = await db.query.invoices.findFirst({
+    where: eq(invoices.id, routedInvoice.id),
+    with: { assignedTo: true },
+  });
+
+  return withApprover ?? routedInvoice;
 }
