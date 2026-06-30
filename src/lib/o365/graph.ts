@@ -89,13 +89,13 @@ export async function listGraphMailboxes(accessToken: string, search?: string) {
   }
 
   const trimmedSearch = search?.trim();
-  let usersPath = `/users?$select=id,displayName,mail,userPrincipalName&$top=999&$orderby=displayName`;
+  let usersPath = `/users?$select=id,displayName,mail,userPrincipalName&$top=999`;
   if (trimmedSearch) {
     const escaped = trimmedSearch.replace(/'/g, "''");
     const filter = encodeURIComponent(
       `startswith(displayName,'${escaped}') or startswith(mail,'${escaped}') or startswith(userPrincipalName,'${escaped}') or contains(displayName,'${escaped}') or contains(mail,'${escaped}') or contains(userPrincipalName,'${escaped}')`,
     );
-    usersPath = `/users?$select=id,displayName,mail,userPrincipalName&$top=999&$filter=${filter}&$orderby=displayName`;
+    usersPath = `/users?$select=id,displayName,mail,userPrincipalName&$top=999&$filter=${filter}`;
   }
 
   const users = await graphFetch<GraphListResponse<GraphMailbox>>(
