@@ -38,8 +38,18 @@ type Supplier = {
   fieldMappings: SupplierFieldMappings;
 };
 
+type SupplierSuggestion = {
+  id: string;
+  email: string;
+  displayName: string | null;
+  domain: string | null;
+  messageCount: number;
+  suggestedName: string;
+};
+
 type SuppliersManagerProps = {
   initialSuppliers: Supplier[];
+  initialSuggestions?: SupplierSuggestion[];
 };
 
 type MappingDraft = Partial<
@@ -81,8 +91,15 @@ function mappingDraftToPayload(draft: MappingDraft): SupplierFieldMappings {
   return mappings;
 }
 
-export function SuppliersManager({ initialSuppliers }: SuppliersManagerProps) {
+export function SuppliersManager({
+  initialSuppliers,
+  initialSuggestions = [],
+}: SuppliersManagerProps) {
   const [suppliers, setSuppliers] = useState(initialSuppliers);
+  const [suggestions, setSuggestions] = useState(initialSuggestions);
+  const [createName, setCreateName] = useState("");
+  const [createEmails, setCreateEmails] = useState("");
+  const [createDomains, setCreateDomains] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
   const [editName, setEditName] = useState("");
@@ -158,6 +175,32 @@ export function SuppliersManager({ initialSuppliers }: SuppliersManagerProps) {
     }
 
     await refreshSuppliers();
+    setCreateName("");
+    setCreateEmails("");
+    setCreateDomains("");
+  }
+
+  async function createFromSuggestion(suggestion: SupplierSuggestion) {
+    setError(null);
+    const response = await fetch("/api/admin/suppliers/from-contact", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contactId: suggestion.id }),
+    });
+
+    if (!response.ok) {
+      setError("Failed to create supplier from email contact");
+      return;
+    }
+
+    await refreshSuppliers();
+    setSuggestions((current) => current.filter((entry) => entry.id !== suggestion.id));
+  }
+
+  function applySuggestionToForm(suggestion: SupplierSuggestion) {
+    setCreateName(suggestion.suggestedName);
+    setCreateEmails(suggestion.email);
+    setCreateDomains(suggestion.domain ?? "");
   }
 
   async function saveSupplier() {
@@ -207,6 +250,47 @@ export function SuppliersManager({ initialSuppliers }: SuppliersManagerProps) {
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
+      ) : null}
+
+      {suggestions.length > 0 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Suggested from inbox emails</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              These senders emailed the shared mailbox but are not linked to a supplier yet.
+            </p>
+            <ul className="space-y-2">
+              {suggestions.map((suggestion) => (
+                <li
+                  key={suggestion.id}
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm"
+                >
+                  <div>
+                    <p className="font-medium">{suggestion.suggestedName}</p>
+                    <p className="text-muted-foreground">
+                      {suggestion.email} · {suggestion.messageCount} message
+                      {suggestion.messageCount === 1 ? "" : "s"}
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => applySuggestionToForm(suggestion)}
+                    >
+                      Use in form
+                    </Button>
+                    <Button size="sm" onClick={() => void createFromSuggestion(suggestion)}>
+                      Create supplier
+                    </Button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
       ) : null}
 
       <Card>
@@ -266,14 +350,22 @@ export function SuppliersManager({ initialSuppliers }: SuppliersManagerProps) {
         </CardHeader>
         <CardContent>
           <form
-            action={async (formData) => {
-              await createSupplier(formData);
+            onSubmit={(event) => {
+              event.preventDefault();
+              void createSupplier(new FormData(event.currentTarget));
             }}
             className="space-y-4"
           >
             <div className="space-y-2">
               <Label htmlFor="name">Supplier name</Label>
-              <Input id="name" name="name" required placeholder="Supplier name" />
+              <Input
+                id="name"
+                name="name"
+                required
+                placeholder="Supplier name"
+                value={createName}
+                onChange={(event) => setCreateName(event.target.value)}
+              />
             </div>
             <div className="space-y-2">
               <Label htmlFor="emailAddresses">Email addresses</Label>
@@ -281,11 +373,19 @@ export function SuppliersManager({ initialSuppliers }: SuppliersManagerProps) {
                 id="emailAddresses"
                 name="emailAddresses"
                 placeholder="Comma-separated"
+                value={createEmails}
+                onChange={(event) => setCreateEmails(event.target.value)}
               />
             </div>
             <div className="space-y-2">
               <Label htmlFor="emailDomains">Email domains</Label>
-              <Input id="emailDomains" name="emailDomains" placeholder="Comma-separated" />
+              <Input
+                id="emailDomains"
+                name="emailDomains"
+                placeholder="Comma-separated"
+                value={createDomains}
+                onChange={(event) => setCreateDomains(event.target.value)}
+              />
             </div>
             <Button type="submit">Create supplier</Button>
           </form>

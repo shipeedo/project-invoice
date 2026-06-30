@@ -52,6 +52,11 @@ export function AppSidebar({ user, activePath, ...props }: AppSidebarProps) {
           url: "/upload",
           isActive: activePath === "/upload",
         },
+        {
+          title: "Inbox",
+          url: "/inbox",
+          isActive: activePath === "/inbox" || activePath?.startsWith("/inbox/"),
+        },
       ],
     },
   ];

@@ -7,8 +7,11 @@ export type GraphMailbox = {
 
 export type GraphMessage = {
   id: string;
+  conversationId?: string;
+  internetMessageId?: string;
   subject?: string;
   receivedDateTime?: string;
+  sentDateTime?: string;
   hasAttachments?: boolean;
   from?: {
     emailAddress?: {
@@ -16,6 +19,18 @@ export type GraphMessage = {
       address?: string;
     };
   };
+  toRecipients?: Array<{
+    emailAddress?: {
+      name?: string;
+      address?: string;
+    };
+  }>;
+  ccRecipients?: Array<{
+    emailAddress?: {
+      name?: string;
+      address?: string;
+    };
+  }>;
   body?: {
     contentType?: string;
     content?: string;
@@ -50,7 +65,16 @@ async function graphFetch<T>(accessToken: string, path: string, init?: RequestIn
     throw new Error(`Microsoft Graph error (${response.status}): ${text}`);
   }
 
-  return (await response.json()) as T;
+  if (response.status === 204 || response.status === 202) {
+    return null as T;
+  }
+
+  const text = await response.text();
+  if (!text) {
+    return null as T;
+  }
+
+  return JSON.parse(text) as T;
 }
 
 export async function listGraphMailboxes(accessToken: string, search?: string) {
@@ -105,7 +129,7 @@ export async function listInboxMessages(params: {
 
   return graphFetch<GraphListResponse<GraphMessage>>(
     params.accessToken,
-    `/users/${encodeURIComponent(params.mailboxUpn)}/mailFolders/inbox/messages?$select=id,subject,receivedDateTime,hasAttachments,from,bodyPreview&$orderby=receivedDateTime desc&$top=${params.top ?? 25}${filter}`,
+    `/users/${encodeURIComponent(params.mailboxUpn)}/mailFolders/inbox/messages?$select=id,conversationId,internetMessageId,subject,receivedDateTime,sentDateTime,hasAttachments,from,toRecipients,ccRecipients,bodyPreview&$orderby=receivedDateTime desc&$top=${params.top ?? 25}${filter}`,
   );
 }
 
@@ -116,7 +140,7 @@ export async function getMessageDetails(params: {
 }) {
   return graphFetch<GraphMessage>(
     params.accessToken,
-    `/users/${encodeURIComponent(params.mailboxUpn)}/messages/${encodeURIComponent(params.messageId)}?$select=id,subject,receivedDateTime,hasAttachments,from,body,bodyPreview`,
+    `/users/${encodeURIComponent(params.mailboxUpn)}/messages/${encodeURIComponent(params.messageId)}?$select=id,conversationId,internetMessageId,subject,receivedDateTime,sentDateTime,hasAttachments,from,toRecipients,ccRecipients,body,bodyPreview`,
   );
 }
 
@@ -152,4 +176,118 @@ export async function downloadFileAttachment(params: {
     size: attachment.size ?? Buffer.from(attachment.contentBytes, "base64").length,
     buffer: Buffer.from(attachment.contentBytes, "base64"),
   };
+}
+
+const MESSAGE_SELECT =
+  "id,conversationId,internetMessageId,subject,receivedDateTime,sentDateTime,hasAttachments,from,toRecipients,ccRecipients,body,bodyPreview";
+
+export async function listThreadMessages(params: {
+  accessToken: string;
+  mailboxUpn: string;
+  conversationId: string;
+}) {
+  const filter = encodeURIComponent(
+    `conversationId eq '${params.conversationId.replace(/'/g, "''")}'`,
+  );
+  return graphFetch<GraphListResponse<GraphMessage>>(
+    params.accessToken,
+    `/users/${encodeURIComponent(params.mailboxUpn)}/messages?$filter=${filter}&$select=${MESSAGE_SELECT}&$orderby=receivedDateTime asc&$top=50`,
+  );
+}
+
+export type SendMailAttachment = {
+  name: string;
+  contentType: string;
+  contentBytes: string;
+};
+
+export async function sendMail(params: {
+  accessToken: string;
+  mailboxUpn: string;
+  subject: string;
+  bodyHtml: string;
+  to: string[];
+  cc?: string[];
+  attachments?: SendMailAttachment[];
+}) {
+  const message: Record<string, unknown> = {
+    subject: params.subject,
+    body: { contentType: "HTML", content: params.bodyHtml },
+    toRecipients: params.to.map((address) => ({
+      emailAddress: { address },
+    })),
+  };
+
+  if (params.cc?.length) {
+    message.ccRecipients = params.cc.map((address) => ({
+      emailAddress: { address },
+    }));
+  }
+
+  if (params.attachments?.length) {
+    message.attachments = params.attachments.map((attachment) => ({
+      "@odata.type": "#microsoft.graph.fileAttachment",
+      name: attachment.name,
+      contentType: attachment.contentType,
+      contentBytes: attachment.contentBytes,
+    }));
+  }
+
+  await graphFetch<null>(
+    params.accessToken,
+    `/users/${encodeURIComponent(params.mailboxUpn)}/sendMail`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message, saveToSentItems: true }),
+    },
+  );
+}
+
+export async function replyToMessage(params: {
+  accessToken: string;
+  mailboxUpn: string;
+  messageId: string;
+  bodyHtml: string;
+  attachments?: SendMailAttachment[];
+}) {
+  const message: Record<string, unknown> = {
+    body: { contentType: "HTML", content: params.bodyHtml },
+  };
+
+  if (params.attachments?.length) {
+    message.attachments = params.attachments.map((attachment) => ({
+      "@odata.type": "#microsoft.graph.fileAttachment",
+      name: attachment.name,
+      contentType: attachment.contentType,
+      contentBytes: attachment.contentBytes,
+    }));
+  }
+
+  await graphFetch<null>(
+    params.accessToken,
+    `/users/${encodeURIComponent(params.mailboxUpn)}/messages/${encodeURIComponent(params.messageId)}/reply`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message }),
+    },
+  );
+}
+
+export function extractEmailAddresses(
+  recipients?: GraphMessage["toRecipients"],
+) {
+  if (!recipients) return [];
+  return recipients
+    .map((entry) => entry.emailAddress?.address?.trim())
+    .filter((value): value is string => Boolean(value));
+}
+
+export function extractMessageBody(message: GraphMessage) {
+  const content = message.body?.content ?? "";
+  if (message.body?.contentType?.toLowerCase() === "html") {
+    return { html: content, text: message.bodyPreview ?? null };
+  }
+  return { html: null, text: content || message.bodyPreview || null };
 }

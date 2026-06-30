@@ -1,7 +1,7 @@
 import { and, asc, desc, eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
-import { CreditDraftForm } from "@/components/credit-draft-form";
+import { CreditRequestForm } from "@/components/credit-request-form";
 import { InvoiceActions } from "@/components/invoice-actions";
 import { InvoiceValidationPanel } from "@/components/invoice-validation-panel";
 import { StatusBadge } from "@/components/status-badge";
@@ -50,9 +50,11 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
         with: { user: { columns: { name: true, email: true } } },
         orderBy: desc(auditEvents.createdAt),
       },
-      creditDrafts: {
-        with: { createdBy: { columns: { name: true, email: true } } },
-        orderBy: (drafts, { desc: orderDesc }) => [orderDesc(drafts.createdAt)],
+      creditRequests: {
+        with: {
+          createdBy: { columns: { id: true, name: true, email: true } },
+        },
+        orderBy: (requests, { desc: orderDesc }) => [orderDesc(requests.createdAt)],
       },
     },
   });
@@ -340,9 +342,11 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
           validatedAt={invoice.validatedAt}
         />
 
-        <CreditDraftForm
+        <CreditRequestForm
           invoiceId={invoice.id}
           defaultSubject={`Credit request — ${invoice.vendorName ?? invoice.originalFileName ?? "Invoice"}`}
+          defaultRecipient={invoice.vendorEmail ?? invoice.emailFrom}
+          creditRequests={invoice.creditRequests}
         />
 
         <Card>
@@ -364,26 +368,6 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
           </CardContent>
         </Card>
 
-        {invoice.creditDrafts.length > 0 ? (
-          <Card>
-            <CardHeader>
-              <CardTitle>Credit drafts</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <ul className="space-y-4 text-sm">
-                {invoice.creditDrafts.map((draft) => (
-                  <li key={draft.id} className="rounded-lg border p-4">
-                    <p className="font-medium">{draft.subject}</p>
-                    <p className="mt-2 whitespace-pre-wrap">{draft.message}</p>
-                    <p className="mt-2 text-muted-foreground">
-                      {formatDate(draft.createdAt)} · {draft.createdBy.name ?? draft.createdBy.email}
-                    </p>
-                  </li>
-                ))}
-              </ul>
-            </CardContent>
-          </Card>
-        ) : null}
       </div>
     </AppShell>
   );

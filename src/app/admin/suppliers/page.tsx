@@ -5,15 +5,19 @@ import { db, suppliers } from "@/lib/db";
 import {
   parseSupplierFieldMappings,
 } from "@/lib/extraction-types";
+import { getSupplierSuggestions } from "@/lib/email-contacts";
 import { requireRole } from "@/lib/session";
 
 export default async function SuppliersPage() {
   const session = await requireRole(["ADMIN"]);
 
-  const rows = await db.query.suppliers.findMany({
-    where: eq(suppliers.organizationId, session.user.organizationId),
-    orderBy: asc(suppliers.name),
-  });
+  const [rows, suggestions] = await Promise.all([
+    db.query.suppliers.findMany({
+      where: eq(suppliers.organizationId, session.user.organizationId),
+      orderBy: asc(suppliers.name),
+    }),
+    getSupplierSuggestions(session.user.organizationId),
+  ]);
 
   return (
     <AppShell
@@ -38,6 +42,7 @@ export default async function SuppliersPage() {
             extractionPrompt: supplier.extractionPrompt,
             fieldMappings: parseSupplierFieldMappings(supplier.fieldMappings),
           }))}
+          initialSuggestions={suggestions}
         />
       </div>
     </AppShell>

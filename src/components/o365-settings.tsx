@@ -149,6 +149,8 @@ export function O365Settings({
     try {
       const response = await fetch("/api/admin/o365/poll", { method: "POST" });
       const data = (await response.json()) as {
+        synced?: number;
+        invoicesProcessed?: number;
         processed?: number;
         skipped?: number;
         errors?: string[];
@@ -158,7 +160,7 @@ export function O365Settings({
         throw new Error(data.error ?? "Polling failed");
       }
       setMessage(
-        `Poll complete — processed ${data.processed ?? 0}, skipped ${data.skipped ?? 0}.`,
+        `Poll complete — synced ${data.synced ?? data.processed ?? 0} emails, processed ${data.invoicesProcessed ?? 0} invoices, skipped ${data.skipped ?? 0}.`,
       );
       if (data.errors?.length) {
         setError(data.errors.join("; "));

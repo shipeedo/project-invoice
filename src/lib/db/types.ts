@@ -26,3 +26,19 @@ export type RoutingRuleType = (typeof routingRuleTypes)[number];
 
 export const o365ConnectionStatuses = ["CONNECTED", "DISCONNECTED", "ERROR"] as const;
 export type O365ConnectionStatus = (typeof o365ConnectionStatuses)[number];
+
+export const creditRequestStatuses = [
+  "DRAFT",
+  "SENT",
+  "AWAITING_USER",
+  "CONTESTED",
+  "APPROVED",
+  "REJECTED",
+] as const;
+export type CreditRequestStatus = (typeof creditRequestStatuses)[number];
+
+export const carrierDecisions = ["APPROVED", "DENIED"] as const;
+export type CarrierDecision = (typeof carrierDecisions)[number];
+
+export const mailboxMessageDirections = ["INBOUND", "OUTBOUND"] as const;
+export type MailboxMessageDirection = (typeof mailboxMessageDirections)[number];

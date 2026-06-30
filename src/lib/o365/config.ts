@@ -8,6 +8,8 @@ export const MICROSOFT_SCOPES = [
   "User.Read",
   "Mail.Read",
   "Mail.Read.Shared",
+  "Mail.Send",
+  "Mail.Send.Shared",
 ].join(" ");
 
 export function getMicrosoftRedirectUri() {
