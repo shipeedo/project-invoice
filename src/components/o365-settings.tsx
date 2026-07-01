@@ -72,7 +72,116 @@ function matchesQuery(mailbox: Mailbox, query: string) {
 type MailboxAccessState =
   | { status: "checking" }
   | { status: "granted" }
-  | { status: "denied"; message: string };
+  | { status: "denied"; message: string; deniedAt: number };
+
+const DENIED_RETRY_ICON_DELAY_MS = 2000;
+
+type MailboxListItemProps = {
+  mailbox: Mailbox;
+  access?: MailboxAccessState;
+  isSelected: boolean;
+  onSelect: (mailbox: Mailbox) => void;
+  onRetry: (event: MouseEvent, mailbox: Mailbox) => void;
+};
+
+function MailboxListItem({
+  mailbox,
+  access,
+  isSelected,
+  onSelect,
+  onRetry,
+}: MailboxListItemProps) {
+  const [showRetryIcon, setShowRetryIcon] = useState(false);
+  const address = mailboxAddress(mailbox);
+
+  useEffect(() => {
+    if (access?.status !== "denied") return;
+    const remaining = Math.max(
+      0,
+      DENIED_RETRY_ICON_DELAY_MS - (Date.now() - access.deniedAt),
+    );
+    const timer = window.setTimeout(() => setShowRetryIcon(true), remaining);
+    return () => window.clearTimeout(timer);
+  }, [access]);
+
+  return (
+    <li
+      className={cn(
+        access?.status === "granted" && "bg-green-500/5",
+        access?.status === "denied" && "bg-destructive/5",
+        isSelected && access?.status !== "denied" && "bg-primary/5",
+      )}
+    >
+      <div className="flex items-start gap-3 px-4 py-3">
+        <button
+          type="button"
+          onClick={() => {
+            if (access?.status === "checking") return;
+            onSelect(mailbox);
+          }}
+          disabled={access?.status === "checking"}
+          className="flex min-w-0 flex-1 items-start gap-3 text-left transition-colors hover:opacity-90 disabled:cursor-wait disabled:opacity-80"
+        >
+          <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center">
+            {access?.status === "checking" ? (
+              <Loader2Icon className="size-5 animate-spin text-muted-foreground" />
+            ) : access?.status === "granted" ? (
+              <span className="flex size-5 items-center justify-center rounded-full bg-green-600 text-white">
+                <CheckIcon className="size-3" />
+              </span>
+            ) : access?.status === "denied" ? (
+              showRetryIcon ? (
+                <span className="flex size-5 items-center justify-center rounded-full border border-destructive/40 bg-background text-destructive">
+                  <RefreshCwIcon className="size-3" />
+                </span>
+              ) : (
+                <span className="flex size-5 items-center justify-center rounded-full bg-destructive text-white">
+                  <XIcon className="size-3" />
+                </span>
+              )
+            ) : (
+              <span className="size-5 rounded-full border border-muted-foreground/30" />
+            )}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block font-medium">{mailbox.displayName}</span>
+            <span className="block truncate text-sm text-muted-foreground">
+              {address}
+            </span>
+            {access?.status === "checking" ? (
+              <span className="mt-1 block text-xs text-muted-foreground">
+                Checking read access…
+              </span>
+            ) : null}
+            {access?.status === "granted" ? (
+              <span className="mt-1 block text-xs text-green-700 dark:text-green-400">
+                Read access confirmed
+              </span>
+            ) : null}
+            {access?.status === "denied" ? (
+              <span className="mt-1 block text-xs text-destructive">
+                {access.message}
+              </span>
+            ) : null}
+          </span>
+        </button>
+
+        {access?.status === "denied" ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="mt-0.5 shrink-0 border-destructive/40 text-destructive hover:bg-destructive/10"
+            onClick={(event) => onRetry(event, mailbox)}
+          >
+            <RefreshCwIcon className="size-3.5" />
+            Try again
+          </Button>
+        ) : null}
+      </div>
+    </li>
+  );
+}
 
 export function O365Settings({
   initialStatus,
@@ -162,6 +271,7 @@ export function O365Settings({
             message:
               data.error ??
               "You do not have read access to this mailbox. Ask your Exchange admin to grant you Full Access.",
+            deniedAt: Date.now(),
           },
         }));
       }
@@ -174,6 +284,7 @@ export function O365Settings({
             checkError instanceof Error
               ? checkError.message
               : "Failed to check mailbox access",
+          deniedAt: Date.now(),
         },
       }));
     }
@@ -472,76 +583,23 @@ export function O365Settings({
               ) : (
                 <ul className="divide-y">
                   {filteredMailboxes.map((mailbox) => {
-                    const isSelected = selectedMailbox?.id === mailbox.id;
-                    const address = mailboxAddress(mailbox);
                     const access = accessByMailboxId[mailbox.id];
+                    const accessKey =
+                      access?.status === "denied"
+                        ? `${mailbox.id}-denied-${access.deniedAt}`
+                        : `${mailbox.id}-${access?.status ?? "idle"}`;
+
                     return (
-                      <li key={mailbox.id}>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (access?.status === "checking") return;
-                            void handleSelectMailbox(mailbox);
-                          }}
-                          disabled={access?.status === "checking"}
-                          className={cn(
-                            "flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/50 disabled:cursor-wait disabled:opacity-80",
-                            isSelected && access?.status !== "denied" && "bg-primary/5",
-                            access?.status === "granted" &&
-                              "bg-green-500/5 hover:bg-green-500/10",
-                            access?.status === "denied" &&
-                              "bg-destructive/5 hover:bg-destructive/10",
-                          )}
-                        >
-                          <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center">
-                            {access?.status === "checking" ? (
-                              <Loader2Icon className="size-5 animate-spin text-muted-foreground" />
-                            ) : access?.status === "granted" ? (
-                              <span className="flex size-5 items-center justify-center rounded-full bg-green-600 text-white">
-                                <CheckIcon className="size-3" />
-                              </span>
-                            ) : access?.status === "denied" ? (
-                              <span className="flex size-5 items-center justify-center rounded-full bg-destructive text-white">
-                                <XIcon className="size-3" />
-                              </span>
-                            ) : (
-                              <span className="size-5 rounded-full border border-muted-foreground/30" />
-                            )}
-                          </span>
-                          <span className="min-w-0 flex-1">
-                            <span className="block font-medium">
-                              {mailbox.displayName}
-                            </span>
-                            <span className="block truncate text-sm text-muted-foreground">
-                              {address}
-                            </span>
-                            {access?.status === "checking" ? (
-                              <span className="mt-1 block text-xs text-muted-foreground">
-                                Checking read access…
-                              </span>
-                            ) : null}
-                            {access?.status === "granted" ? (
-                              <span className="mt-1 block text-xs text-green-700 dark:text-green-400">
-                                Read access confirmed
-                              </span>
-                            ) : null}
-                            {access?.status === "denied" ? (
-                              <span className="mt-1 block text-xs text-destructive">
-                                {access.message}{" "}
-                                <button
-                                  type="button"
-                                  className="font-medium underline underline-offset-2 hover:no-underline"
-                                  onClick={(event) =>
-                                    void handleRetryAccessCheck(event, mailbox)
-                                  }
-                                >
-                                  Try again
-                                </button>
-                              </span>
-                            ) : null}
-                          </span>
-                        </button>
-                      </li>
+                      <MailboxListItem
+                        key={accessKey}
+                        mailbox={mailbox}
+                        access={access}
+                        isSelected={selectedMailbox?.id === mailbox.id}
+                        onSelect={(entry) => void handleSelectMailbox(entry)}
+                        onRetry={(event, entry) =>
+                          void handleRetryAccessCheck(event, entry)
+                        }
+                      />
                     );
                   })}
                 </ul>
