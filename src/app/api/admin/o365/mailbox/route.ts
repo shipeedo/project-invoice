@@ -32,22 +32,21 @@ export async function POST(request: Request) {
   }
 
   let mailboxId = body.mailboxId?.trim() ?? null;
-  if (!mailboxId) {
-    try {
-      const accessToken = await getValidAccessToken(connection);
-      const resolved = await resolveGraphMailboxByAddress(accessToken, mailboxUpn);
-      mailboxId = resolved.id;
-    } catch (error) {
-      return NextResponse.json(
-        {
-          error:
-            error instanceof Error
-              ? error.message
-              : "Could not resolve mailbox address",
-        },
-        { status: 400 },
-      );
-    }
+
+  try {
+    const accessToken = await getValidAccessToken(connection);
+    const resolved = await resolveGraphMailboxByAddress(accessToken, mailboxUpn);
+    mailboxId = resolved.id;
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Could not resolve mailbox address",
+      },
+      { status: 400 },
+    );
   }
 
   const updated = await updateO365Mailbox({

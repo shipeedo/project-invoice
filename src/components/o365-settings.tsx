@@ -394,7 +394,9 @@ export function O365Settings({
           <CardHeader>
             <CardTitle>Invoice mailbox</CardTitle>
             <CardDescription>
-              Search for the shared mailbox where carriers send invoices.
+              Search for a shared mailbox you have read access to. Only mailboxes
+              your account can read are shown (typically shared mailboxes with Full
+              Access granted in Exchange).
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -420,8 +422,8 @@ export function O365Settings({
             <div className="flex items-center justify-between text-sm text-muted-foreground">
               <span>
                 {loadingMailboxes
-                  ? "Loading mailboxes…"
-                  : `${filteredMailboxes.length} mailbox${filteredMailboxes.length === 1 ? "" : "es"}`}
+                  ? "Checking mailbox access…"
+                  : `${filteredMailboxes.length} accessible mailbox${filteredMailboxes.length === 1 ? "" : "es"}`}
               </span>
               <Button
                 type="button"
@@ -441,10 +443,10 @@ export function O365Settings({
               {filteredMailboxes.length === 0 ? (
                 <div className="px-4 py-8 text-center text-sm text-muted-foreground">
                   {loadingMailboxes ? (
-                    "Loading mailboxes…"
+                    "Checking mailbox access…"
                   ) : showAddressFallback ? (
                     <div className="space-y-3">
-                      <p>No matches in the directory for that address.</p>
+                      <p>No accessible mailboxes match that search.</p>
                       <Button
                         type="button"
                         variant="outline"
@@ -452,7 +454,7 @@ export function O365Settings({
                         disabled={resolvingAddress}
                         onClick={() => void resolveAddressAsMailbox(search)}
                       >
-                        {resolvingAddress ? "Checking…" : `Use ${search.trim()}`}
+                        {resolvingAddress ? "Checking access…" : `Check access to ${search.trim()}`}
                       </Button>
                     </div>
                   ) : !hasLoadedMailboxes ? (
@@ -461,10 +463,12 @@ export function O365Settings({
                       className="text-primary underline-offset-4 hover:underline"
                       onClick={() => void loadMailboxes()}
                     >
-                      Load mailboxes
+                      Load your mailbox
                     </button>
+                  ) : search.trim() ? (
+                    "No accessible mailboxes match your search."
                   ) : (
-                    "No mailboxes match your search."
+                    "Type a name or email to search for shared mailboxes you can access."
                   )}
                 </div>
               ) : (

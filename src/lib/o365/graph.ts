@@ -77,6 +77,105 @@ async function graphFetch<T>(accessToken: string, path: string, init?: RequestIn
   return JSON.parse(text) as T;
 }
 
+const MAILBOX_ACCESS_DENIED =
+  "You do not have read access to this mailbox. Ask your Exchange admin to grant you Full Access.";
+
+function isMailboxAccessDenied(status: number, body: string) {
+  if (status === 403) return true;
+  if (status === 404) {
+    return (
+      body.includes("ErrorItemNotFound") ||
+      body.includes("Default folder") ||
+      body.includes("MailboxNotEnabledForRESTAPI")
+    );
+  }
+  return false;
+}
+
+async function graphProbe(accessToken: string, path: string) {
+  const response = await fetch(`https://graph.microsoft.com/v1.0${path}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const text = await response.text();
+  return { ok: response.ok, status: response.status, text };
+}
+
+function mailboxIdentifiers(mailbox: Pick<GraphMailbox, "id" | "mail" | "userPrincipalName">) {
+  return [
+    ...new Set(
+      [mailbox.id, mailbox.mail, mailbox.userPrincipalName].filter(
+        (value): value is string => Boolean(value),
+      ),
+    ),
+  ];
+}
+
+export async function canReadGraphMailbox(
+  accessToken: string,
+  mailbox: Pick<GraphMailbox, "id" | "mail" | "userPrincipalName">,
+) {
+  const probeSuffixes = [
+    "/mailFolders('Inbox')?$select=id",
+    "/mailFolders/inbox?$select=id",
+    "/messages?$top=1&$select=id",
+  ];
+
+  for (const identifier of mailboxIdentifiers(mailbox)) {
+    const mailboxPath = `/users/${encodeURIComponent(identifier)}`;
+    for (const suffix of probeSuffixes) {
+      const result = await graphProbe(accessToken, `${mailboxPath}${suffix}`);
+      if (result.ok) {
+        return true;
+      }
+      if (!isMailboxAccessDenied(result.status, result.text)) {
+        throw new Error(`Microsoft Graph error (${result.status}): ${result.text}`);
+      }
+    }
+  }
+
+  return false;
+}
+
+export async function verifyGraphMailboxReadAccess(
+  accessToken: string,
+  mailbox: GraphMailbox,
+  options?: { signedInUserId?: string },
+) {
+  if (options?.signedInUserId && mailbox.id === options.signedInUserId) {
+    return mailbox;
+  }
+
+  if (!(await canReadGraphMailbox(accessToken, mailbox))) {
+    throw new Error(MAILBOX_ACCESS_DENIED);
+  }
+
+  return mailbox;
+}
+
+async function filterAccessibleMailboxes(
+  accessToken: string,
+  mailboxes: GraphMailbox[],
+  signedInUserId: string,
+) {
+  const accessible: GraphMailbox[] = [];
+  const concurrency = 8;
+
+  for (let index = 0; index < mailboxes.length; index += concurrency) {
+    const batch = mailboxes.slice(index, index + concurrency);
+    const results = await Promise.all(
+      batch.map(async (mailbox) => {
+        if (mailbox.id === signedInUserId) {
+          return mailbox;
+        }
+        return (await canReadGraphMailbox(accessToken, mailbox)) ? mailbox : null;
+      }),
+    );
+    accessible.push(...results.filter((entry): entry is GraphMailbox => entry !== null));
+  }
+
+  return accessible;
+}
+
 function matchesMailboxSearch(mailbox: GraphMailbox, search: string) {
   const normalized = search.trim().toLowerCase();
   if (!normalized) return true;
@@ -89,33 +188,35 @@ function matchesMailboxSearch(mailbox: GraphMailbox, search: string) {
 }
 
 export async function listGraphMailboxes(accessToken: string, search?: string) {
-  const mailboxes: GraphMailbox[] = [];
-
   const me = await graphFetch<GraphMailbox>(
     accessToken,
     "/me?$select=id,displayName,mail,userPrincipalName",
   );
+
+  const candidates: GraphMailbox[] = [];
   if (me.mail || me.userPrincipalName) {
-    mailboxes.push(normalizeGraphMailbox(me));
-  }
-
-  const users = await graphFetch<GraphListResponse<GraphMailbox>>(
-    accessToken,
-    "/users?$select=id,displayName,mail,userPrincipalName&$top=999",
-  );
-
-  for (const user of users.value) {
-    if (!user.mail && !user.userPrincipalName) continue;
-    if (mailboxes.some((entry) => entry.id === user.id)) continue;
-    mailboxes.push(normalizeGraphMailbox(user));
+    candidates.push(normalizeGraphMailbox(me));
   }
 
   const trimmedSearch = search?.trim();
-  const filtered = trimmedSearch
-    ? mailboxes.filter((mailbox) => matchesMailboxSearch(mailbox, trimmedSearch))
-    : mailboxes;
+  if (trimmedSearch) {
+    const users = await graphFetch<GraphListResponse<GraphMailbox>>(
+      accessToken,
+      "/users?$select=id,displayName,mail,userPrincipalName&$top=999",
+    );
 
-  return filtered.sort((a, b) => a.displayName.localeCompare(b.displayName));
+    for (const user of users.value) {
+      if (!user.mail && !user.userPrincipalName) continue;
+      if (user.id === me.id) continue;
+      const mailbox = normalizeGraphMailbox(user);
+      if (!matchesMailboxSearch(mailbox, trimmedSearch)) continue;
+      candidates.push(mailbox);
+      if (candidates.length >= 40) break;
+    }
+  }
+
+  const accessible = await filterAccessibleMailboxes(accessToken, candidates, me.id);
+  return accessible.sort((a, b) => a.displayName.localeCompare(b.displayName));
 }
 
 function normalizeGraphMailbox(user: GraphMailbox): GraphMailbox {
@@ -146,7 +247,11 @@ export async function resolveGraphMailboxByAddress(
     throw new Error("No mailbox found for that address");
   }
 
-  return normalizeGraphMailbox(user);
+  const mailbox = normalizeGraphMailbox(user);
+  const me = await graphFetch<GraphMailbox>(accessToken, "/me?$select=id");
+  return verifyGraphMailboxReadAccess(accessToken, mailbox, {
+    signedInUserId: me.id,
+  });
 }
 
 export async function listInboxMessages(params: {
