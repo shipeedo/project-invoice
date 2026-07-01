@@ -87,6 +87,14 @@ export const invoices = sqliteTable("invoices", {
   assignedToId: text("assigned_to_id").references(() => users.id, {
     onDelete: "set null",
   }),
+  assignedAt: integer("assigned_at", { mode: "timestamp_ms" }),
+  responseDueAt: integer("response_due_at", { mode: "timestamp_ms" }),
+  responseDueRuleId: text("response_due_rule_id").references(
+    () => responseDueRules.id,
+    { onDelete: "set null" },
+  ),
+  escalatedAt: integer("escalated_at", { mode: "timestamp_ms" }),
+  escalationLevel: integer("escalation_level").notNull().default(0),
   createdAt: timestamp(),
   updatedAt: updatedAt(),
 });
@@ -101,6 +109,43 @@ export const notes = sqliteTable("notes", {
   userId: text("user_id"),
   content: text("content").notNull(),
   createdAt: timestamp(),
+});
+
+export const responseDueRules = sqliteTable("response_due_rules", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => createId()),
+  organizationId: text("organization_id")
+    .notNull()
+    .references(() => organizations.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  priority: integer("priority").notNull(),
+  anchor: text("anchor", {
+    enum: ["INVOICE_DUE_DATE", "RECEIVED_AT", "VALIDATED_AT"],
+  }).notNull(),
+  offsetDays: integer("offset_days").notNull(),
+  direction: text("direction", { enum: ["BEFORE", "AFTER"] }).notNull(),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  createdAt: timestamp(),
+  updatedAt: updatedAt(),
+});
+
+export const escalationRules = sqliteTable("escalation_rules", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => createId()),
+  organizationId: text("organization_id")
+    .notNull()
+    .references(() => organizations.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  priority: integer("priority").notNull(),
+  daysWithoutAction: integer("days_without_action").notNull(),
+  escalateToUserId: text("escalate_to_user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  createdAt: timestamp(),
+  updatedAt: updatedAt(),
 });
 
 export const routingRules = sqliteTable("routing_rules", {
@@ -175,6 +220,8 @@ export const organizationsRelations = relations(organizations, ({ many }) => ({
   invoices: many(invoices),
   suppliers: many(suppliers),
   routingRules: many(routingRules),
+  responseDueRules: many(responseDueRules),
+  escalationRules: many(escalationRules),
 }));
 
 export const usersRelations = relations(users, ({ one, many }) => ({
@@ -184,6 +231,7 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   }),
   assignedInvoices: many(invoices),
   routingRules: many(routingRules),
+  escalationRules: many(escalationRules),
   auditEvents: many(auditEvents),
   creditDrafts: many(creditDrafts),
 }));
@@ -201,6 +249,10 @@ export const invoicesRelations = relations(invoices, ({ one, many }) => ({
     fields: [invoices.assignedToId],
     references: [users.id],
   }),
+  responseDueRule: one(responseDueRules, {
+    fields: [invoices.responseDueRuleId],
+    references: [responseDueRules.id],
+  }),
   validatedBy: one(users, {
     fields: [invoices.validatedById],
     references: [users.id],
@@ -214,6 +266,25 @@ export const notesRelations = relations(notes, ({ one }) => ({
   invoice: one(invoices, {
     fields: [notes.invoiceId],
     references: [invoices.id],
+  }),
+}));
+
+export const responseDueRulesRelations = relations(responseDueRules, ({ one, many }) => ({
+  organization: one(organizations, {
+    fields: [responseDueRules.organizationId],
+    references: [organizations.id],
+  }),
+  invoices: many(invoices),
+}));
+
+export const escalationRulesRelations = relations(escalationRules, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [escalationRules.organizationId],
+    references: [organizations.id],
+  }),
+  escalateTo: one(users, {
+    fields: [escalationRules.escalateToUserId],
+    references: [users.id],
   }),
 }));
 
@@ -262,6 +333,8 @@ export type Organization = typeof organizations.$inferSelect;
 export type User = typeof users.$inferSelect;
 export type Invoice = typeof invoices.$inferSelect;
 export type RoutingRule = typeof routingRules.$inferSelect;
+export type ResponseDueRule = typeof responseDueRules.$inferSelect;
+export type EscalationRule = typeof escalationRules.$inferSelect;
 export type Supplier = typeof suppliers.$inferSelect;
 export type AuditEvent = typeof auditEvents.$inferSelect;
 export type CreditDraft = typeof creditDrafts.$inferSelect;

@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  AlarmClockIcon,
   FileTextIcon,
   GalleryVerticalEndIcon,
   RouteIcon,
@@ -62,6 +63,18 @@ export function AppSidebar({ user, activePath, ...props }: AppSidebarProps) {
           url: "/admin/routing-rules",
           icon: <RouteIcon />,
           isActive: activePath === "/admin/routing-rules",
+        },
+        {
+          name: "Response due rules",
+          url: "/admin/response-due-rules",
+          icon: <AlarmClockIcon />,
+          isActive: activePath === "/admin/response-due-rules",
+        },
+        {
+          name: "Escalation rules",
+          url: "/admin/escalation-rules",
+          icon: <AlarmClockIcon />,
+          isActive: activePath === "/admin/escalation-rules",
         },
         {
           name: "Suppliers",

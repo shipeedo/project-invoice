@@ -2,6 +2,7 @@ import { and, asc, desc, eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { CreditDraftForm } from "@/components/credit-draft-form";
+import { DueDateBadge } from "@/components/due-date-badge";
 import { InvoiceActions } from "@/components/invoice-actions";
 import { InvoiceValidationPanel } from "@/components/invoice-validation-panel";
 import { StatusBadge } from "@/components/status-badge";
@@ -19,6 +20,8 @@ import {
 import { auditEvents, db, invoices, notes, suppliers } from "@/lib/db";
 import { parseExtractionCandidates } from "@/lib/extraction-types";
 import type { ExtractedLineItem } from "@/lib/extraction";
+import { getDueDateUrgency, getResponseDueUrgency } from "@/lib/due-dates";
+import { formatResponseDueRule } from "@/lib/response-due-rule-display";
 import { requireSession, formatCurrency, formatDate } from "@/lib/session";
 import { cn } from "@/lib/utils";
 
@@ -42,6 +45,7 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
     ),
     with: {
       assignedTo: { columns: { name: true, email: true } },
+      responseDueRule: true,
       supplier: { columns: { id: true, name: true } },
       validatedBy: { columns: { name: true, email: true } },
       notes: { orderBy: desc(notes.createdAt) },
@@ -74,6 +78,8 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
   const awaitingValidation = ["PENDING_VALIDATION", "NEEDS_REVIEW"].includes(
     invoice.status,
   );
+  const dueUrgency = getDueDateUrgency(invoice.dueDate);
+  const responseUrgency = getResponseDueUrgency(invoice.responseDueAt);
 
   return (
     <AppShell
@@ -98,6 +104,12 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
               {invoice.assignedTo
                 ? ` · Assigned to ${invoice.assignedTo.name ?? invoice.assignedTo.email}`
                 : null}
+              {invoice.responseDueAt
+                ? ` · Response due ${formatDate(invoice.responseDueAt)}`
+                : null}
+              {invoice.escalationLevel > 0
+                ? ` · Escalated ${invoice.escalationLevel} time${invoice.escalationLevel === 1 ? "" : "s"}`
+                : null}
             </p>
             {invoice.supplier ? (
               <p className="mt-1 text-sm text-muted-foreground">
@@ -111,6 +123,17 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
         {invoice.parseError ? (
           <Alert variant="destructive">
             <AlertDescription>Extraction issue: {invoice.parseError}</AlertDescription>
+          </Alert>
+        ) : null}
+
+        {(dueUrgency === "overdue" || responseUrgency === "overdue") ? (
+          <Alert variant="destructive">
+            <AlertDescription>
+              {dueUrgency === "overdue" ? "Invoice payment due date has passed. " : ""}
+              {responseUrgency === "overdue"
+                ? "Response due date has passed — an outcome is required."
+                : ""}
+            </AlertDescription>
           </Alert>
         ) : null}
 
@@ -163,8 +186,31 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
                 </div>
                 <div>
                   <dt className="text-muted-foreground">Due date</dt>
-                  <dd className="font-medium">{formatDate(invoice.dueDate)}</dd>
+                  <dd className="flex items-center gap-2 font-medium">
+                    {formatDate(invoice.dueDate)}
+                    <DueDateBadge urgency={dueUrgency} />
+                  </dd>
                 </div>
+                <div>
+                  <dt className="text-muted-foreground">Response due</dt>
+                  <dd className="flex items-center gap-2 font-medium">
+                    {formatDate(invoice.responseDueAt)}
+                    <DueDateBadge urgency={responseUrgency} />
+                  </dd>
+                </div>
+                {invoice.responseDueRule ? (
+                  <div className="col-span-2">
+                    <dt className="text-muted-foreground">Response due rule</dt>
+                    <dd className="font-medium">
+                      {invoice.responseDueRule.name} —{" "}
+                      {formatResponseDueRule(
+                        invoice.responseDueRule.anchor,
+                        invoice.responseDueRule.offsetDays,
+                        invoice.responseDueRule.direction,
+                      )}
+                    </dd>
+                  </div>
+                ) : null}
                 <div>
                   <dt className="text-muted-foreground">Total</dt>
                   <dd className="font-medium">

@@ -1,6 +1,7 @@
 import Link from "next/link";
-import { desc, eq } from "drizzle-orm";
+import { asc, desc, eq } from "drizzle-orm";
 import { AppShell } from "@/components/app-shell";
+import { DueDateBadge } from "@/components/due-date-badge";
 import { StatusBadge } from "@/components/status-badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,6 +14,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { db, invoices } from "@/lib/db";
+import { getDueDateUrgency, getResponseDueUrgency } from "@/lib/due-dates";
 import { requireSession, formatCurrency, formatDate } from "@/lib/session";
 import { cn } from "@/lib/utils";
 
@@ -24,7 +26,7 @@ export default async function QueuePage() {
     with: {
       assignedTo: { columns: { name: true, email: true } },
     },
-    orderBy: desc(invoices.createdAt),
+    orderBy: [asc(invoices.responseDueAt), desc(invoices.createdAt)],
   });
 
   const myQueue = rows.filter(
@@ -63,6 +65,8 @@ export default async function QueuePage() {
                   <TableHead>Vendor</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Total</TableHead>
+                  <TableHead>Due date</TableHead>
+                  <TableHead>Response due</TableHead>
                   <TableHead>Assigned to</TableHead>
                   <TableHead>Received</TableHead>
                 </TableRow>
@@ -70,12 +74,16 @@ export default async function QueuePage() {
               <TableBody>
                 {rows.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center text-muted-foreground">
+                    <TableCell colSpan={7} className="text-center text-muted-foreground">
                       No invoices yet. Upload a PDF to start the pilot flow.
                     </TableCell>
                   </TableRow>
                 ) : (
-                  rows.map((invoice) => (
+                  rows.map((invoice) => {
+                    const dueUrgency = getDueDateUrgency(invoice.dueDate);
+                    const responseUrgency = getResponseDueUrgency(invoice.responseDueAt);
+
+                    return (
                     <TableRow key={invoice.id}>
                       <TableCell>
                         <Link href={`/invoices/${invoice.id}`} className="font-medium hover:underline">
@@ -83,6 +91,9 @@ export default async function QueuePage() {
                         </Link>
                         {invoice.parseError ? (
                           <p className="text-xs text-destructive">Parse issue: {invoice.parseError}</p>
+                        ) : null}
+                        {invoice.escalationLevel > 0 ? (
+                          <p className="text-xs text-muted-foreground">Escalated</p>
                         ) : null}
                       </TableCell>
                       <TableCell>
@@ -92,11 +103,24 @@ export default async function QueuePage() {
                         {formatCurrency(invoice.totalAmount, invoice.currency ?? "AUD")}
                       </TableCell>
                       <TableCell>
+                        <div className="flex items-center gap-2">
+                          <span>{formatDate(invoice.dueDate)}</span>
+                          <DueDateBadge urgency={dueUrgency} />
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <span>{formatDate(invoice.responseDueAt)}</span>
+                          <DueDateBadge urgency={responseUrgency} />
+                        </div>
+                      </TableCell>
+                      <TableCell>
                         {invoice.assignedTo?.name ?? invoice.assignedTo?.email ?? "Unassigned"}
                       </TableCell>
                       <TableCell>{formatDate(invoice.createdAt)}</TableCell>
                     </TableRow>
-                  ))
+                    );
+                  })
                 )}
               </TableBody>
             </Table>
@@ -117,6 +141,11 @@ export default async function QueuePage() {
                     <Link href={`/invoices/${invoice.id}`} className="hover:underline">
                       {invoice.vendorName ?? invoice.originalFileName} —{" "}
                       {invoice.status.toLowerCase().replaceAll("_", " ")}
+                      {invoice.responseDueAt
+                        ? ` · response due ${formatDate(invoice.responseDueAt)}`
+                        : invoice.dueDate
+                          ? ` · due ${formatDate(invoice.dueDate)}`
+                          : ""}
                     </Link>
                   </li>
                 ))

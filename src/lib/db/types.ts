@@ -23,3 +23,13 @@ export const routingRuleTypes = [
   "DEFAULT",
 ] as const;
 export type RoutingRuleType = (typeof routingRuleTypes)[number];
+
+export const responseDueRuleAnchors = [
+  "INVOICE_DUE_DATE",
+  "RECEIVED_AT",
+  "VALIDATED_AT",
+] as const;
+export type ResponseDueRuleAnchor = (typeof responseDueRuleAnchors)[number];
+
+export const responseDueRuleDirections = ["BEFORE", "AFTER"] as const;
+export type ResponseDueRuleDirection = (typeof responseDueRuleDirections)[number];

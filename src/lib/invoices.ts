@@ -8,6 +8,11 @@ import {
 } from "@/lib/extraction";
 import type { ExtractionCandidates, ValidatableField } from "@/lib/extraction-types";
 import { assignApproverForInvoice, ensureDefaultRoutingRules } from "@/lib/routing";
+import { ensureDefaultEscalationRule } from "@/lib/escalation";
+import {
+  ensureDefaultResponseDueRules,
+  resolveResponseDueForInvoice,
+} from "@/lib/response-due";
 import {
   buildNewSupplierValues,
   findMatchingSupplier,
@@ -49,6 +54,8 @@ export async function processUploadedInvoice(params: {
   mimeType: string;
 }) {
   await ensureDefaultRoutingRules(params.organizationId);
+  await ensureDefaultResponseDueRules(params.organizationId);
+  await ensureDefaultEscalationRule(params.organizationId);
 
   const [invoice] = await db
     .insert(invoices)
@@ -258,12 +265,20 @@ export async function validateInvoice(input: ValidateInvoiceInput) {
     validatedInvoice,
   );
 
+  const now = new Date();
+  const responseDue = approver
+    ? await resolveResponseDueForInvoice(input.organizationId, validatedInvoice)
+    : null;
+
   const [routedInvoice] = await db
     .update(invoices)
     .set({
       assignedToId: approver?.id ?? null,
+      assignedAt: approver ? now : null,
+      responseDueAt: responseDue?.responseDueAt ?? null,
+      responseDueRuleId: responseDue?.ruleId ?? null,
       status: approver ? "PENDING_APPROVAL" : "NEEDS_REVIEW",
-      updatedAt: new Date(),
+      updatedAt: now,
     })
     .where(eq(invoices.id, input.invoiceId))
     .returning();
@@ -284,7 +299,12 @@ export async function validateInvoice(input: ValidateInvoiceInput) {
       invoiceId: input.invoiceId,
       userId: input.userId,
       action: "invoice.routed",
-      details: { assignedToId: approver.id, assignedToEmail: approver.email },
+      details: {
+        assignedToId: approver.id,
+        assignedToEmail: approver.email,
+        responseDueAt: responseDue?.responseDueAt?.toISOString(),
+        responseDueRuleId: responseDue?.ruleId,
+      },
     });
   }
 
