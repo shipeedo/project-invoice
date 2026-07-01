@@ -2,9 +2,11 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { FileTextIcon } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { CreateSupplierFromEmailPanel } from "@/components/create-supplier-from-email-panel";
 import {
   InboxConversationMessage,
@@ -44,6 +46,19 @@ export function InboxThreadView({
     () => collectThreadAttachments(messages),
     [messages],
   );
+
+  const linkedInvoices = useMemo(() => {
+    const seen = new Map<
+      string,
+      NonNullable<ConversationMessage["invoice"]>
+    >();
+    for (const message of messages) {
+      if (message.invoice && !seen.has(message.invoice.id)) {
+        seen.set(message.invoice.id, message.invoice);
+      }
+    }
+    return Array.from(seen.values());
+  }, [messages]);
 
   const hasUnknownSender = !supplier;
 
@@ -115,6 +130,28 @@ export function InboxThreadView({
             </Badge>
           )}
         </div>
+
+        {linkedInvoices.length > 0 ? (
+          <div className="mt-4 flex flex-wrap gap-2">
+            {linkedInvoices.map((invoice) => {
+              const label =
+                invoice.vendorName ??
+                invoice.originalFileName ??
+                invoice.id;
+              return (
+                <Link
+                  key={invoice.id}
+                  href={`/invoices/${invoice.id}`}
+                  className={cn(buttonVariants(), "h-9 px-4")}
+                >
+                  <FileTextIcon className="size-4" />
+                  View linked invoice
+                  <span className="font-normal opacity-80">· {label}</span>
+                </Link>
+              );
+            })}
+          </div>
+        ) : null}
       </header>
 
       <InboxThreadAttachments attachments={threadAttachments} />

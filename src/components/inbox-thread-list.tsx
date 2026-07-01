@@ -76,8 +76,8 @@ export function InboxThreadList({ threads, activeThreadId }: InboxThreadListProp
   );
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="border-b p-3">
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="shrink-0 border-b p-3">
         <Input
           value={filter}
           onChange={(event) => setFilter(event.target.value)}

@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { ChevronDownIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -139,20 +138,6 @@ export function InboxConversationMessage({
                 <p className="text-muted-foreground">No message body.</p>
               )}
             </div>
-
-            {message.invoice ? (
-              <p className="mt-4 text-sm">
-                <Link
-                  href={`/invoices/${message.invoice.id}`}
-                  className="font-medium text-primary underline-offset-4 hover:underline"
-                >
-                  View linked invoice:{" "}
-                  {message.invoice.vendorName ??
-                    message.invoice.originalFileName ??
-                    message.invoice.id}
-                </Link>
-              </p>
-            ) : null}
 
             {message.direction === "INBOUND" && !message.supplierId ? (
               <Button

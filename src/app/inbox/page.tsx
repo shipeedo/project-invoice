@@ -15,9 +15,9 @@ export default async function InboxPage() {
   const connected = connection?.status === "CONNECTED";
 
   return (
-    <AppShell user={session.user} activePath="/inbox" breadcrumbs={[{ label: "Inbox" }]}>
-      <InboxLayout threads={threads} connected={connected}>
-        <div className="flex flex-1 flex-col items-center justify-center px-6 text-center">
+    <AppShell user={session.user} activePath="/inbox" fillViewport breadcrumbs={[{ label: "Inbox" }]}>
+      <InboxLayout threads={threads}>
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-hidden px-6 text-center">
           {threads.length === 0 ? (
             <>
               <p className="text-sm text-muted-foreground">
