@@ -367,7 +367,19 @@ export async function listMessageAttachments(params: {
 }) {
   return graphFetch<GraphListResponse<GraphAttachment>>(
     params.accessToken,
-    `/users/${encodeURIComponent(params.mailbox)}/messages/${encodeURIComponent(params.messageId)}/attachments?$select=id,name,contentType,size,isInline,contentId`,
+    `/users/${encodeURIComponent(params.mailbox)}/messages/${encodeURIComponent(params.messageId)}/attachments?$select=id,name,contentType,size,isInline`,
+  );
+}
+
+export async function getFileAttachmentMetadata(params: {
+  accessToken: string;
+  mailbox: string;
+  messageId: string;
+  attachmentId: string;
+}) {
+  return graphFetch<GraphAttachment>(
+    params.accessToken,
+    `/users/${encodeURIComponent(params.mailbox)}/messages/${encodeURIComponent(params.messageId)}/attachments/${encodeURIComponent(params.attachmentId)}?$select=id,name,contentType,size,isInline,contentId`,
   );
 }
 
@@ -377,7 +389,9 @@ export async function downloadFileAttachment(params: {
   messageId: string;
   attachmentId: string;
 }) {
-  const attachment = await graphFetch<GraphAttachment & { contentBytes?: string }>(
+  const attachment = await graphFetch<
+    GraphAttachment & { contentBytes?: string }
+  >(
     params.accessToken,
     `/users/${encodeURIComponent(params.mailbox)}/messages/${encodeURIComponent(params.messageId)}/attachments/${encodeURIComponent(params.attachmentId)}`,
   );
@@ -391,6 +405,8 @@ export async function downloadFileAttachment(params: {
     contentType: attachment.contentType ?? "application/octet-stream",
     size: attachment.size ?? Buffer.from(attachment.contentBytes, "base64").length,
     buffer: Buffer.from(attachment.contentBytes, "base64"),
+    isInline: attachment.isInline ?? false,
+    contentId: attachment.contentId ?? null,
   };
 }
 

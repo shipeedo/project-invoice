@@ -17,6 +17,7 @@ import {
   downloadFileAttachment,
   extractEmailAddresses,
   extractMessageBody,
+  getFileAttachmentMetadata,
   getMessageDetails,
   listInboxMessages,
   listMessageAttachments,
@@ -111,10 +112,8 @@ async function syncMessageAttachments(params: {
       continue;
     }
 
-    const fileName = attachment.name ?? attachment.contentId ?? attachment.id;
+    const fileName = attachment.name ?? attachment.id;
     if (!fileName) continue;
-    const isInline = attachment.isInline ?? false;
-    const contentId = attachment.contentId ?? null;
 
     const existing = await db.query.mailboxMessageAttachments.findFirst({
       where: and(
@@ -124,10 +123,21 @@ async function syncMessageAttachments(params: {
     });
 
     if (existing) {
-      await db
-        .update(mailboxMessageAttachments)
-        .set({ isInline, contentId })
-        .where(eq(mailboxMessageAttachments.id, existing.id));
+      if (existing.contentId == null) {
+        const meta = await getFileAttachmentMetadata({
+          accessToken: params.accessToken,
+          mailbox: params.mailbox,
+          messageId: params.graphMessageId,
+          attachmentId: attachment.id,
+        });
+        await db
+          .update(mailboxMessageAttachments)
+          .set({
+            isInline: meta.isInline ?? attachment.isInline ?? false,
+            contentId: meta.contentId ?? null,
+          })
+          .where(eq(mailboxMessageAttachments.id, existing.id));
+      }
       continue;
     }
 
@@ -152,8 +162,8 @@ async function syncMessageAttachments(params: {
       filePath: saved.storedPath,
       mimeType: saved.mimeType,
       size: saved.size,
-      isInline,
-      contentId,
+      isInline: downloaded.isInline,
+      contentId: downloaded.contentId,
     });
   }
 }
