@@ -8,7 +8,7 @@ import {
   UnplugIcon,
   XIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -184,6 +184,12 @@ export function O365Settings({
     : undefined;
 
   async function handleSelectMailbox(mailbox: Mailbox) {
+    setSelectedMailbox(mailbox);
+    await checkMailboxAccess(mailbox);
+  }
+
+  async function handleRetryAccessCheck(event: MouseEvent, mailbox: Mailbox) {
+    event.stopPropagation();
     setSelectedMailbox(mailbox);
     await checkMailboxAccess(mailbox);
   }
@@ -473,9 +479,13 @@ export function O365Settings({
                       <li key={mailbox.id}>
                         <button
                           type="button"
-                          onClick={() => void handleSelectMailbox(mailbox)}
+                          onClick={() => {
+                            if (access?.status === "checking") return;
+                            void handleSelectMailbox(mailbox);
+                          }}
+                          disabled={access?.status === "checking"}
                           className={cn(
-                            "flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/50",
+                            "flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/50 disabled:cursor-wait disabled:opacity-80",
                             isSelected && access?.status !== "denied" && "bg-primary/5",
                             access?.status === "granted" &&
                               "bg-green-500/5 hover:bg-green-500/10",
@@ -517,7 +527,16 @@ export function O365Settings({
                             ) : null}
                             {access?.status === "denied" ? (
                               <span className="mt-1 block text-xs text-destructive">
-                                {access.message}
+                                {access.message}{" "}
+                                <button
+                                  type="button"
+                                  className="font-medium underline underline-offset-2 hover:no-underline"
+                                  onClick={(event) =>
+                                    void handleRetryAccessCheck(event, mailbox)
+                                  }
+                                >
+                                  Try again
+                                </button>
                               </span>
                             ) : null}
                           </span>
