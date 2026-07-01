@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { CreateSupplierFromEmailPanel } from "@/components/create-supplier-from-email-panel";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
@@ -58,9 +59,9 @@ export function InboxThreadView({
   const [files, setFiles] = useState<FileList | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [creatingSupplierFor, setCreatingSupplierFor] = useState<string | null>(
-    null,
-  );
+  const [createSupplierMessage, setCreateSupplierMessage] =
+    useState<ThreadMessage | null>(null);
+  const [createSupplierOpen, setCreateSupplierOpen] = useState(false);
 
   const hasUnknownSender = messages.some(
     (message) => message.direction === "INBOUND" && !message.supplierId,
@@ -97,28 +98,10 @@ export function InboxThreadView({
     router.refresh();
   }
 
-  async function handleCreateSupplier(messageId: string, fromName: string | null) {
-    setCreatingSupplierFor(messageId);
+  function openCreateSupplierPanel(message: ThreadMessage) {
     setError(null);
-
-    const response = await fetch(
-      `/api/inbox/messages/${messageId}/create-supplier`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: fromName ?? undefined }),
-      },
-    );
-
-    setCreatingSupplierFor(null);
-
-    if (!response.ok) {
-      const payload = (await response.json()) as { error?: string };
-      setError(payload.error ?? "Failed to create supplier");
-      return;
-    }
-
-    router.refresh();
+    setCreateSupplierMessage(message);
+    setCreateSupplierOpen(true);
   }
 
   return (
@@ -221,14 +204,9 @@ export function InboxThreadView({
                 <Button
                   size="sm"
                   className="mt-4"
-                  disabled={creatingSupplierFor === message.id}
-                  onClick={() =>
-                    void handleCreateSupplier(message.id, message.fromName)
-                  }
+                  onClick={() => openCreateSupplierPanel(message)}
                 >
-                  {creatingSupplierFor === message.id
-                    ? "Analyzing email…"
-                    : "Create supplier from this email"}
+                  Create supplier from this email
                 </Button>
               ) : null}
             </article>
@@ -258,6 +236,13 @@ export function InboxThreadView({
           </div>
         </form>
       </footer>
+
+      <CreateSupplierFromEmailPanel
+        message={createSupplierMessage}
+        open={createSupplierOpen}
+        onOpenChange={setCreateSupplierOpen}
+        onCreated={() => router.refresh()}
+      />
     </div>
   );
 }

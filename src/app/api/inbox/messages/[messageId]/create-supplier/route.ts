@@ -15,7 +15,20 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   const { messageId } = await context.params;
-  const body = (await request.json()) as { name?: string };
+  const body = (await request.json()) as {
+    name?: string;
+    email?: string;
+    contactName?: string;
+    domain?: string;
+  };
+
+  if (!body.name?.trim()) {
+    return NextResponse.json({ error: "Supplier name is required" }, { status: 400 });
+  }
+
+  if (!body.email?.trim()) {
+    return NextResponse.json({ error: "Email address is required" }, { status: 400 });
+  }
 
   const message = await db.query.mailboxMessages.findFirst({
     where: and(
@@ -31,7 +44,10 @@ export async function POST(request: Request, context: RouteContext) {
   const outcome = await createSupplierFromMessage({
     organizationId: session.user.organizationId,
     messageId,
-    name: body.name,
+    name: body.name.trim(),
+    email: body.email.trim(),
+    contactName: body.contactName?.trim() || undefined,
+    emailDomains: body.domain?.trim() ? [body.domain.trim()] : undefined,
   });
 
   if ("error" in outcome && outcome.error) {

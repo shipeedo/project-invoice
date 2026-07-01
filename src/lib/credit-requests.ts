@@ -6,16 +6,11 @@ import {
   linkSupplierToThreadsAndMessages,
 } from "@/lib/email-contacts";
 import {
-  extractSupplierFromEmail,
-  type ExtractedSupplierFromEmail,
-} from "@/lib/supplier-from-email-extraction";
-import {
   creditRequests,
   db,
   emailThreads,
   invoices,
   mailboxMessages,
-  type MailboxMessage,
 } from "@/lib/db";
 import type { CarrierDecision, CreditRequestStatus } from "@/lib/db/types";
 import { getO365Connection, getValidAccessToken, resolveGraphMailboxUser } from "@/lib/o365/connection";
@@ -292,7 +287,10 @@ export async function updateCreditRequestStatus(params: {
 export async function createSupplierFromMessage(params: {
   organizationId: string;
   messageId: string;
-  name?: string;
+  name: string;
+  email: string;
+  contactName?: string;
+  emailDomains?: string[];
 }) {
   const message = await db.query.mailboxMessages.findFirst({
     where: and(
@@ -301,19 +299,31 @@ export async function createSupplierFromMessage(params: {
     ),
   });
 
-  if (!message?.fromEmail) {
-    return { error: "Message has no sender email" as const };
+  if (!message) {
+    return { error: "Message not found" as const };
   }
 
-  const extraction = await extractSupplierFromEmail(message);
-  const resolved = resolveSupplierDetailsFromMessage(message, extraction.data, params.name);
+  const email = params.email.trim().toLowerCase();
+  if (!email.includes("@")) {
+    return { error: "A valid email address is required" as const };
+  }
+
+  const name = params.name.trim();
+  if (!name) {
+    return { error: "Supplier name is required" as const };
+  }
+
+  const domain = email.split("@")[1]?.toLowerCase();
+  const emailDomains =
+    params.emailDomains?.map((entry) => entry.trim().toLowerCase()).filter(Boolean) ??
+    (domain ? [domain] : []);
 
   const outcome = await createSupplierFromEmailContact({
     organizationId: params.organizationId,
-    email: resolved.email,
-    name: resolved.name,
-    contactName: resolved.contactName ?? undefined,
-    emailDomains: resolved.emailDomains,
+    email,
+    name,
+    contactName: params.contactName,
+    emailDomains,
   });
 
   if ("error" in outcome && outcome.error) {
@@ -323,7 +333,7 @@ export async function createSupplierFromMessage(params: {
   await linkSupplierToThreadsAndMessages({
     organizationId: params.organizationId,
     supplierId: outcome.supplier!.id,
-    email: resolved.email,
+    email,
   });
 
   await db
@@ -339,28 +349,4 @@ export async function createSupplierFromMessage(params: {
   }
 
   return outcome;
-}
-
-function resolveSupplierDetailsFromMessage(
-  message: MailboxMessage,
-  extracted: ExtractedSupplierFromEmail | null,
-  overrideName?: string,
-) {
-  const email = extracted?.senderEmail ?? message.fromEmail!.trim().toLowerCase();
-  const domain =
-    extracted?.domain ??
-    email.split("@")[1]?.toLowerCase() ??
-    null;
-
-  return {
-    email,
-    name:
-      overrideName?.trim() ||
-      extracted?.company ||
-      message.fromName?.trim() ||
-      domain ||
-      email,
-    contactName: extracted?.contactName ?? message.fromName?.trim() ?? null,
-    emailDomains: domain ? [domain] : [],
-  };
 }
