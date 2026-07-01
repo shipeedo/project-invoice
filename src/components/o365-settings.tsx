@@ -2,9 +2,11 @@
 
 import {
   CheckIcon,
+  Loader2Icon,
   MailIcon,
   RefreshCwIcon,
   UnplugIcon,
+  XIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -67,8 +69,7 @@ function matchesQuery(mailbox: Mailbox, query: string) {
   );
 }
 
-type AccessCheckState =
-  | { status: "idle" }
+type MailboxAccessState =
   | { status: "checking" }
   | { status: "granted" }
   | { status: "denied"; message: string };
@@ -94,7 +95,9 @@ export function O365Settings({
     );
   });
   const [loadingMailboxes, setLoadingMailboxes] = useState(false);
-  const [accessCheck, setAccessCheck] = useState<AccessCheckState>({ status: "idle" });
+  const [accessByMailboxId, setAccessByMailboxId] = useState<
+    Record<string, MailboxAccessState>
+  >({});
   const [savingMailbox, setSavingMailbox] = useState(false);
   const [polling, setPolling] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
@@ -128,7 +131,10 @@ export function O365Settings({
   );
 
   const checkMailboxAccess = useCallback(async (mailbox: Mailbox) => {
-    setAccessCheck({ status: "checking" });
+    setAccessByMailboxId((current) => ({
+      ...current,
+      [mailbox.id]: { status: "checking" },
+    }));
     setError(null);
     try {
       const params = new URLSearchParams({
@@ -144,25 +150,38 @@ export function O365Settings({
         throw new Error(data.error ?? "Failed to check mailbox access");
       }
       if (data.accessible) {
-        setAccessCheck({ status: "granted" });
+        setAccessByMailboxId((current) => ({
+          ...current,
+          [mailbox.id]: { status: "granted" },
+        }));
       } else {
-        setAccessCheck({
-          status: "denied",
-          message:
-            data.error ??
-            "You do not have read access to this mailbox. Ask your Exchange admin to grant you Full Access.",
-        });
+        setAccessByMailboxId((current) => ({
+          ...current,
+          [mailbox.id]: {
+            status: "denied",
+            message:
+              data.error ??
+              "You do not have read access to this mailbox. Ask your Exchange admin to grant you Full Access.",
+          },
+        }));
       }
     } catch (checkError) {
-      setAccessCheck({
-        status: "denied",
-        message:
-          checkError instanceof Error
-            ? checkError.message
-            : "Failed to check mailbox access",
-      });
+      setAccessByMailboxId((current) => ({
+        ...current,
+        [mailbox.id]: {
+          status: "denied",
+          message:
+            checkError instanceof Error
+              ? checkError.message
+              : "Failed to check mailbox access",
+        },
+      }));
     }
   }, []);
+
+  const selectedAccess = selectedMailbox
+    ? accessByMailboxId[selectedMailbox.id]
+    : undefined;
 
   async function handleSelectMailbox(mailbox: Mailbox) {
     setSelectedMailbox(mailbox);
@@ -191,10 +210,8 @@ export function O365Settings({
     }
   }, []);
 
-  // Fetch accessible mailboxes when O365 is connected (client-side; can take a moment).
   useEffect(() => {
     if (status.status === "CONNECTED") {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional mount fetch
       void loadMailboxes();
     }
   }, [status.status, loadMailboxes]);
@@ -205,8 +222,13 @@ export function O365Settings({
       return;
     }
 
-    if (accessCheck.status === "denied") {
-      setError(accessCheck.message);
+    if (selectedAccess?.status === "denied") {
+      setError(selectedAccess.message);
+      return;
+    }
+
+    if (selectedAccess?.status !== "granted") {
+      setError("Select a mailbox and wait for read access to be confirmed");
       return;
     }
 
@@ -282,7 +304,7 @@ export function O365Settings({
       }
       setMailboxes([]);
       setSelectedMailbox(null);
-      setAccessCheck({ status: "idle" });
+      setAccessByMailboxId({});
       setMessage("Office 365 disconnected.");
       await refreshStatus();
     } catch (disconnectError) {
@@ -446,6 +468,7 @@ export function O365Settings({
                   {filteredMailboxes.map((mailbox) => {
                     const isSelected = selectedMailbox?.id === mailbox.id;
                     const address = mailboxAddress(mailbox);
+                    const access = accessByMailboxId[mailbox.id];
                     return (
                       <li key={mailbox.id}>
                         <button
@@ -453,18 +476,27 @@ export function O365Settings({
                           onClick={() => void handleSelectMailbox(mailbox)}
                           className={cn(
                             "flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/50",
-                            isSelected && "bg-primary/5",
+                            isSelected && access?.status !== "denied" && "bg-primary/5",
+                            access?.status === "granted" &&
+                              "bg-green-500/5 hover:bg-green-500/10",
+                            access?.status === "denied" &&
+                              "bg-destructive/5 hover:bg-destructive/10",
                           )}
                         >
-                          <span
-                            className={cn(
-                              "mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border",
-                              isSelected
-                                ? "border-primary bg-primary text-primary-foreground"
-                                : "border-muted-foreground/30",
+                          <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center">
+                            {access?.status === "checking" ? (
+                              <Loader2Icon className="size-5 animate-spin text-muted-foreground" />
+                            ) : access?.status === "granted" ? (
+                              <span className="flex size-5 items-center justify-center rounded-full bg-green-600 text-white">
+                                <CheckIcon className="size-3" />
+                              </span>
+                            ) : access?.status === "denied" ? (
+                              <span className="flex size-5 items-center justify-center rounded-full bg-destructive text-white">
+                                <XIcon className="size-3" />
+                              </span>
+                            ) : (
+                              <span className="size-5 rounded-full border border-muted-foreground/30" />
                             )}
-                          >
-                            {isSelected ? <CheckIcon className="size-3" /> : null}
                           </span>
                           <span className="min-w-0 flex-1">
                             <span className="block font-medium">
@@ -473,6 +505,21 @@ export function O365Settings({
                             <span className="block truncate text-sm text-muted-foreground">
                               {address}
                             </span>
+                            {access?.status === "checking" ? (
+                              <span className="mt-1 block text-xs text-muted-foreground">
+                                Checking read access…
+                              </span>
+                            ) : null}
+                            {access?.status === "granted" ? (
+                              <span className="mt-1 block text-xs text-green-700 dark:text-green-400">
+                                Read access confirmed
+                              </span>
+                            ) : null}
+                            {access?.status === "denied" ? (
+                              <span className="mt-1 block text-xs text-destructive">
+                                {access.message}
+                              </span>
+                            ) : null}
                           </span>
                         </button>
                       </li>
@@ -482,31 +529,14 @@ export function O365Settings({
               )}
             </div>
 
-            {selectedMailbox && accessCheck.status === "checking" ? (
-              <p className="text-sm text-muted-foreground">Checking read access…</p>
-            ) : null}
-
-            {selectedMailbox && accessCheck.status === "granted" ? (
-              <Alert>
-                <AlertDescription>
-                  Read access confirmed for {mailboxAddress(selectedMailbox)}.
-                </AlertDescription>
-              </Alert>
-            ) : null}
-
-            {selectedMailbox && accessCheck.status === "denied" ? (
-              <Alert variant="destructive">
-                <AlertDescription>{accessCheck.message}</AlertDescription>
-              </Alert>
-            ) : null}
-
             <Button
               onClick={() => void handleSaveMailbox()}
               disabled={
                 savingMailbox ||
                 !selectedMailbox ||
-                accessCheck.status === "checking" ||
-                accessCheck.status === "denied"
+                selectedAccess?.status === "checking" ||
+                selectedAccess?.status === "denied" ||
+                selectedAccess?.status !== "granted"
               }
             >
               {savingMailbox ? "Saving…" : "Use this mailbox"}
