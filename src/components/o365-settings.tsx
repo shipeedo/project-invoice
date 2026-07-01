@@ -296,6 +296,7 @@ export function O365Settings({
 
   async function handleSelectMailbox(mailbox: Mailbox) {
     setSelectedMailbox(mailbox);
+    setAccessByMailboxId({});
     await checkMailboxAccess(mailbox);
   }
 
