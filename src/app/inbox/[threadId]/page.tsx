@@ -49,7 +49,6 @@ export default async function InboxThreadPage({ params }: PageProps) {
           <InboxThreadView
             threadId={thread.id}
             subject={thread.subject}
-            supplier={thread.supplier}
             messages={thread.messages}
           />
         </div>

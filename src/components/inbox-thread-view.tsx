@@ -17,14 +17,12 @@ import { Textarea } from "@/components/ui/textarea";
 type InboxThreadViewProps = {
   threadId: string;
   subject: string | null;
-  supplier: { id: string; name: string } | null;
   messages: ConversationMessage[];
 };
 
 export function InboxThreadView({
   threadId,
   subject,
-  supplier,
   messages,
 }: InboxThreadViewProps) {
   const router = useRouter();
@@ -53,8 +51,6 @@ export function InboxThreadView({
     }
     return Array.from(seen.values());
   }, [messages]);
-
-  const hasUnknownSender = !supplier;
 
   async function handleReply(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -98,7 +94,6 @@ export function InboxThreadView({
       <InboxThreadHeader
         subject={subject}
         messageCount={messages.length}
-        supplier={supplier}
         attachments={threadAttachments}
         linkedInvoices={linkedInvoices}
       />
@@ -107,12 +102,6 @@ export function InboxThreadView({
         <Alert variant="destructive" className="mx-4 mt-3 py-2">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
-      ) : null}
-
-      {hasUnknownSender ? (
-        <p className="shrink-0 border-b px-4 py-1.5 text-xs text-muted-foreground">
-          Not linked to a supplier — create one from an inbound message below.
-        </p>
       ) : null}
 
       <div className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 py-3">
@@ -126,7 +115,6 @@ export function InboxThreadView({
                 message={message}
                 index={index}
                 total={messages.length}
-                threadHasSupplier={Boolean(supplier)}
                 onCreateSupplier={openCreateSupplierPanel}
               />
             ))}

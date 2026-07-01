@@ -19,17 +19,6 @@ function formatMessageDate(value: Date | string | null) {
   }).format(date);
 }
 
-function messagePreview(message: ConversationMessage) {
-  const text = message.bodyText?.trim();
-  if (text) {
-    return text.replace(/\s+/g, " ").slice(0, 140);
-  }
-  if (message.bodyHtml?.trim()) {
-    return "HTML message";
-  }
-  return "No message body";
-}
-
 export type ConversationMessage = {
   id: string;
   direction: "INBOUND" | "OUTBOUND";
@@ -40,6 +29,7 @@ export type ConversationMessage = {
   bodyText: string | null;
   receivedAt: Date | string | null;
   supplierId: string | null;
+  supplier: { id: string; name: string } | null;
   invoice: {
     id: string;
     vendorName: string | null;
@@ -55,7 +45,6 @@ type InboxConversationMessageProps = {
   message: ConversationMessage;
   index: number;
   total: number;
-  threadHasSupplier: boolean;
   onCreateSupplier: (message: ConversationMessage) => void;
 };
 
@@ -63,13 +52,13 @@ export function InboxConversationMessage({
   message,
   index,
   total,
-  threadHasSupplier,
   onCreateSupplier,
 }: InboxConversationMessageProps) {
   const senderLabel = message.fromName
     ? `${message.fromName} <${message.fromEmail}>`
     : (message.fromEmail ?? "Unknown sender");
   const isLatest = index === total - 1;
+  const isLinked = Boolean(message.supplierId);
 
   return (
     <Collapsible
@@ -83,7 +72,7 @@ export function InboxConversationMessage({
               "mt-3 size-2.5 rounded-full border-2 bg-background",
               message.direction === "OUTBOUND"
                 ? "border-primary bg-primary/20"
-                : threadHasSupplier
+                : isLinked
                   ? "border-emerald-500 bg-emerald-100"
                   : "border-muted-foreground/40 bg-muted",
             )}
@@ -97,35 +86,61 @@ export function InboxConversationMessage({
           className={cn(
             "min-w-0 flex-1 overflow-hidden rounded-lg border bg-background",
             message.direction === "INBOUND" &&
-              (threadHasSupplier
+              (isLinked
                 ? "border-emerald-200/80"
                 : "border-muted-foreground/20 bg-muted/20"),
           )}
         >
-          <CollapsibleTrigger
-            className={cn(
-              "flex w-full items-start justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/40",
-              "group-data-open/collapsible:bg-muted/20",
-            )}
-          >
+          <div className="flex items-start gap-2 border-b px-4 py-2.5">
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
                 <p className="truncate text-sm font-medium">{senderLabel}</p>
                 <Badge variant="outline" className="text-[10px]">
                   {message.direction === "OUTBOUND" ? "Sent" : "Received"}
                 </Badge>
+                {message.direction === "INBOUND" ? (
+                  isLinked ? (
+                    <Badge className="border-emerald-300 bg-emerald-100 text-[10px] text-emerald-900 hover:bg-emerald-100">
+                      {message.supplier?.name ?? "Supplier linked"}
+                    </Badge>
+                  ) : (
+                    <Badge
+                      variant="outline"
+                      className="border-muted-foreground/30 bg-muted text-[10px] text-muted-foreground"
+                    >
+                      No supplier
+                    </Badge>
+                  )
+                ) : null}
               </div>
               <p className="mt-0.5 text-xs text-muted-foreground">
                 {formatMessageDate(message.receivedAt)}
               </p>
-              <p className="mt-2 truncate text-sm text-muted-foreground group-data-open/collapsible:hidden">
-                {messagePreview(message)}
-              </p>
             </div>
-            <ChevronDownIcon className="mt-1 size-4 shrink-0 text-muted-foreground transition-transform group-data-open/collapsible:rotate-180" />
-          </CollapsibleTrigger>
 
-          <CollapsibleContent className="border-t px-4 py-4">
+            <div className="flex shrink-0 items-center gap-1.5">
+              {message.direction === "INBOUND" && !message.supplierId ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onCreateSupplier(message);
+                  }}
+                >
+                  Create supplier
+                </Button>
+              ) : null}
+              <CollapsibleTrigger
+                className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted/60"
+                aria-label="Toggle message"
+              >
+                <ChevronDownIcon className="size-4 transition-transform group-data-open/collapsible:rotate-180" />
+              </CollapsibleTrigger>
+            </div>
+          </div>
+
+          <CollapsibleContent className="px-4 py-4">
             <div className="w-full min-w-0 text-sm leading-relaxed">
               {message.bodyText ? (
                 <p className="whitespace-pre-wrap break-words">{message.bodyText}</p>
@@ -138,16 +153,6 @@ export function InboxConversationMessage({
                 <p className="text-muted-foreground">No message body.</p>
               )}
             </div>
-
-            {message.direction === "INBOUND" && !message.supplierId ? (
-              <Button
-                size="sm"
-                className="mt-4"
-                onClick={() => onCreateSupplier(message)}
-              >
-                Create supplier from this email
-              </Button>
-            ) : null}
           </CollapsibleContent>
         </div>
       </div>

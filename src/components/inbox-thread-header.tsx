@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { FileTextIcon, PaperclipIcon } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import type { ThreadAttachment } from "@/components/inbox-thread-attachments";
 import { cn } from "@/lib/utils";
@@ -16,62 +15,54 @@ type LinkedInvoice = {
 type InboxThreadHeaderProps = {
   subject: string | null;
   messageCount: number;
-  supplier: { id: string; name: string } | null;
   attachments: ThreadAttachment[];
   linkedInvoices: LinkedInvoice[];
 };
 
 function invoiceLabel(invoice: LinkedInvoice) {
-  const name = invoice.vendorName ?? invoice.originalFileName;
-  if (!name) return "Invoice";
-  return name.length > 28 ? `${name.slice(0, 25)}…` : name;
+  return invoice.vendorName ?? invoice.originalFileName ?? "Invoice";
 }
 
 export function InboxThreadHeader({
   subject,
   messageCount,
-  supplier,
   attachments,
   linkedInvoices,
 }: InboxThreadHeaderProps) {
   return (
     <header className="shrink-0 border-b px-4 py-2.5">
-      <div className="flex items-center gap-2">
-        <h3 className="min-w-0 flex-1 truncate text-base font-semibold leading-snug">
-          {subject ?? "(No subject)"}
-        </h3>
-        <div className="flex shrink-0 items-center gap-1.5">
-          {linkedInvoices.map((invoice) => (
-            <Link
-              key={invoice.id}
-              href={`/invoices/${invoice.id}`}
-              className={cn(
-                buttonVariants({ variant: "outline", size: "xs" }),
-                "max-w-36",
-              )}
-              title={`Open invoice: ${invoiceLabel(invoice)}`}
-            >
-              <FileTextIcon />
-              <span className="truncate">{invoiceLabel(invoice)}</span>
-            </Link>
-          ))}
-          {supplier ? (
-            <Badge className="max-w-40 truncate border-emerald-300 bg-emerald-100 text-emerald-900 hover:bg-emerald-100">
-              {supplier.name}
-            </Badge>
-          ) : (
-            <Badge
-              variant="outline"
-              className="border-muted-foreground/30 bg-muted text-muted-foreground"
-            >
-              No supplier
-            </Badge>
-          )}
+      <h3 className="truncate text-base font-semibold leading-snug">
+        {subject ?? "(No subject)"}
+      </h3>
+
+      {linkedInvoices.length > 0 ? (
+        <div className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+          <p className="text-xs font-medium text-emerald-900">
+            Linked invoice{linkedInvoices.length === 1 ? "" : "s"}
+          </p>
+          <div className="mt-1.5 flex flex-wrap gap-2">
+            {linkedInvoices.map((invoice) => (
+              <Link
+                key={invoice.id}
+                href={`/invoices/${invoice.id}`}
+                className={cn(buttonVariants(), "h-8")}
+              >
+                <FileTextIcon />
+                View linked invoice
+                <span className="font-normal opacity-90">· {invoiceLabel(invoice)}</span>
+              </Link>
+            ))}
+          </div>
         </div>
-      </div>
+      ) : null}
 
       {(messageCount > 0 || attachments.length > 0) && (
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+        <div
+          className={cn(
+            "flex flex-wrap items-center gap-x-2 gap-y-1",
+            linkedInvoices.length > 0 ? "mt-2" : "mt-1.5",
+          )}
+        >
           <span className="text-xs text-muted-foreground">
             {messageCount} message{messageCount === 1 ? "" : "s"}
           </span>

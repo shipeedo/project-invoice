@@ -42,6 +42,7 @@ export async function loadInboxThread(organizationId: string, threadId: string) 
           invoice: {
             columns: { id: true, vendorName: true, originalFileName: true },
           },
+          supplier: { columns: { id: true, name: true } },
         },
         orderBy: (table, { asc }) => [asc(table.receivedAt)],
       },
