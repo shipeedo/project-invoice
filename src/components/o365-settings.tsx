@@ -131,7 +131,7 @@ function MailboxListItem({
               </span>
             ) : access?.status === "denied" ? (
               showRetryIcon ? (
-                <span className="flex size-5 items-center justify-center rounded-full border border-destructive/40 bg-background text-destructive">
+                <span className="flex size-5 items-center justify-center rounded-full bg-destructive text-white">
                   <RefreshCwIcon className="size-3" />
                 </span>
               ) : (
