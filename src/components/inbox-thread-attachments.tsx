@@ -1,29 +1,30 @@
 "use client";
 
 import { PaperclipIcon } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import type { ConversationMessage } from "@/components/inbox-conversation-message";
 
 export type ThreadAttachment = {
   id: string;
   fileName: string;
-  messageId: string;
-  fromLabel: string;
-  receivedAt: Date | string | null;
 };
 
 export function collectThreadAttachments(
   messages: ConversationMessage[],
 ): ThreadAttachment[] {
-  return messages.flatMap((message) =>
-    message.attachments.map((attachment) => ({
-      id: attachment.id,
-      fileName: attachment.fileName,
-      messageId: message.id,
-      fromLabel: message.fromName ?? message.fromEmail ?? "Unknown sender",
-      receivedAt: message.receivedAt,
-    })),
-  );
+  const seen = new Map<string, ThreadAttachment>();
+
+  for (const message of messages) {
+    for (const attachment of message.attachments) {
+      const key = attachment.fileName.trim().toLowerCase();
+      if (seen.has(key)) continue;
+      seen.set(key, {
+        id: attachment.id,
+        fileName: attachment.fileName,
+      });
+    }
+  }
+
+  return Array.from(seen.values());
 }
 
 type InboxThreadAttachmentsProps = {
@@ -38,8 +39,7 @@ export function InboxThreadAttachments({ attachments }: InboxThreadAttachmentsPr
       <div className="flex items-center gap-2 text-sm font-medium">
         <PaperclipIcon className="size-4 text-muted-foreground" />
         <span>
-          {attachments.length} attachment{attachments.length === 1 ? "" : "s"} in this
-          conversation
+          {attachments.length} attachment{attachments.length === 1 ? "" : "s"}
         </span>
       </div>
       <ul className="mt-3 flex flex-wrap gap-2">
@@ -53,9 +53,6 @@ export function InboxThreadAttachments({ attachments }: InboxThreadAttachmentsPr
             >
               <PaperclipIcon className="size-3.5 shrink-0 text-muted-foreground" />
               <span className="truncate font-medium">{attachment.fileName}</span>
-              <Badge variant="outline" className="max-w-40 truncate text-[10px] font-normal">
-                {attachment.fromLabel}
-              </Badge>
             </a>
           </li>
         ))}

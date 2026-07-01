@@ -56,7 +56,7 @@ type InboxConversationMessageProps = {
   message: ConversationMessage;
   index: number;
   total: number;
-  defaultOpen: boolean;
+  threadHasSupplier: boolean;
   onCreateSupplier: (message: ConversationMessage) => void;
 };
 
@@ -64,7 +64,7 @@ export function InboxConversationMessage({
   message,
   index,
   total,
-  defaultOpen,
+  threadHasSupplier,
   onCreateSupplier,
 }: InboxConversationMessageProps) {
   const senderLabel = message.fromName
@@ -74,7 +74,7 @@ export function InboxConversationMessage({
 
   return (
     <Collapsible
-      defaultOpen={defaultOpen}
+      defaultOpen
       className={cn("group/collapsible relative", index > 0 && "mt-3")}
     >
       <div className="flex gap-3">
@@ -84,7 +84,9 @@ export function InboxConversationMessage({
               "mt-3 size-2.5 rounded-full border-2 bg-background",
               message.direction === "OUTBOUND"
                 ? "border-primary bg-primary/20"
-                : "border-muted-foreground/40",
+                : threadHasSupplier
+                  ? "border-emerald-500 bg-emerald-100"
+                  : "border-muted-foreground/40 bg-muted",
             )}
           />
           {!isLatest ? (
@@ -92,7 +94,15 @@ export function InboxConversationMessage({
           ) : null}
         </div>
 
-        <div className="min-w-0 flex-1 overflow-hidden rounded-lg border bg-background">
+        <div
+          className={cn(
+            "min-w-0 flex-1 overflow-hidden rounded-lg border bg-background",
+            message.direction === "INBOUND" &&
+              (threadHasSupplier
+                ? "border-emerald-200/80"
+                : "border-muted-foreground/20 bg-muted/20"),
+          )}
+        >
           <CollapsibleTrigger
             className={cn(
               "flex w-full items-start justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/40",
@@ -117,12 +127,12 @@ export function InboxConversationMessage({
           </CollapsibleTrigger>
 
           <CollapsibleContent className="border-t px-4 py-4">
-            <div className="text-sm leading-relaxed">
+            <div className="w-full min-w-0 text-sm leading-relaxed">
               {message.bodyText ? (
-                <p className="whitespace-pre-wrap">{message.bodyText}</p>
+                <p className="whitespace-pre-wrap break-words">{message.bodyText}</p>
               ) : message.bodyHtml ? (
                 <div
-                  className="prose prose-sm max-w-none"
+                  className="prose prose-sm max-w-none break-words [&_*]:max-w-full"
                   dangerouslySetInnerHTML={{ __html: message.bodyHtml }}
                 />
               ) : (

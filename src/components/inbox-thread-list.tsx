@@ -102,8 +102,12 @@ export function InboxThreadList({ threads, activeThreadId }: InboxThreadListProp
                   <Link
                     href={`/inbox/${thread.id}`}
                     className={cn(
-                      "flex gap-3 border-b px-3 py-3 transition-colors hover:bg-muted/50",
-                      isActive && "bg-muted",
+                      "flex gap-3 border-b border-l-4 px-3 py-3 transition-colors",
+                      thread.supplier
+                        ? "border-l-emerald-500 hover:bg-emerald-50/70"
+                        : "border-l-muted-foreground/25 hover:bg-muted/50",
+                      isActive &&
+                        (thread.supplier ? "bg-emerald-50/90" : "bg-muted/70"),
                     )}
                   >
                     <Avatar className="size-9 shrink-0">
@@ -145,11 +149,18 @@ export function InboxThreadList({ threads, activeThreadId }: InboxThreadListProp
                           {latest.bodyText}
                         </p>
                       ) : null}
-                      {!thread.supplier ? (
-                        <Badge variant="outline" className="mt-1.5 text-[10px]">
-                          Unknown sender
+                      {thread.supplier ? (
+                        <Badge className="mt-1.5 border-emerald-300 bg-emerald-100 text-[10px] text-emerald-900 hover:bg-emerald-100">
+                          {thread.supplier.name}
                         </Badge>
-                      ) : null}
+                      ) : (
+                        <Badge
+                          variant="outline"
+                          className="mt-1.5 border-muted-foreground/30 bg-muted text-[10px] text-muted-foreground"
+                        >
+                          No supplier
+                        </Badge>
+                      )}
                     </div>
                   </Link>
                 </li>

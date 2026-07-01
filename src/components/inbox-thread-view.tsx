@@ -16,6 +16,7 @@ import {
 } from "@/components/inbox-thread-attachments";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 
 type InboxThreadViewProps = {
   threadId: string;
@@ -44,9 +45,7 @@ export function InboxThreadView({
     [messages],
   );
 
-  const hasUnknownSender = messages.some(
-    (message) => message.direction === "INBOUND" && !message.supplierId,
-  );
+  const hasUnknownSender = !supplier;
 
   async function handleReply(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -86,8 +85,15 @@ export function InboxThreadView({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <header className="shrink-0 border-b px-6 py-4">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <header
+        className={cn(
+          "shrink-0 border-b px-6 py-4",
+          supplier
+            ? "border-emerald-200 bg-emerald-50/60"
+            : "border-border bg-muted/40",
+        )}
+      >
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <h3 className="text-lg font-semibold">{subject ?? "(No subject)"}</h3>
@@ -97,9 +103,16 @@ export function InboxThreadView({
             </p>
           </div>
           {supplier ? (
-            <Badge variant="secondary">Supplier: {supplier.name}</Badge>
+            <Badge className="border-emerald-300 bg-emerald-100 text-emerald-900 hover:bg-emerald-100">
+              Supplier linked: {supplier.name}
+            </Badge>
           ) : (
-            <Badge variant="outline">Unknown sender</Badge>
+            <Badge
+              variant="outline"
+              className="border-muted-foreground/30 bg-muted text-muted-foreground"
+            >
+              No supplier linked
+            </Badge>
           )}
         </div>
       </header>
@@ -113,33 +126,31 @@ export function InboxThreadView({
       ) : null}
 
       {hasUnknownSender ? (
-        <Alert className="mx-6 mt-4">
-          <AlertDescription>
-            This sender is not linked to a supplier yet. Create a supplier to enable
-            automatic invoice processing for future emails from this address.
+        <Alert className="mx-6 mt-4 border-muted-foreground/20 bg-muted/50">
+          <AlertDescription className="text-muted-foreground">
+            This conversation is not linked to a supplier yet. Create a supplier to
+            enable automatic invoice processing for future emails from this address.
           </AlertDescription>
         </Alert>
       ) : null}
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
-        <div className="mx-auto max-w-4xl">
-          {messages.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No messages in this conversation.</p>
-          ) : (
-            <div>
-              {messages.map((message, index) => (
-                <InboxConversationMessage
-                  key={message.id}
-                  message={message}
-                  index={index}
-                  total={messages.length}
-                  defaultOpen={index === messages.length - 1}
-                  onCreateSupplier={openCreateSupplierPanel}
-                />
-              ))}
-            </div>
-          )}
-        </div>
+      <div className="min-h-0 min-w-0 flex-1 overflow-y-auto px-6 py-4">
+        {messages.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No messages in this conversation.</p>
+        ) : (
+          <div className="w-full min-w-0">
+            {messages.map((message, index) => (
+              <InboxConversationMessage
+                key={message.id}
+                message={message}
+                index={index}
+                total={messages.length}
+                threadHasSupplier={Boolean(supplier)}
+                onCreateSupplier={openCreateSupplierPanel}
+              />
+            ))}
+          </div>
+        )}
       </div>
 
       <footer className="shrink-0 border-t bg-muted/10 px-6 py-4">
