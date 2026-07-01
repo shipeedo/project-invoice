@@ -152,13 +152,13 @@ export async function resolveGraphMailboxByAddress(
 export async function listInboxMessages(params: {
   accessToken: string;
   mailbox: string;
+  mailboxUpn?: string | null;
   since?: Date | null;
   top?: number;
 }) {
   const select =
     "id,conversationId,internetMessageId,subject,receivedDateTime,sentDateTime,hasAttachments,from,toRecipients,ccRecipients,bodyPreview";
   const top = params.top ?? 50;
-  const mailboxPath = `/users/${encodeURIComponent(params.mailbox)}`;
 
   const sortByReceived = (messages: GraphMessage[]) =>
     [...messages].sort((a, b) => {
@@ -167,7 +167,11 @@ export async function listInboxMessages(params: {
       return bTime - aTime;
     });
 
-  const tryFetchMessages = async (path: string, since?: Date | null) => {
+  const tryFetchMessages = async (
+    mailboxPath: string,
+    messagePath: string,
+    since?: Date | null,
+  ) => {
     const attempt = async (includeOrderBy: boolean) => {
       const query = new URLSearchParams();
       query.set("$select", select);
@@ -180,7 +184,7 @@ export async function listInboxMessages(params: {
       }
       const result = await graphFetch<GraphListResponse<GraphMessage>>(
         params.accessToken,
-        `${path}?${query.toString()}`,
+        `${mailboxPath}${messagePath}?${query.toString()}`,
       );
       return sortByReceived(result.value ?? []);
     };
@@ -196,69 +200,50 @@ export async function listInboxMessages(params: {
     }
   };
 
-  const isMissingMailboxError = (error: unknown) => {
+  const isRecoverableMailboxError = (error: unknown) => {
     const message = error instanceof Error ? error.message : "";
     return (
       message.includes("404") ||
+      message.includes("403") ||
       message.includes("ErrorItemNotFound") ||
-      message.includes("Default folder Inbox not found")
+      message.includes("Default folder Inbox not found") ||
+      message.includes("Default folder Root not found") ||
+      message.includes("MailboxNotEnabledForRESTAPI")
     );
   };
 
-  const resolveInboxFolderId = async () => {
-    type MailFolder = { id: string; displayName?: string };
+  const inboxMessagePaths = () => [
+    "/mailFolders('Inbox')/messages",
+    "/mailFolders/inbox/messages",
+    "/messages",
+  ];
 
-    try {
-      const inbox = await graphFetch<MailFolder>(
-        params.accessToken,
-        `${mailboxPath}/mailFolders/inbox?$select=id,displayName`,
-      );
-      if (inbox.id) {
-        return inbox.id;
-      }
-    } catch (error) {
-      if (!isMissingMailboxError(error)) {
-        throw error;
-      }
-    }
+  const mailboxIdentifiers = [
+    params.mailbox,
+    params.mailboxUpn && params.mailboxUpn !== params.mailbox
+      ? params.mailboxUpn
+      : null,
+  ].filter((value): value is string => Boolean(value));
 
-    const folders = await graphFetch<GraphListResponse<MailFolder>>(
-      params.accessToken,
-      `${mailboxPath}/mailFolders?$select=id,displayName&$top=50`,
-    );
-
-    return folders.value.find(
-      (folder) => folder.displayName?.toLowerCase() === "inbox",
-    )?.id;
-  };
-
-  const attemptFetch = async (since?: Date | null) => {
-    const paths = [
-      `${mailboxPath}/mailFolders/inbox/messages`,
-    ];
-
-    const inboxFolderId = await resolveInboxFolderId();
-    if (inboxFolderId) {
-      paths.unshift(
-        `${mailboxPath}/mailFolders/${encodeURIComponent(inboxFolderId)}/messages`,
-      );
-    }
-
-    paths.push(`${mailboxPath}/messages`);
-
+  const fetchMessages = async (since?: Date | null) => {
     let bestResult: GraphMessage[] = [];
-    for (const path of paths) {
-      try {
-        const messages = await tryFetchMessages(path, since);
-        if (messages.length > bestResult.length) {
-          bestResult = messages;
-        }
-        if (messages.length > 0) {
-          return messages;
-        }
-      } catch (error) {
-        if (!isMissingMailboxError(error)) {
-          throw error;
+
+    for (const identifier of mailboxIdentifiers) {
+      const mailboxPath = `/users/${encodeURIComponent(identifier)}`;
+
+      for (const messagePath of inboxMessagePaths()) {
+        try {
+          const messages = await tryFetchMessages(mailboxPath, messagePath, since);
+          if (messages.length > bestResult.length) {
+            bestResult = messages;
+          }
+          if (messages.length > 0) {
+            return messages;
+          }
+        } catch (error) {
+          if (!isRecoverableMailboxError(error)) {
+            throw error;
+          }
         }
       }
     }
@@ -266,9 +251,9 @@ export async function listInboxMessages(params: {
     return bestResult;
   };
 
-  let messages = await attemptFetch(params.since);
+  let messages = await fetchMessages(params.since);
   if (messages.length === 0 && params.since) {
-    messages = await attemptFetch(null);
+    messages = await fetchMessages(null);
   }
 
   return { value: messages };

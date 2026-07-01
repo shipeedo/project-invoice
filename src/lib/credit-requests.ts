@@ -51,6 +51,7 @@ async function findSentMessage(params: {
   const messages = await listInboxMessages({
     accessToken: params.accessToken,
     mailbox: params.mailbox,
+    mailboxUpn: params.mailboxUpn,
     since: params.since,
     top: 10,
   });

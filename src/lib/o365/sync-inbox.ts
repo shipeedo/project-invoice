@@ -362,6 +362,7 @@ export async function syncOrganizationInbox(connection: SyncConnection) {
     const messages = await listInboxMessages({
       accessToken,
       mailbox: graphMailbox!,
+      mailboxUpn: connection.selectedMailboxUpn,
       since,
       top: hasSyncedBefore ? 50 : 100,
     });
