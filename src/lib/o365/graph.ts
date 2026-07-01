@@ -85,6 +85,7 @@ function isMailboxAccessDenied(status: number, body: string) {
   if (status === 404) {
     return (
       body.includes("ErrorItemNotFound") ||
+      body.includes("ErrorInvalidUser") ||
       body.includes("Default folder") ||
       body.includes("MailboxNotEnabledForRESTAPI")
     );
@@ -120,7 +121,11 @@ export async function canReadGraphMailbox(
     "/messages?$top=1&$select=id",
   ];
 
-  for (const identifier of mailboxIdentifiers(mailbox)) {
+  const identifiers = mailbox.id
+    ? [mailbox.id]
+    : mailboxIdentifiers(mailbox);
+
+  for (const identifier of identifiers) {
     const mailboxPath = `/users/${encodeURIComponent(identifier)}`;
     for (const suffix of probeSuffixes) {
       const result = await graphProbe(accessToken, `${mailboxPath}${suffix}`);
@@ -152,39 +157,35 @@ export async function verifyGraphMailboxReadAccess(
   return mailbox;
 }
 
-async function filterAccessibleMailboxes(
+export async function checkGraphMailboxReadAccess(
   accessToken: string,
-  mailboxes: GraphMailbox[],
-  signedInUserId: string,
+  mailbox: GraphMailbox,
 ) {
-  const accessible: GraphMailbox[] = [];
-  const concurrency = 16;
-
-  for (let index = 0; index < mailboxes.length; index += concurrency) {
-    const batch = mailboxes.slice(index, index + concurrency);
-    const results = await Promise.all(
-      batch.map(async (mailbox) => {
-        if (mailbox.id === signedInUserId) {
-          return mailbox;
-        }
-        return (await canReadGraphMailbox(accessToken, mailbox)) ? mailbox : null;
-      }),
-    );
-    accessible.push(...results.filter((entry): entry is GraphMailbox => entry !== null));
+  const me = await graphFetch<GraphMailbox>(accessToken, "/me?$select=id");
+  if (mailbox.id === me.id) {
+    return { accessible: true as const, mailbox };
   }
 
-  return accessible;
+  const accessible = await canReadGraphMailbox(accessToken, mailbox);
+  if (!accessible) {
+    return {
+      accessible: false as const,
+      error: MAILBOX_ACCESS_DENIED,
+    };
+  }
+
+  return { accessible: true as const, mailbox };
 }
 
 export async function listGraphMailboxes(accessToken: string) {
+  const mailboxes: GraphMailbox[] = [];
+
   const me = await graphFetch<GraphMailbox>(
     accessToken,
     "/me?$select=id,displayName,mail,userPrincipalName",
   );
-
-  const candidates: GraphMailbox[] = [];
   if (me.mail || me.userPrincipalName) {
-    candidates.push(normalizeGraphMailbox(me));
+    mailboxes.push(normalizeGraphMailbox(me));
   }
 
   const users = await graphFetch<GraphListResponse<GraphMailbox>>(
@@ -194,12 +195,11 @@ export async function listGraphMailboxes(accessToken: string) {
 
   for (const user of users.value) {
     if (!user.mail && !user.userPrincipalName) continue;
-    if (user.id === me.id) continue;
-    candidates.push(normalizeGraphMailbox(user));
+    if (mailboxes.some((entry) => entry.id === user.id)) continue;
+    mailboxes.push(normalizeGraphMailbox(user));
   }
 
-  const accessible = await filterAccessibleMailboxes(accessToken, candidates, me.id);
-  return accessible.sort((a, b) => a.displayName.localeCompare(b.displayName));
+  return mailboxes.sort((a, b) => a.displayName.localeCompare(b.displayName));
 }
 
 function normalizeGraphMailbox(user: GraphMailbox): GraphMailbox {

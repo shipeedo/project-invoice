@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getO365Connection, getValidAccessToken, updateO365Mailbox } from "@/lib/o365/connection";
-import { resolveGraphMailboxByAddress } from "@/lib/o365/graph";
+import { checkGraphMailboxReadAccess } from "@/lib/o365/graph";
 
 export async function POST(request: Request) {
   const session = await auth();
@@ -26,24 +26,35 @@ export async function POST(request: Request) {
     );
   }
 
+  const mailboxId = body.mailboxId?.trim();
+  if (!mailboxId) {
+    return NextResponse.json({ error: "Mailbox id is required" }, { status: 400 });
+  }
+
   const connection = await getO365Connection(session.user.organizationId);
   if (!connection || connection.status !== "CONNECTED") {
     return NextResponse.json({ error: "Office 365 is not connected" }, { status: 400 });
   }
 
-  let mailboxId = body.mailboxId?.trim() ?? null;
-
   try {
     const accessToken = await getValidAccessToken(connection);
-    const resolved = await resolveGraphMailboxByAddress(accessToken, mailboxUpn);
-    mailboxId = resolved.id;
+    const access = await checkGraphMailboxReadAccess(accessToken, {
+      id: mailboxId,
+      displayName: mailboxUpn,
+      mail: mailboxUpn,
+      userPrincipalName: mailboxUpn,
+    });
+
+    if (!access.accessible) {
+      return NextResponse.json({ error: access.error }, { status: 403 });
+    }
   } catch (error) {
     return NextResponse.json(
       {
         error:
           error instanceof Error
             ? error.message
-            : "Could not resolve mailbox address",
+            : "Could not verify mailbox access",
       },
       { status: 400 },
     );

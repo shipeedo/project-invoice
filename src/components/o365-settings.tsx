@@ -6,11 +6,12 @@ import {
   RefreshCwIcon,
   UnplugIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 type O365Status = {
@@ -56,6 +57,22 @@ function mailboxAddress(mailbox: Mailbox) {
   return mailbox.mail || mailbox.userPrincipalName;
 }
 
+function matchesQuery(mailbox: Mailbox, query: string) {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return true;
+  return (
+    mailbox.displayName.toLowerCase().includes(normalized) ||
+    mailbox.mail.toLowerCase().includes(normalized) ||
+    mailbox.userPrincipalName.toLowerCase().includes(normalized)
+  );
+}
+
+type AccessCheckState =
+  | { status: "idle" }
+  | { status: "checking" }
+  | { status: "granted" }
+  | { status: "denied"; message: string };
+
 export function O365Settings({
   initialStatus,
   initialMailboxes,
@@ -64,6 +81,7 @@ export function O365Settings({
 }: O365SettingsProps) {
   const [status, setStatus] = useState(initialStatus);
   const [mailboxes, setMailboxes] = useState<Mailbox[]>(initialMailboxes);
+  const [filter, setFilter] = useState("");
   const [selectedMailbox, setSelectedMailbox] = useState<Mailbox | null>(() => {
     if (!initialStatus.mailboxId) return null;
     return (
@@ -76,6 +94,7 @@ export function O365Settings({
     );
   });
   const [loadingMailboxes, setLoadingMailboxes] = useState(false);
+  const [accessCheck, setAccessCheck] = useState<AccessCheckState>({ status: "idle" });
   const [savingMailbox, setSavingMailbox] = useState(false);
   const [polling, setPolling] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
@@ -102,6 +121,53 @@ export function O365Settings({
       );
     }
   }, []);
+
+  const filteredMailboxes = useMemo(
+    () => mailboxes.filter((mailbox) => matchesQuery(mailbox, filter)),
+    [mailboxes, filter],
+  );
+
+  const checkMailboxAccess = useCallback(async (mailbox: Mailbox) => {
+    setAccessCheck({ status: "checking" });
+    setError(null);
+    try {
+      const params = new URLSearchParams({
+        mailboxId: mailbox.id,
+        mailboxUpn: mailboxAddress(mailbox),
+      });
+      const response = await fetch(`/api/admin/o365/mailboxes/check?${params}`);
+      const data = (await response.json()) as {
+        accessible?: boolean;
+        error?: string;
+      };
+      if (!response.ok && response.status !== 403) {
+        throw new Error(data.error ?? "Failed to check mailbox access");
+      }
+      if (data.accessible) {
+        setAccessCheck({ status: "granted" });
+      } else {
+        setAccessCheck({
+          status: "denied",
+          message:
+            data.error ??
+            "You do not have read access to this mailbox. Ask your Exchange admin to grant you Full Access.",
+        });
+      }
+    } catch (checkError) {
+      setAccessCheck({
+        status: "denied",
+        message:
+          checkError instanceof Error
+            ? checkError.message
+            : "Failed to check mailbox access",
+      });
+    }
+  }, []);
+
+  async function handleSelectMailbox(mailbox: Mailbox) {
+    setSelectedMailbox(mailbox);
+    await checkMailboxAccess(mailbox);
+  }
 
   const loadMailboxes = useCallback(async () => {
     setLoadingMailboxes(true);
@@ -136,6 +202,11 @@ export function O365Settings({
   async function handleSaveMailbox() {
     if (!selectedMailbox) {
       setError("Select a mailbox from the list");
+      return;
+    }
+
+    if (accessCheck.status === "denied") {
+      setError(accessCheck.message);
       return;
     }
 
@@ -211,6 +282,7 @@ export function O365Settings({
       }
       setMailboxes([]);
       setSelectedMailbox(null);
+      setAccessCheck({ status: "idle" });
       setMessage("Office 365 disconnected.");
       await refreshStatus();
     } catch (disconnectError) {
@@ -321,8 +393,9 @@ export function O365Settings({
           <CardHeader>
             <CardTitle>Invoice mailbox</CardTitle>
             <CardDescription>
-              Choose a mailbox your account can read. Only mailboxes you have access
-              to are listed (typically shared mailboxes with Full Access in Exchange).
+              Select a mailbox from your organization. Read access is checked when
+              you select one — you need Full Access delegation in Exchange for shared
+              mailboxes.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -333,11 +406,17 @@ export function O365Settings({
               </div>
             ) : null}
 
+            <Input
+              value={filter}
+              onChange={(event) => setFilter(event.target.value)}
+              placeholder="Filter by name or email…"
+            />
+
             <div className="flex items-center justify-between text-sm text-muted-foreground">
               <span>
                 {loadingMailboxes
-                  ? "Loading accessible mailboxes…"
-                  : `${mailboxes.length} accessible mailbox${mailboxes.length === 1 ? "" : "es"}`}
+                  ? "Loading users…"
+                  : `${filteredMailboxes.length} of ${mailboxes.length} users`}
               </span>
               <Button
                 type="button"
@@ -354,22 +433,24 @@ export function O365Settings({
             </div>
 
             <div className="max-h-80 overflow-y-auto rounded-lg border">
-              {mailboxes.length === 0 ? (
+              {filteredMailboxes.length === 0 ? (
                 <div className="px-4 py-8 text-center text-sm text-muted-foreground">
                   {loadingMailboxes
-                    ? "Checking which mailboxes you can access. This may take a moment…"
-                    : "No accessible mailboxes found. Ask your Exchange admin to grant you Full Access to the shared mailbox."}
+                    ? "Loading users from your organization…"
+                    : filter.trim()
+                      ? "No users match your filter."
+                      : "No mail-enabled users found."}
                 </div>
               ) : (
                 <ul className="divide-y">
-                  {mailboxes.map((mailbox) => {
+                  {filteredMailboxes.map((mailbox) => {
                     const isSelected = selectedMailbox?.id === mailbox.id;
                     const address = mailboxAddress(mailbox);
                     return (
                       <li key={mailbox.id}>
                         <button
                           type="button"
-                          onClick={() => setSelectedMailbox(mailbox)}
+                          onClick={() => void handleSelectMailbox(mailbox)}
                           className={cn(
                             "flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/50",
                             isSelected && "bg-primary/5",
@@ -401,9 +482,32 @@ export function O365Settings({
               )}
             </div>
 
+            {selectedMailbox && accessCheck.status === "checking" ? (
+              <p className="text-sm text-muted-foreground">Checking read access…</p>
+            ) : null}
+
+            {selectedMailbox && accessCheck.status === "granted" ? (
+              <Alert>
+                <AlertDescription>
+                  Read access confirmed for {mailboxAddress(selectedMailbox)}.
+                </AlertDescription>
+              </Alert>
+            ) : null}
+
+            {selectedMailbox && accessCheck.status === "denied" ? (
+              <Alert variant="destructive">
+                <AlertDescription>{accessCheck.message}</AlertDescription>
+              </Alert>
+            ) : null}
+
             <Button
               onClick={() => void handleSaveMailbox()}
-              disabled={savingMailbox || !selectedMailbox}
+              disabled={
+                savingMailbox ||
+                !selectedMailbox ||
+                accessCheck.status === "checking" ||
+                accessCheck.status === "denied"
+              }
             >
               {savingMailbox ? "Saving…" : "Use this mailbox"}
             </Button>
