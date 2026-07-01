@@ -6,11 +6,16 @@ import {
   linkSupplierToThreadsAndMessages,
 } from "@/lib/email-contacts";
 import {
+  extractSupplierFromEmail,
+  type ExtractedSupplierFromEmail,
+} from "@/lib/supplier-from-email-extraction";
+import {
   creditRequests,
   db,
   emailThreads,
   invoices,
   mailboxMessages,
+  type MailboxMessage,
 } from "@/lib/db";
 import type { CarrierDecision, CreditRequestStatus } from "@/lib/db/types";
 import { getO365Connection, getValidAccessToken, resolveGraphMailboxUser } from "@/lib/o365/connection";
@@ -300,10 +305,15 @@ export async function createSupplierFromMessage(params: {
     return { error: "Message has no sender email" as const };
   }
 
+  const extraction = await extractSupplierFromEmail(message);
+  const resolved = resolveSupplierDetailsFromMessage(message, extraction.data, params.name);
+
   const outcome = await createSupplierFromEmailContact({
     organizationId: params.organizationId,
-    email: message.fromEmail,
-    name: params.name ?? message.fromName ?? undefined,
+    email: resolved.email,
+    name: resolved.name,
+    contactName: resolved.contactName ?? undefined,
+    emailDomains: resolved.emailDomains,
   });
 
   if ("error" in outcome && outcome.error) {
@@ -313,7 +323,7 @@ export async function createSupplierFromMessage(params: {
   await linkSupplierToThreadsAndMessages({
     organizationId: params.organizationId,
     supplierId: outcome.supplier!.id,
-    email: message.fromEmail,
+    email: resolved.email,
   });
 
   await db
@@ -329,4 +339,28 @@ export async function createSupplierFromMessage(params: {
   }
 
   return outcome;
+}
+
+function resolveSupplierDetailsFromMessage(
+  message: MailboxMessage,
+  extracted: ExtractedSupplierFromEmail | null,
+  overrideName?: string,
+) {
+  const email = extracted?.senderEmail ?? message.fromEmail!.trim().toLowerCase();
+  const domain =
+    extracted?.domain ??
+    email.split("@")[1]?.toLowerCase() ??
+    null;
+
+  return {
+    email,
+    name:
+      overrideName?.trim() ||
+      extracted?.company ||
+      message.fromName?.trim() ||
+      domain ||
+      email,
+    contactName: extracted?.contactName ?? message.fromName?.trim() ?? null,
+    emailDomains: domain ? [domain] : [],
+  };
 }

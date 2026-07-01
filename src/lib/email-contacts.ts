@@ -101,9 +101,11 @@ export async function createSupplierFromEmailContact(params: {
   contactId?: string;
   email?: string;
   name?: string;
+  contactName?: string;
+  emailDomains?: string[];
 }) {
   let contactEmail = params.email ? normalizeEmail(params.email) : null;
-  let displayName = params.name?.trim() || null;
+  let displayName = params.contactName?.trim() || params.name?.trim() || null;
 
   if (params.contactId) {
     const contact = await db.query.emailContacts.findFirst({
@@ -138,7 +140,11 @@ export async function createSupplierFromEmailContact(params: {
   }
 
   const domain = extractDomain(contactEmail);
-  const supplierName = displayName ?? domain ?? contactEmail;
+  const emailDomains =
+    params.emailDomains?.map((entry) => entry.trim().toLowerCase()).filter(Boolean) ??
+    (domain ? [domain] : []);
+  const supplierName =
+    params.name?.trim() || displayName || domain || contactEmail;
 
   const [supplier] = await db
     .insert(suppliers)
@@ -147,7 +153,7 @@ export async function createSupplierFromEmailContact(params: {
         organizationId: params.organizationId,
         name: supplierName,
         emailAddresses: [contactEmail],
-        emailDomains: domain ? [domain] : [],
+        emailDomains,
       }),
     )
     .returning();

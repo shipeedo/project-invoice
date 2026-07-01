@@ -227,7 +227,7 @@ export function InboxThreadView({
                   }
                 >
                   {creatingSupplierFor === message.id
-                    ? "Creating supplier…"
+                    ? "Analyzing email…"
                     : "Create supplier from this email"}
                 </Button>
               ) : null}

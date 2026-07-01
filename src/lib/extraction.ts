@@ -175,7 +175,7 @@ export function parseInvoiceDate(value?: string | null) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function parseJsonContent(content: string) {
+export function parseJsonContent(content: string) {
   const trimmed = content.trim();
   const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
   return fenced?.[1]?.trim() ?? trimmed;

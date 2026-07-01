@@ -67,6 +67,64 @@ You receive text extracted from a PDF invoice. Treat this like a real invoice on
 - "lineItems" must always be an array (empty only if the invoice truly has no itemised charges).
 - Dates must be ISO 8601 (YYYY-MM-DD).`;
 
+export const SUPPLIER_FROM_EMAIL_JSON_SCHEMA = `{
+  "company": "string or null — the supplier/carrier company name",
+  "senderEmail": "string or null — the email address used to send this email",
+  "contactName": "string or null — specific person at the supplier who sent the email, if identifiable",
+  "domain": "string or null — domain name used to send the email (e.g. acme.com)"
+}` as const;
+
+export const SUPPLIER_FROM_EMAIL_SYSTEM_PROMPT = `You are in accounts receivable and you need to set up a new supplier. This supplier has sent us an email and we need to know the following information:
+* what is the company
+* what email address was used to send this email
+* is there a specific contact within the supplier that sent this email
+* what is the domain name used to send the email
+
+Read the email headers and body carefully. Prefer explicit header values (From, Reply-To, signature blocks) over guesses in the message body.
+
+## Rules
+- "company" is the supplier/carrier organisation, not our company or a customer we bill.
+- "senderEmail" is the address the supplier used to send this message (usually From or Reply-To).
+- "contactName" is a person's name when clearly identifiable; use null if only a generic mailbox is shown.
+- "domain" is the part after @ in senderEmail, or the organisation's email domain if the sender uses a shared mailbox on that domain.
+- If a field cannot be determined reliably, use null — do not invent values.
+
+## Output format
+- Respond with a single JSON object only — no markdown, no commentary outside JSON.`;
+
+export function buildSupplierFromEmailUserPrompt(params: {
+  fromName: string | null;
+  fromEmail: string | null;
+  toEmails: string[];
+  ccEmails: string[];
+  subject: string | null;
+  receivedAt: string | null;
+  body: string;
+}) {
+  const headerLines = [
+    params.fromEmail
+      ? `From: ${params.fromName ? `${params.fromName} <${params.fromEmail}>` : params.fromEmail}`
+      : null,
+    params.toEmails.length > 0 ? `To: ${params.toEmails.join(", ")}` : null,
+    params.ccEmails.length > 0 ? `Cc: ${params.ccEmails.join(", ")}` : null,
+    params.subject ? `Subject: ${params.subject}` : null,
+    params.receivedAt ? `Date: ${params.receivedAt}` : null,
+  ].filter(Boolean);
+
+  return `Extract supplier setup details from this email.
+
+Return JSON matching this schema exactly:
+${SUPPLIER_FROM_EMAIL_JSON_SCHEMA}
+
+Email headers:
+${headerLines.join("\n")}
+
+Email body:
+"""
+${params.body}
+"""`;
+}
+
 export function buildInvoiceExtractionUserPrompt(
   fileName: string,
   invoiceText: string,
