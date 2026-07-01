@@ -30,10 +30,13 @@ async function pollOrganizationConnection(connection: {
 }) {
   const result = await syncOrganizationInbox(connection);
 
+  const shouldAdvanceSyncCursor =
+    result.errors.length === 0 && (result.synced > 0 || result.skipped > 0);
+
   await db
     .update(o365Connections)
     .set({
-      lastSyncedAt: new Date(),
+      lastSyncedAt: shouldAdvanceSyncCursor ? new Date() : connection.lastSyncedAt,
       status: result.errors.length > 0 ? "ERROR" : "CONNECTED",
       lastError: result.errors.length > 0 ? result.errors.join("; ") : null,
       updatedAt: new Date(),

@@ -241,6 +241,7 @@ export function O365Settings({
       const response = await fetch("/api/admin/o365/poll", { method: "POST" });
       const data = (await response.json()) as {
         synced?: number;
+        skipped?: number;
         invoicesProcessed?: number;
         processed?: number;
         errors?: string[];
@@ -250,7 +251,9 @@ export function O365Settings({
         throw new Error(data.error ?? "Polling failed");
       }
       setMessage(
-        `Poll complete — synced ${data.synced ?? 0} emails, processed ${data.invoicesProcessed ?? 0} invoices.`,
+        (data.synced ?? 0) > 0 || (data.skipped ?? 0) > 0
+          ? `Sync complete — imported ${data.synced ?? 0} new emails${(data.skipped ?? 0) > 0 ? ` (${data.skipped} already synced)` : ""}, processed ${data.invoicesProcessed ?? 0} invoices.`
+          : "Sync complete — no new emails found in the latest batch.",
       );
       if (data.errors?.length) {
         setError(data.errors.join("; "));

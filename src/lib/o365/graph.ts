@@ -158,12 +158,7 @@ export async function listInboxMessages(params: {
   const select =
     "id,conversationId,internetMessageId,subject,receivedDateTime,sentDateTime,hasAttachments,from,toRecipients,ccRecipients,bodyPreview";
   const top = params.top ?? 50;
-  const sinceFilter = params.since
-    ? `receivedDateTime ge ${params.since.toISOString()}`
-    : null;
-  const filterQuery = sinceFilter ? `&$filter=${encodeURIComponent(sinceFilter)}` : "";
   const mailboxPath = `/users/${encodeURIComponent(params.mailbox)}`;
-  const messageQuery = `?$select=${select}&$top=${top}${filterQuery}`;
 
   const sortByReceived = (messages: GraphMessage[]) =>
     [...messages].sort((a, b) => {
@@ -172,12 +167,33 @@ export async function listInboxMessages(params: {
       return bTime - aTime;
     });
 
-  const tryFetchMessages = async (path: string) => {
-    const result = await graphFetch<GraphListResponse<GraphMessage>>(
-      params.accessToken,
-      `${path}${messageQuery}`,
-    );
-    return { value: sortByReceived(result.value) };
+  const tryFetchMessages = async (path: string, since?: Date | null) => {
+    const attempt = async (includeOrderBy: boolean) => {
+      const query = new URLSearchParams();
+      query.set("$select", select);
+      query.set("$top", String(top));
+      if (includeOrderBy) {
+        query.set("$orderby", "receivedDateTime desc");
+      }
+      if (since) {
+        query.set("$filter", `receivedDateTime ge ${since.toISOString()}`);
+      }
+      const result = await graphFetch<GraphListResponse<GraphMessage>>(
+        params.accessToken,
+        `${path}?${query.toString()}`,
+      );
+      return sortByReceived(result.value ?? []);
+    };
+
+    try {
+      return await attempt(true);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (message.includes("400") && message.includes("orderby")) {
+        return attempt(false);
+      }
+      throw error;
+    }
   };
 
   const isMissingMailboxError = (error: unknown) => {
@@ -189,55 +205,73 @@ export async function listInboxMessages(params: {
     );
   };
 
-  const strategies = [
-    () => tryFetchMessages(`${mailboxPath}/messages`),
-    () => tryFetchMessages(`${mailboxPath}/mailFolders/inbox/messages`),
-  ];
+  const resolveInboxFolderId = async () => {
+    type MailFolder = { id: string; displayName?: string };
 
-  for (const strategy of strategies) {
     try {
-      return await strategy();
+      const inbox = await graphFetch<MailFolder>(
+        params.accessToken,
+        `${mailboxPath}/mailFolders/inbox?$select=id,displayName`,
+      );
+      if (inbox.id) {
+        return inbox.id;
+      }
     } catch (error) {
       if (!isMissingMailboxError(error)) {
         throw error;
       }
     }
-  }
 
-  type MailFolder = { id: string; displayName?: string };
-  let inboxFolder: MailFolder | undefined;
-
-  try {
-    inboxFolder = await graphFetch<MailFolder>(
-      params.accessToken,
-      `${mailboxPath}/mailFolders/inbox?$select=id,displayName`,
-    );
-  } catch (error) {
-    if (!isMissingMailboxError(error)) {
-      throw error;
-    }
-  }
-
-  if (!inboxFolder?.id) {
     const folders = await graphFetch<GraphListResponse<MailFolder>>(
       params.accessToken,
       `${mailboxPath}/mailFolders?$select=id,displayName&$top=50`,
     );
 
-    inboxFolder = folders.value.find(
+    return folders.value.find(
       (folder) => folder.displayName?.toLowerCase() === "inbox",
-    );
+    )?.id;
+  };
+
+  const attemptFetch = async (since?: Date | null) => {
+    const paths = [
+      `${mailboxPath}/mailFolders/inbox/messages`,
+    ];
+
+    const inboxFolderId = await resolveInboxFolderId();
+    if (inboxFolderId) {
+      paths.unshift(
+        `${mailboxPath}/mailFolders/${encodeURIComponent(inboxFolderId)}/messages`,
+      );
+    }
+
+    paths.push(`${mailboxPath}/messages`);
+
+    let bestResult: GraphMessage[] = [];
+    for (const path of paths) {
+      try {
+        const messages = await tryFetchMessages(path, since);
+        if (messages.length > bestResult.length) {
+          bestResult = messages;
+        }
+        if (messages.length > 0) {
+          return messages;
+        }
+      } catch (error) {
+        if (!isMissingMailboxError(error)) {
+          throw error;
+        }
+      }
+    }
+
+    return bestResult;
+  };
+
+  let messages = await attemptFetch(params.since);
+  if (messages.length === 0 && params.since) {
+    messages = await attemptFetch(null);
   }
 
-  if (!inboxFolder?.id) {
-    throw new Error(
-      "Could not access mailbox messages — verify the shared mailbox exists and you have Full Access in Exchange",
-    );
-  }
-
-  return tryFetchMessages(
-    `${mailboxPath}/mailFolders/${encodeURIComponent(inboxFolder.id)}/messages`,
-  );
+  return { value: messages };
 }
 
 export async function getMessageDetails(params: {

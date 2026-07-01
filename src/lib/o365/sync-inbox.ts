@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, count, eq } from "drizzle-orm";
 import { readFile } from "fs/promises";
 import {
   db,
@@ -348,16 +348,30 @@ export async function syncOrganizationInbox(connection: SyncConnection) {
       });
     }
 
-    const since = connection.lastSyncedAt
-      ? new Date(connection.lastSyncedAt.getTime() - 5 * 60 * 1000)
-      : null;
+    const [{ messageCount }] = await db
+      .select({ messageCount: count() })
+      .from(mailboxMessages)
+      .where(eq(mailboxMessages.organizationId, connection.organizationId));
+
+    const hasSyncedBefore = messageCount > 0;
+    const since =
+      hasSyncedBefore && connection.lastSyncedAt
+        ? new Date(connection.lastSyncedAt.getTime() - 5 * 60 * 1000)
+        : null;
 
     const messages = await listInboxMessages({
       accessToken,
       mailbox: graphMailbox!,
       since,
-      top: 50,
+      top: hasSyncedBefore ? 50 : 100,
     });
+
+    if (messages.value.length === 0 && !hasSyncedBefore) {
+      result.errors.push(
+        "No inbox messages returned from Microsoft Graph — verify the shared mailbox has mail and you have Full Access in Exchange",
+      );
+      return result;
+    }
 
     for (const summary of messages.value) {
       try {
