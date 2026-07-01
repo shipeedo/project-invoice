@@ -551,25 +551,11 @@ export function O365Settings({
               placeholder="Filter by name or email…"
             />
 
-            <div className="flex items-center justify-between text-sm text-muted-foreground">
-              <span>
-                {loadingMailboxes
-                  ? "Loading users…"
-                  : `${filteredMailboxes.length} of ${mailboxes.length} users`}
-              </span>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => void loadMailboxes()}
-                disabled={loadingMailboxes}
-              >
-                <RefreshCwIcon
-                  className={cn("size-4", loadingMailboxes && "animate-spin")}
-                />
-                Refresh
-              </Button>
-            </div>
+            <p className="text-sm text-muted-foreground">
+              {loadingMailboxes
+                ? "Loading users…"
+                : `${filteredMailboxes.length} of ${mailboxes.length} users`}
+            </p>
 
             <div className="max-h-80 overflow-y-auto rounded-lg border">
               {filteredMailboxes.length === 0 ? (
