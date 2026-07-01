@@ -5,11 +5,10 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { Button, buttonVariants } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
-import { cn } from "@/lib/utils";
 
 function formatMessageDate(value: Date | string | null) {
   if (!value) return "—";
@@ -61,6 +60,10 @@ export function InboxThreadView({
   const [loading, setLoading] = useState(false);
   const [creatingSupplierFor, setCreatingSupplierFor] = useState<string | null>(
     null,
+  );
+
+  const hasUnknownSender = messages.some(
+    (message) => message.direction === "INBOUND" && !message.supplierId,
   );
 
   async function handleReply(event: React.FormEvent<HTMLFormElement>) {
@@ -119,52 +122,72 @@ export function InboxThreadView({
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-center gap-3">
-        <h2 className="text-2xl font-semibold">{subject ?? "(No subject)"}</h2>
-        {supplier ? (
-          <Badge variant="secondary">Supplier: {supplier.name}</Badge>
-        ) : (
-          <Badge variant="outline">Unlinked sender</Badge>
-        )}
-      </div>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <header className="shrink-0 border-b px-6 py-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <h3 className="text-lg font-semibold">{subject ?? "(No subject)"}</h3>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {messages.length} message{messages.length === 1 ? "" : "s"}
+            </p>
+          </div>
+          {supplier ? (
+            <Badge variant="secondary">Supplier: {supplier.name}</Badge>
+          ) : (
+            <Badge variant="outline">Unknown sender</Badge>
+          )}
+        </div>
+      </header>
 
       {error ? (
-        <Alert variant="destructive">
+        <Alert variant="destructive" className="mx-6 mt-4">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       ) : null}
 
-      <div className="space-y-4">
-        {messages.map((message) => (
-          <Card key={message.id}>
-            <CardHeader className="pb-2">
+      {hasUnknownSender ? (
+        <Alert className="mx-6 mt-4">
+          <AlertDescription>
+            This sender is not linked to a supplier yet. Create a supplier to enable
+            automatic invoice processing for future emails from this address.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+        <div className="space-y-6">
+          {messages.map((message, index) => (
+            <article key={message.id}>
+              {index > 0 ? <Separator className="mb-6" /> : null}
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <CardTitle className="text-base">
-                  {message.fromName
-                    ? `${message.fromName} <${message.fromEmail}>`
-                    : (message.fromEmail ?? "Unknown sender")}
-                </CardTitle>
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Badge variant="outline">{message.direction.toLowerCase()}</Badge>
-                  {formatMessageDate(message.receivedAt)}
+                <div>
+                  <p className="font-medium">
+                    {message.fromName
+                      ? `${message.fromName} <${message.fromEmail}>`
+                      : (message.fromEmail ?? "Unknown sender")}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {formatMessageDate(message.receivedAt)}
+                  </p>
                 </div>
+                <Badge variant="outline">{message.direction.toLowerCase()}</Badge>
               </div>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {message.bodyText ? (
-                <p className="whitespace-pre-wrap text-sm">{message.bodyText}</p>
-              ) : message.bodyHtml ? (
-                <div
-                  className="prose prose-sm max-w-none text-sm"
-                  dangerouslySetInnerHTML={{ __html: message.bodyHtml }}
-                />
-              ) : (
-                <p className="text-sm text-muted-foreground">No message body.</p>
-              )}
+
+              <div className="mt-4 text-sm leading-relaxed">
+                {message.bodyText ? (
+                  <p className="whitespace-pre-wrap">{message.bodyText}</p>
+                ) : message.bodyHtml ? (
+                  <div
+                    className="prose prose-sm max-w-none"
+                    dangerouslySetInnerHTML={{ __html: message.bodyHtml }}
+                  />
+                ) : (
+                  <p className="text-muted-foreground">No message body.</p>
+                )}
+              </div>
 
               {message.attachments.length > 0 ? (
-                <ul className="space-y-1 text-sm">
+                <ul className="mt-4 space-y-1 rounded-lg border bg-muted/20 p-3 text-sm">
                   {message.attachments.map((attachment) => (
                     <li key={attachment.id}>
                       <a
@@ -181,21 +204,23 @@ export function InboxThreadView({
               ) : null}
 
               {message.invoice ? (
-                <Link
-                  href={`/invoices/${message.invoice.id}`}
-                  className="text-sm text-primary underline-offset-4 hover:underline"
-                >
-                  Linked invoice:{" "}
-                  {message.invoice.vendorName ??
-                    message.invoice.originalFileName ??
-                    message.invoice.id}
-                </Link>
+                <p className="mt-3 text-sm">
+                  <Link
+                    href={`/invoices/${message.invoice.id}`}
+                    className="font-medium text-primary underline-offset-4 hover:underline"
+                  >
+                    View linked invoice:{" "}
+                    {message.invoice.vendorName ??
+                      message.invoice.originalFileName ??
+                      message.invoice.id}
+                  </Link>
+                </p>
               ) : null}
 
               {message.direction === "INBOUND" && !message.supplierId ? (
                 <Button
                   size="sm"
-                  variant="outline"
+                  className="mt-4"
                   disabled={creatingSupplierFor === message.id}
                   onClick={() =>
                     void handleCreateSupplier(message.id, message.fromName)
@@ -203,42 +228,36 @@ export function InboxThreadView({
                 >
                   {creatingSupplierFor === message.id
                     ? "Creating supplier…"
-                    : "Create supplier from email"}
+                    : "Create supplier from this email"}
                 </Button>
               ) : null}
-            </CardContent>
-          </Card>
-        ))}
+            </article>
+          ))}
+        </div>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Reply</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleReply} className="space-y-4">
-            <Textarea
-              value={reply}
-              onChange={(event) => setReply(event.target.value)}
-              placeholder="Write your reply..."
-              className="min-h-28"
-              required
-            />
+      <footer className="shrink-0 border-t bg-muted/10 px-6 py-4">
+        <form onSubmit={handleReply} className="space-y-3">
+          <Textarea
+            value={reply}
+            onChange={(event) => setReply(event.target.value)}
+            placeholder="Write your reply…"
+            className="min-h-24 bg-background"
+            required
+          />
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <Input
               type="file"
               multiple
+              className="max-w-sm bg-background"
               onChange={(event) => setFiles(event.target.files)}
             />
             <Button type="submit" disabled={loading}>
               {loading ? "Sending…" : "Send reply"}
             </Button>
-          </form>
-        </CardContent>
-      </Card>
-
-      <Link href="/inbox" className={cn(buttonVariants({ variant: "outline" }))}>
-        Back to inbox
-      </Link>
+          </div>
+        </form>
+      </footer>
     </div>
   );
 }

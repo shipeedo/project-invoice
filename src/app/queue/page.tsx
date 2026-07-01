@@ -27,12 +27,6 @@ export default async function QueuePage() {
     orderBy: desc(invoices.createdAt),
   });
 
-  const myQueue = rows.filter(
-    (invoice) =>
-      invoice.assignedToId === session.user.id ||
-      ["PENDING_VALIDATION", "PENDING_APPROVAL", "NEEDS_REVIEW"].includes(invoice.status),
-  );
-
   return (
     <AppShell
       user={session.user}
@@ -100,28 +94,6 @@ export default async function QueuePage() {
                 )}
               </TableBody>
             </Table>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>My queue ({myQueue.length})</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ul className="space-y-2 text-sm">
-              {myQueue.length === 0 ? (
-                <li className="text-muted-foreground">Nothing assigned to you right now.</li>
-              ) : (
-                myQueue.map((invoice) => (
-                  <li key={invoice.id}>
-                    <Link href={`/invoices/${invoice.id}`} className="hover:underline">
-                      {invoice.vendorName ?? invoice.originalFileName} —{" "}
-                      {invoice.status.toLowerCase().replaceAll("_", " ")}
-                    </Link>
-                  </li>
-                ))
-              )}
-            </ul>
           </CardContent>
         </Card>
       </div>

@@ -393,7 +393,8 @@ export async function syncOrganizationInbox(connection: SyncConnection) {
         if (
           synced.isNew &&
           !isOutboundFromMailbox(summary, connection.selectedMailboxUpn) &&
-          summary.hasAttachments
+          summary.hasAttachments &&
+          synced.thread.supplierId
         ) {
           const invoiceOutcome = await tryProcessInvoiceFromMessage({
             organizationId: connection.organizationId,

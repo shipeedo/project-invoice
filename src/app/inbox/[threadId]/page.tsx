@@ -1,8 +1,13 @@
-import { and, eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
+import Link from "next/link";
 import { AppShell } from "@/components/app-shell";
+import { InboxLayout } from "@/components/inbox-layout";
 import { InboxThreadView } from "@/components/inbox-thread-view";
-import { db, emailThreads } from "@/lib/db";
+import {
+  loadInboxConnection,
+  loadInboxThread,
+  loadInboxThreads,
+} from "@/lib/inbox-data";
 import { requireSession } from "@/lib/session";
 
 type PageProps = {
@@ -13,28 +18,17 @@ export default async function InboxThreadPage({ params }: PageProps) {
   const session = await requireSession();
   const { threadId } = await params;
 
-  const thread = await db.query.emailThreads.findFirst({
-    where: and(
-      eq(emailThreads.id, threadId),
-      eq(emailThreads.organizationId, session.user.organizationId),
-    ),
-    with: {
-      supplier: { columns: { id: true, name: true } },
-      messages: {
-        with: {
-          attachments: { columns: { id: true, fileName: true } },
-          invoice: {
-            columns: { id: true, vendorName: true, originalFileName: true },
-          },
-        },
-        orderBy: (table, { asc }) => [asc(table.receivedAt)],
-      },
-    },
-  });
+  const [threads, connection, thread] = await Promise.all([
+    loadInboxThreads(session.user.organizationId),
+    loadInboxConnection(session.user.organizationId),
+    loadInboxThread(session.user.organizationId, threadId),
+  ]);
 
   if (!thread) {
     notFound();
   }
+
+  const connected = connection?.status === "CONNECTED";
 
   return (
     <AppShell
@@ -45,12 +39,28 @@ export default async function InboxThreadPage({ params }: PageProps) {
         { label: thread.subject ?? "Thread" },
       ]}
     >
-      <InboxThreadView
-        threadId={thread.id}
-        subject={thread.subject}
-        supplier={thread.supplier}
-        messages={thread.messages}
-      />
+      <InboxLayout
+        threads={threads}
+        activeThreadId={thread.id}
+        connected={connected}
+      >
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="flex items-center gap-2 border-b px-4 py-2 md:hidden">
+            <Link
+              href="/inbox"
+              className="text-sm font-medium text-primary underline-offset-4 hover:underline"
+            >
+              ← Back to inbox
+            </Link>
+          </div>
+          <InboxThreadView
+            threadId={thread.id}
+            subject={thread.subject}
+            supplier={thread.supplier}
+            messages={thread.messages}
+          />
+        </div>
+      </InboxLayout>
     </AppShell>
   );
 }
