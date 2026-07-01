@@ -1,6 +1,7 @@
 "use client";
 
-import { ChevronDownIcon } from "lucide-react";
+import Link from "next/link";
+import { ChevronDownIcon, FileTextIcon, PaperclipIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -17,6 +18,14 @@ function formatMessageDate(value: Date | string | null) {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(date);
+}
+
+function invoiceChipLabel(invoice: NonNullable<ConversationMessage["invoice"]>) {
+  const raw = invoice.originalFileName ?? invoice.vendorName;
+  if (raw) {
+    return raw.replace(/\.[^.]+$/, "");
+  }
+  return `invoice_${invoice.id.slice(-6)}`;
 }
 
 export type ConversationMessage = {
@@ -123,6 +132,45 @@ export function InboxConversationMessage({
               <p className="mt-0.5 text-xs text-muted-foreground">
                 {formatMessageDate(message.receivedAt)}
               </p>
+
+              {message.invoice ? (
+                <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="text-xs text-muted-foreground">1 linked invoice</span>
+                  <Link
+                    href={`/invoices/${message.invoice.id}`}
+                    className="inline-flex max-w-48 items-center gap-1 rounded-md border bg-background px-1.5 py-0.5 text-xs transition-colors hover:bg-muted/60"
+                    title={invoiceChipLabel(message.invoice)}
+                  >
+                    <FileTextIcon className="size-3 shrink-0 text-muted-foreground" />
+                    <span className="truncate">{invoiceChipLabel(message.invoice)}</span>
+                  </Link>
+                </div>
+              ) : null}
+
+              {message.attachments.length > 0 ? (
+                <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="text-xs text-muted-foreground">
+                    {message.attachments.length} attachment
+                    {message.attachments.length === 1 ? "" : "s"}
+                  </span>
+                  <ul className="flex flex-wrap items-center gap-1">
+                    {message.attachments.map((attachment) => (
+                      <li key={attachment.id}>
+                        <a
+                          href={`/api/inbox/attachments/${attachment.id}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex max-w-48 items-center gap-1 rounded-md border bg-background px-1.5 py-0.5 text-xs transition-colors hover:bg-muted/60"
+                          title={attachment.fileName}
+                        >
+                          <PaperclipIcon className="size-3 shrink-0 text-muted-foreground" />
+                          <span className="truncate">{attachment.fileName}</span>
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
             </div>
 
             <div className="flex shrink-0 items-center gap-1.5">

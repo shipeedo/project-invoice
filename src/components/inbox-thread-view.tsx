@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,6 @@ import {
   type ConversationMessage,
 } from "@/components/inbox-conversation-message";
 import { InboxThreadHeader } from "@/components/inbox-thread-header";
-import { collectThreadAttachments } from "@/components/inbox-thread-attachments";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 
@@ -33,24 +32,6 @@ export function InboxThreadView({
   const [createSupplierMessage, setCreateSupplierMessage] =
     useState<ConversationMessage | null>(null);
   const [createSupplierOpen, setCreateSupplierOpen] = useState(false);
-
-  const threadAttachments = useMemo(
-    () => collectThreadAttachments(messages),
-    [messages],
-  );
-
-  const linkedInvoices = useMemo(() => {
-    const seen = new Map<
-      string,
-      NonNullable<ConversationMessage["invoice"]>
-    >();
-    for (const message of messages) {
-      if (message.invoice && !seen.has(message.invoice.id)) {
-        seen.set(message.invoice.id, message.invoice);
-      }
-    }
-    return Array.from(seen.values());
-  }, [messages]);
 
   async function handleReply(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -91,12 +72,7 @@ export function InboxThreadView({
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <InboxThreadHeader
-        subject={subject}
-        messageCount={messages.length}
-        attachments={threadAttachments}
-        linkedInvoices={linkedInvoices}
-      />
+      <InboxThreadHeader subject={subject} messageCount={messages.length} />
 
       {error ? (
         <Alert variant="destructive" className="mx-4 mt-3 py-2">
