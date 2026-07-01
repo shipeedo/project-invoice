@@ -1,51 +1,27 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CreateSupplierFromEmailPanel } from "@/components/create-supplier-from-email-panel";
+import {
+  InboxConversationMessage,
+  type ConversationMessage,
+} from "@/components/inbox-conversation-message";
+import {
+  collectThreadAttachments,
+  InboxThreadAttachments,
+} from "@/components/inbox-thread-attachments";
 import { Input } from "@/components/ui/input";
-import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
-
-function formatMessageDate(value: Date | string | null) {
-  if (!value) return "—";
-  const date = typeof value === "string" ? new Date(value) : value;
-  return new Intl.DateTimeFormat("en-AU", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(date);
-}
-
-type ThreadMessage = {
-  id: string;
-  direction: "INBOUND" | "OUTBOUND";
-  fromEmail: string | null;
-  fromName: string | null;
-  subject: string | null;
-  bodyHtml: string | null;
-  bodyText: string | null;
-  receivedAt: Date | string | null;
-  supplierId: string | null;
-  invoice: {
-    id: string;
-    vendorName: string | null;
-    originalFileName: string | null;
-  } | null;
-  attachments: Array<{
-    id: string;
-    fileName: string;
-  }>;
-};
 
 type InboxThreadViewProps = {
   threadId: string;
   subject: string | null;
   supplier: { id: string; name: string } | null;
-  messages: ThreadMessage[];
+  messages: ConversationMessage[];
 };
 
 export function InboxThreadView({
@@ -60,8 +36,13 @@ export function InboxThreadView({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [createSupplierMessage, setCreateSupplierMessage] =
-    useState<ThreadMessage | null>(null);
+    useState<ConversationMessage | null>(null);
   const [createSupplierOpen, setCreateSupplierOpen] = useState(false);
+
+  const threadAttachments = useMemo(
+    () => collectThreadAttachments(messages),
+    [messages],
+  );
 
   const hasUnknownSender = messages.some(
     (message) => message.direction === "INBOUND" && !message.supplierId,
@@ -98,7 +79,7 @@ export function InboxThreadView({
     router.refresh();
   }
 
-  function openCreateSupplierPanel(message: ThreadMessage) {
+  function openCreateSupplierPanel(message: ConversationMessage) {
     setError(null);
     setCreateSupplierMessage(message);
     setCreateSupplierOpen(true);
@@ -111,7 +92,8 @@ export function InboxThreadView({
           <div className="min-w-0 flex-1">
             <h3 className="text-lg font-semibold">{subject ?? "(No subject)"}</h3>
             <p className="mt-1 text-sm text-muted-foreground">
-              {messages.length} message{messages.length === 1 ? "" : "s"}
+              {messages.length} message{messages.length === 1 ? "" : "s"} in this
+              conversation
             </p>
           </div>
           {supplier ? (
@@ -121,6 +103,8 @@ export function InboxThreadView({
           )}
         </div>
       </header>
+
+      <InboxThreadAttachments attachments={threadAttachments} />
 
       {error ? (
         <Alert variant="destructive" className="mx-6 mt-4">
@@ -138,79 +122,23 @@ export function InboxThreadView({
       ) : null}
 
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
-        <div className="space-y-6">
-          {messages.map((message, index) => (
-            <article key={message.id}>
-              {index > 0 ? <Separator className="mb-6" /> : null}
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <p className="font-medium">
-                    {message.fromName
-                      ? `${message.fromName} <${message.fromEmail}>`
-                      : (message.fromEmail ?? "Unknown sender")}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {formatMessageDate(message.receivedAt)}
-                  </p>
-                </div>
-                <Badge variant="outline">{message.direction.toLowerCase()}</Badge>
-              </div>
-
-              <div className="mt-4 text-sm leading-relaxed">
-                {message.bodyText ? (
-                  <p className="whitespace-pre-wrap">{message.bodyText}</p>
-                ) : message.bodyHtml ? (
-                  <div
-                    className="prose prose-sm max-w-none"
-                    dangerouslySetInnerHTML={{ __html: message.bodyHtml }}
-                  />
-                ) : (
-                  <p className="text-muted-foreground">No message body.</p>
-                )}
-              </div>
-
-              {message.attachments.length > 0 ? (
-                <ul className="mt-4 space-y-1 rounded-lg border bg-muted/20 p-3 text-sm">
-                  {message.attachments.map((attachment) => (
-                    <li key={attachment.id}>
-                      <a
-                        href={`/api/inbox/attachments/${attachment.id}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-primary underline-offset-4 hover:underline"
-                      >
-                        {attachment.fileName}
-                      </a>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-
-              {message.invoice ? (
-                <p className="mt-3 text-sm">
-                  <Link
-                    href={`/invoices/${message.invoice.id}`}
-                    className="font-medium text-primary underline-offset-4 hover:underline"
-                  >
-                    View linked invoice:{" "}
-                    {message.invoice.vendorName ??
-                      message.invoice.originalFileName ??
-                      message.invoice.id}
-                  </Link>
-                </p>
-              ) : null}
-
-              {message.direction === "INBOUND" && !message.supplierId ? (
-                <Button
-                  size="sm"
-                  className="mt-4"
-                  onClick={() => openCreateSupplierPanel(message)}
-                >
-                  Create supplier from this email
-                </Button>
-              ) : null}
-            </article>
-          ))}
+        <div className="mx-auto max-w-4xl">
+          {messages.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No messages in this conversation.</p>
+          ) : (
+            <div>
+              {messages.map((message, index) => (
+                <InboxConversationMessage
+                  key={message.id}
+                  message={message}
+                  index={index}
+                  total={messages.length}
+                  defaultOpen={index === messages.length - 1}
+                  onCreateSupplier={openCreateSupplierPanel}
+                />
+              ))}
+            </div>
+          )}
         </div>
       </div>
 

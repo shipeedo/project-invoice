@@ -13,6 +13,8 @@ export type InboxThreadSummary = {
   lastMessageAt: Date | string | null;
   supplier: { id: string; name: string } | null;
   messages: Array<{
+    id: string;
+    direction: "INBOUND" | "OUTBOUND";
     fromEmail: string | null;
     fromName: string | null;
     bodyText: string | null;
@@ -93,6 +95,7 @@ export function InboxThreadList({ threads, activeThreadId }: InboxThreadListProp
           <ul>
             {filteredThreads.map((thread) => {
               const latest = thread.messages[0];
+              const messageCount = thread.messages.length;
               const isActive = thread.id === activeThreadId;
               return (
                 <li key={thread.id}>
@@ -118,9 +121,16 @@ export function InboxThreadList({ threads, activeThreadId }: InboxThreadListProp
                         >
                           {senderLabel(thread)}
                         </p>
-                        <span className="shrink-0 text-xs text-muted-foreground">
-                          {formatThreadDate(thread.lastMessageAt)}
-                        </span>
+                        <div className="flex shrink-0 items-center gap-1.5">
+                          {messageCount > 1 ? (
+                            <Badge variant="secondary" className="text-[10px]">
+                              {messageCount}
+                            </Badge>
+                          ) : null}
+                          <span className="text-xs text-muted-foreground">
+                            {formatThreadDate(thread.lastMessageAt)}
+                          </span>
+                        </div>
                       </div>
                       <p
                         className={cn(

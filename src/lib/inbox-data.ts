@@ -22,7 +22,6 @@ export async function loadInboxThreads(organizationId: string) {
           receivedAt: true,
         },
         orderBy: (table, { desc: orderDesc }) => [orderDesc(table.receivedAt)],
-        limit: 1,
       },
     },
     orderBy: desc(emailThreads.lastMessageAt),
