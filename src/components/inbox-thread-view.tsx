@@ -2,23 +2,17 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
-import { FileTextIcon } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { CreateSupplierFromEmailPanel } from "@/components/create-supplier-from-email-panel";
 import {
   InboxConversationMessage,
   type ConversationMessage,
 } from "@/components/inbox-conversation-message";
-import {
-  collectThreadAttachments,
-  InboxThreadAttachments,
-} from "@/components/inbox-thread-attachments";
+import { InboxThreadHeader } from "@/components/inbox-thread-header";
+import { collectThreadAttachments } from "@/components/inbox-thread-attachments";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { cn } from "@/lib/utils";
 
 type InboxThreadViewProps = {
   threadId: string;
@@ -101,77 +95,27 @@ export function InboxThreadView({
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <header
-        className={cn(
-          "shrink-0 border-b px-6 py-4",
-          supplier
-            ? "border-emerald-200 bg-emerald-50/60"
-            : "border-border bg-muted/40",
-        )}
-      >
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0 flex-1">
-            <h3 className="text-lg font-semibold">{subject ?? "(No subject)"}</h3>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {messages.length} message{messages.length === 1 ? "" : "s"} in this
-              conversation
-            </p>
-          </div>
-          {supplier ? (
-            <Badge className="border-emerald-300 bg-emerald-100 text-emerald-900 hover:bg-emerald-100">
-              Supplier linked: {supplier.name}
-            </Badge>
-          ) : (
-            <Badge
-              variant="outline"
-              className="border-muted-foreground/30 bg-muted text-muted-foreground"
-            >
-              No supplier linked
-            </Badge>
-          )}
-        </div>
-
-        {linkedInvoices.length > 0 ? (
-          <div className="mt-4 flex flex-wrap gap-2">
-            {linkedInvoices.map((invoice) => {
-              const label =
-                invoice.vendorName ??
-                invoice.originalFileName ??
-                invoice.id;
-              return (
-                <Link
-                  key={invoice.id}
-                  href={`/invoices/${invoice.id}`}
-                  className={cn(buttonVariants(), "h-9 px-4")}
-                >
-                  <FileTextIcon className="size-4" />
-                  View linked invoice
-                  <span className="font-normal opacity-80">· {label}</span>
-                </Link>
-              );
-            })}
-          </div>
-        ) : null}
-      </header>
-
-      <InboxThreadAttachments attachments={threadAttachments} />
+      <InboxThreadHeader
+        subject={subject}
+        messageCount={messages.length}
+        supplier={supplier}
+        attachments={threadAttachments}
+        linkedInvoices={linkedInvoices}
+      />
 
       {error ? (
-        <Alert variant="destructive" className="mx-6 mt-4">
+        <Alert variant="destructive" className="mx-4 mt-3 py-2">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       ) : null}
 
       {hasUnknownSender ? (
-        <Alert className="mx-6 mt-4 border-muted-foreground/20 bg-muted/50">
-          <AlertDescription className="text-muted-foreground">
-            This conversation is not linked to a supplier yet. Create a supplier to
-            enable automatic invoice processing for future emails from this address.
-          </AlertDescription>
-        </Alert>
+        <p className="shrink-0 border-b px-4 py-1.5 text-xs text-muted-foreground">
+          Not linked to a supplier — create one from an inbound message below.
+        </p>
       ) : null}
 
-      <div className="min-h-0 min-w-0 flex-1 overflow-y-auto px-6 py-4">
+      <div className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 py-3">
         {messages.length === 0 ? (
           <p className="text-sm text-muted-foreground">No messages in this conversation.</p>
         ) : (
@@ -190,7 +134,7 @@ export function InboxThreadView({
         )}
       </div>
 
-      <footer className="shrink-0 border-t bg-muted/10 px-6 py-4">
+      <footer className="shrink-0 border-t bg-muted/10 px-4 py-3">
         <form onSubmit={handleReply} className="space-y-3">
           <Textarea
             value={reply}
