@@ -311,6 +311,8 @@ export const mailboxMessageAttachments = sqliteTable("mailbox_message_attachment
   filePath: text("file_path").notNull(),
   mimeType: text("mime_type"),
   size: integer("size"),
+  isInline: integer("is_inline", { mode: "boolean" }).notNull().default(false),
+  contentId: text("content_id"),
   createdAt: timestamp(),
 });
 

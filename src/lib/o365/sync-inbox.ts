@@ -106,10 +106,15 @@ async function syncMessageAttachments(params: {
   });
 
   for (const attachment of attachmentList.value) {
-    if (!attachment.id || !attachment.name) continue;
+    if (!attachment.id) continue;
     if (attachment["@odata.type"] && !attachment["@odata.type"].includes("fileAttachment")) {
       continue;
     }
+
+    const fileName = attachment.name ?? attachment.contentId ?? attachment.id;
+    if (!fileName) continue;
+    const isInline = attachment.isInline ?? false;
+    const contentId = attachment.contentId ?? null;
 
     const existing = await db.query.mailboxMessageAttachments.findFirst({
       where: and(
@@ -117,7 +122,14 @@ async function syncMessageAttachments(params: {
         eq(mailboxMessageAttachments.graphAttachmentId, attachment.id),
       ),
     });
-    if (existing) continue;
+
+    if (existing) {
+      await db
+        .update(mailboxMessageAttachments)
+        .set({ isInline, contentId })
+        .where(eq(mailboxMessageAttachments.id, existing.id));
+      continue;
+    }
 
     const downloaded = await downloadFileAttachment({
       accessToken: params.accessToken,
@@ -140,6 +152,8 @@ async function syncMessageAttachments(params: {
       filePath: saved.storedPath,
       mimeType: saved.mimeType,
       size: saved.size,
+      isInline,
+      contentId,
     });
   }
 }
@@ -176,8 +190,8 @@ export async function syncGraphMessage(params: {
   summary: GraphMessage;
 }) {
   const summary = params.summary;
-  const message =
-    summary.body || summary.toRecipients
+  let message =
+    summary.body?.content
       ? summary
       : await getMessageDetails({
           accessToken: params.accessToken,
@@ -223,7 +237,41 @@ export async function syncGraphMessage(params: {
   });
 
   if (existingMessage) {
-    return { message: existingMessage, thread, isNew: false as const };
+    let currentMessage = existingMessage;
+
+    if (!existingMessage.bodyHtml) {
+      if (!message.body?.content) {
+        message = await getMessageDetails({
+          accessToken: params.accessToken,
+          mailbox: params.mailbox,
+          messageId: summary.id,
+        });
+      }
+
+      if (message.body?.content) {
+        const body = extractMessageBody(message);
+        const [updated] = await db
+          .update(mailboxMessages)
+          .set({
+            bodyHtml: body.html,
+            bodyText: body.text,
+          })
+          .where(eq(mailboxMessages.id, existingMessage.id))
+          .returning();
+        currentMessage = updated;
+      }
+    }
+
+    if (currentMessage.hasAttachments) {
+      await syncMessageAttachments({
+        accessToken: params.accessToken,
+        mailbox: params.mailbox,
+        dbMessageId: currentMessage.id,
+        graphMessageId: message.id,
+      });
+    }
+
+    return { message: currentMessage, thread, isNew: false as const };
   }
 
   const body = extractMessageBody(message);

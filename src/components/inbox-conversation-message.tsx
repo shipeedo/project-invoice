@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useMemo } from "react";
 import { ChevronDownIcon, FileTextIcon, PaperclipIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,6 +10,10 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import {
+  isDisplayAttachment,
+  rewriteInlineImageSources,
+} from "@/lib/email-body";
 import { cn } from "@/lib/utils";
 
 function formatMessageDate(value: Date | string | null) {
@@ -47,6 +52,8 @@ export type ConversationMessage = {
   attachments: Array<{
     id: string;
     fileName: string;
+    isInline: boolean | null;
+    contentId: string | null;
   }>;
 };
 
@@ -68,6 +75,11 @@ export function InboxConversationMessage({
     : (message.fromEmail ?? "Unknown sender");
   const isLatest = index === total - 1;
   const isLinked = Boolean(message.supplierId);
+  const displayAttachments = message.attachments.filter(isDisplayAttachment);
+  const renderedHtml = useMemo(() => {
+    if (!message.bodyHtml) return null;
+    return rewriteInlineImageSources(message.bodyHtml, message.attachments);
+  }, [message.bodyHtml, message.attachments]);
 
   return (
     <Collapsible
@@ -147,14 +159,14 @@ export function InboxConversationMessage({
                 </div>
               ) : null}
 
-              {message.attachments.length > 0 ? (
+              {displayAttachments.length > 0 ? (
                 <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
                   <span className="text-xs text-muted-foreground">
-                    {message.attachments.length} attachment
-                    {message.attachments.length === 1 ? "" : "s"}
+                    {displayAttachments.length} attachment
+                    {displayAttachments.length === 1 ? "" : "s"}
                   </span>
                   <ul className="flex flex-wrap items-center gap-1">
-                    {message.attachments.map((attachment) => (
+                    {displayAttachments.map((attachment) => (
                       <li key={attachment.id}>
                         <a
                           href={`/api/inbox/attachments/${attachment.id}`}
@@ -197,13 +209,13 @@ export function InboxConversationMessage({
 
           <CollapsibleContent className="px-4 py-4">
             <div className="w-full min-w-0 text-sm leading-relaxed">
-              {message.bodyText ? (
-                <p className="whitespace-pre-wrap break-words">{message.bodyText}</p>
-              ) : message.bodyHtml ? (
+              {renderedHtml ? (
                 <div
-                  className="prose prose-sm max-w-none break-words [&_*]:max-w-full"
-                  dangerouslySetInnerHTML={{ __html: message.bodyHtml }}
+                  className="prose prose-sm max-w-none break-words [&_*]:max-w-full [&_img]:h-auto [&_img]:max-w-full"
+                  dangerouslySetInnerHTML={{ __html: renderedHtml }}
                 />
+              ) : message.bodyText ? (
+                <p className="whitespace-pre-wrap break-words">{message.bodyText}</p>
               ) : (
                 <p className="text-muted-foreground">No message body.</p>
               )}

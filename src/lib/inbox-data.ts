@@ -38,7 +38,14 @@ export async function loadInboxThread(organizationId: string, threadId: string) 
       supplier: { columns: { id: true, name: true } },
       messages: {
         with: {
-          attachments: { columns: { id: true, fileName: true } },
+          attachments: {
+            columns: {
+              id: true,
+              fileName: true,
+              isInline: true,
+              contentId: true,
+            },
+          },
           invoice: {
             columns: { id: true, vendorName: true, originalFileName: true },
           },

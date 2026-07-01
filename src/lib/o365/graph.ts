@@ -43,6 +43,8 @@ export type GraphAttachment = {
   name?: string;
   contentType?: string;
   size?: number;
+  isInline?: boolean;
+  contentId?: string | null;
   "@odata.type"?: string;
 };
 
@@ -365,7 +367,7 @@ export async function listMessageAttachments(params: {
 }) {
   return graphFetch<GraphListResponse<GraphAttachment>>(
     params.accessToken,
-    `/users/${encodeURIComponent(params.mailbox)}/messages/${encodeURIComponent(params.messageId)}/attachments?$select=id,name,contentType,size`,
+    `/users/${encodeURIComponent(params.mailbox)}/messages/${encodeURIComponent(params.messageId)}/attachments?$select=id,name,contentType,size,isInline,contentId`,
   );
 }
 
@@ -500,8 +502,15 @@ export function extractEmailAddresses(
 
 export function extractMessageBody(message: GraphMessage) {
   const content = message.body?.content ?? "";
-  if (message.body?.contentType?.toLowerCase() === "html") {
-    return { html: content, text: message.bodyPreview ?? null };
+  const contentType = message.body?.contentType?.toLowerCase();
+
+  if (contentType === "html" && content) {
+    return { html: content, text: null };
   }
-  return { html: null, text: content || message.bodyPreview || null };
+
+  if (content) {
+    return { html: null, text: content };
+  }
+
+  return { html: null, text: message.bodyPreview ?? null };
 }
