@@ -1,11 +1,7 @@
 import { AppShell } from "@/components/app-shell";
 import { O365Settings } from "@/components/o365-settings";
-import {
-  getO365Connection,
-  getValidAccessToken,
-} from "@/lib/o365/connection";
+import { getO365Connection } from "@/lib/o365/connection";
 import { isO365Configured } from "@/lib/o365/config";
-import { listGraphMailboxes } from "@/lib/o365/graph";
 import { requireRole } from "@/lib/session";
 
 type PageProps = {
@@ -24,13 +20,15 @@ export default async function O365SettingsPage({ searchParams }: PageProps) {
     userPrincipalName: string;
   }> = [];
 
-  if (connection?.status === "CONNECTED") {
-    try {
-      const accessToken = await getValidAccessToken(connection);
-      initialMailboxes = await listGraphMailboxes(accessToken);
-    } catch {
-      initialMailboxes = [];
-    }
+  if (connection?.selectedMailboxId && connection.selectedMailboxUpn) {
+    initialMailboxes = [
+      {
+        id: connection.selectedMailboxId,
+        displayName: connection.selectedMailboxUpn,
+        mail: connection.selectedMailboxUpn,
+        userPrincipalName: connection.selectedMailboxUpn,
+      },
+    ];
   }
 
   const initialStatus = {

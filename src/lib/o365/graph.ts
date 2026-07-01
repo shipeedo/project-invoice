@@ -158,7 +158,7 @@ async function filterAccessibleMailboxes(
   signedInUserId: string,
 ) {
   const accessible: GraphMailbox[] = [];
-  const concurrency = 8;
+  const concurrency = 16;
 
   for (let index = 0; index < mailboxes.length; index += concurrency) {
     const batch = mailboxes.slice(index, index + concurrency);
@@ -176,18 +176,7 @@ async function filterAccessibleMailboxes(
   return accessible;
 }
 
-function matchesMailboxSearch(mailbox: GraphMailbox, search: string) {
-  const normalized = search.trim().toLowerCase();
-  if (!normalized) return true;
-  const fields = [
-    mailbox.displayName,
-    mailbox.mail,
-    mailbox.userPrincipalName,
-  ].filter(Boolean);
-  return fields.some((field) => field!.toLowerCase().includes(normalized));
-}
-
-export async function listGraphMailboxes(accessToken: string, search?: string) {
+export async function listGraphMailboxes(accessToken: string) {
   const me = await graphFetch<GraphMailbox>(
     accessToken,
     "/me?$select=id,displayName,mail,userPrincipalName",
@@ -198,21 +187,15 @@ export async function listGraphMailboxes(accessToken: string, search?: string) {
     candidates.push(normalizeGraphMailbox(me));
   }
 
-  const trimmedSearch = search?.trim();
-  if (trimmedSearch) {
-    const users = await graphFetch<GraphListResponse<GraphMailbox>>(
-      accessToken,
-      "/users?$select=id,displayName,mail,userPrincipalName&$top=999",
-    );
+  const users = await graphFetch<GraphListResponse<GraphMailbox>>(
+    accessToken,
+    "/users?$select=id,displayName,mail,userPrincipalName&$top=999",
+  );
 
-    for (const user of users.value) {
-      if (!user.mail && !user.userPrincipalName) continue;
-      if (user.id === me.id) continue;
-      const mailbox = normalizeGraphMailbox(user);
-      if (!matchesMailboxSearch(mailbox, trimmedSearch)) continue;
-      candidates.push(mailbox);
-      if (candidates.length >= 40) break;
-    }
+  for (const user of users.value) {
+    if (!user.mail && !user.userPrincipalName) continue;
+    if (user.id === me.id) continue;
+    candidates.push(normalizeGraphMailbox(user));
   }
 
   const accessible = await filterAccessibleMailboxes(accessToken, candidates, me.id);

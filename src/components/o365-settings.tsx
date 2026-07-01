@@ -4,15 +4,13 @@ import {
   CheckIcon,
   MailIcon,
   RefreshCwIcon,
-  SearchIcon,
   UnplugIcon,
 } from "lucide-react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 type O365Status = {
@@ -58,20 +56,6 @@ function mailboxAddress(mailbox: Mailbox) {
   return mailbox.mail || mailbox.userPrincipalName;
 }
 
-function matchesQuery(mailbox: Mailbox, query: string) {
-  const normalized = query.trim().toLowerCase();
-  if (!normalized) return true;
-  return (
-    mailbox.displayName.toLowerCase().includes(normalized) ||
-    mailbox.mail.toLowerCase().includes(normalized) ||
-    mailbox.userPrincipalName.toLowerCase().includes(normalized)
-  );
-}
-
-function looksLikeEmail(value: string) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
-}
-
 export function O365Settings({
   initialStatus,
   initialMailboxes,
@@ -80,7 +64,6 @@ export function O365Settings({
 }: O365SettingsProps) {
   const [status, setStatus] = useState(initialStatus);
   const [mailboxes, setMailboxes] = useState<Mailbox[]>(initialMailboxes);
-  const [search, setSearch] = useState("");
   const [selectedMailbox, setSelectedMailbox] = useState<Mailbox | null>(() => {
     if (!initialStatus.mailboxId) return null;
     return (
@@ -93,7 +76,6 @@ export function O365Settings({
     );
   });
   const [loadingMailboxes, setLoadingMailboxes] = useState(false);
-  const [resolvingAddress, setResolvingAddress] = useState(false);
   const [savingMailbox, setSavingMailbox] = useState(false);
   const [polling, setPolling] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
@@ -101,10 +83,6 @@ export function O365Settings({
     connected ? "Office 365 connected successfully." : errorMessage ?? null,
   );
   const [error, setError] = useState<string | null>(null);
-  const [hasLoadedMailboxes, setHasLoadedMailboxes] = useState(
-    initialMailboxes.length > 0,
-  );
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refreshStatus = useCallback(async () => {
     const response = await fetch("/api/admin/o365/status");
@@ -125,14 +103,11 @@ export function O365Settings({
     }
   }, []);
 
-  const loadMailboxes = useCallback(async (query?: string) => {
+  const loadMailboxes = useCallback(async () => {
     setLoadingMailboxes(true);
     setError(null);
     try {
-      const params = query?.trim()
-        ? `?search=${encodeURIComponent(query.trim())}`
-        : "";
-      const response = await fetch(`/api/admin/o365/mailboxes${params}`);
+      const response = await fetch("/api/admin/o365/mailboxes");
       const data = (await response.json()) as {
         mailboxes?: Mailbox[];
         error?: string;
@@ -141,7 +116,6 @@ export function O365Settings({
         throw new Error(data.error ?? "Failed to load mailboxes");
       }
       setMailboxes(data.mailboxes ?? []);
-      setHasLoadedMailboxes(true);
     } catch (loadError) {
       setError(
         loadError instanceof Error ? loadError.message : "Failed to load mailboxes",
@@ -151,54 +125,13 @@ export function O365Settings({
     }
   }, []);
 
-  const filteredMailboxes = useMemo(
-    () => mailboxes.filter((mailbox) => matchesQuery(mailbox, search)),
-    [mailboxes, search],
-  );
-
-  function ensureMailboxesLoaded() {
-    if (!hasLoadedMailboxes && !loadingMailboxes) {
+  // Fetch accessible mailboxes when O365 is connected (client-side; can take a moment).
+  useEffect(() => {
+    if (status.status === "CONNECTED") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional mount fetch
       void loadMailboxes();
     }
-  }
-
-  function handleSearchChange(value: string) {
-    setSearch(value);
-    if (debounceRef.current) {
-      clearTimeout(debounceRef.current);
-    }
-    debounceRef.current = setTimeout(() => {
-      void loadMailboxes(value);
-    }, 350);
-  }
-
-  async function resolveAddressAsMailbox(address: string) {
-    setResolvingAddress(true);
-    setError(null);
-    try {
-      const response = await fetch(
-        `/api/admin/o365/mailboxes/resolve?address=${encodeURIComponent(address.trim())}`,
-      );
-      const data = (await response.json()) as { mailbox?: Mailbox; error?: string };
-      if (!response.ok || !data.mailbox) {
-        throw new Error(data.error ?? "Mailbox not found");
-      }
-      setSelectedMailbox(data.mailbox);
-      setMailboxes((current) =>
-        current.some((entry) => entry.id === data.mailbox!.id)
-          ? current
-          : [...current, data.mailbox!],
-      );
-    } catch (resolveError) {
-      setError(
-        resolveError instanceof Error
-          ? resolveError.message
-          : "Could not find that mailbox",
-      );
-    } finally {
-      setResolvingAddress(false);
-    }
-  }
+  }, [status.status, loadMailboxes]);
 
   async function handleSaveMailbox() {
     if (!selectedMailbox) {
@@ -278,7 +211,6 @@ export function O365Settings({
       }
       setMailboxes([]);
       setSelectedMailbox(null);
-      setHasLoadedMailboxes(false);
       setMessage("Office 365 disconnected.");
       await refreshStatus();
     } catch (disconnectError) {
@@ -291,11 +223,6 @@ export function O365Settings({
       setDisconnecting(false);
     }
   }
-
-  const showAddressFallback =
-    !loadingMailboxes &&
-    filteredMailboxes.length === 0 &&
-    looksLikeEmail(search);
 
   return (
     <div className="space-y-6">
@@ -394,9 +321,8 @@ export function O365Settings({
           <CardHeader>
             <CardTitle>Invoice mailbox</CardTitle>
             <CardDescription>
-              Search for a shared mailbox you have read access to. Only mailboxes
-              your account can read are shown (typically shared mailboxes with Full
-              Access granted in Exchange).
+              Choose a mailbox your account can read. Only mailboxes you have access
+              to are listed (typically shared mailboxes with Full Access in Exchange).
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -407,29 +333,17 @@ export function O365Settings({
               </div>
             ) : null}
 
-            <div className="relative">
-              <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                id="mailbox-search"
-                value={search}
-                onChange={(event) => handleSearchChange(event.target.value)}
-                onFocus={ensureMailboxesLoaded}
-                placeholder="Search by name or email address…"
-                className="pl-9"
-              />
-            </div>
-
             <div className="flex items-center justify-between text-sm text-muted-foreground">
               <span>
                 {loadingMailboxes
-                  ? "Checking mailbox access…"
-                  : `${filteredMailboxes.length} accessible mailbox${filteredMailboxes.length === 1 ? "" : "es"}`}
+                  ? "Loading accessible mailboxes…"
+                  : `${mailboxes.length} accessible mailbox${mailboxes.length === 1 ? "" : "es"}`}
               </span>
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
-                onClick={() => void loadMailboxes(search)}
+                onClick={() => void loadMailboxes()}
                 disabled={loadingMailboxes}
               >
                 <RefreshCwIcon
@@ -440,40 +354,15 @@ export function O365Settings({
             </div>
 
             <div className="max-h-80 overflow-y-auto rounded-lg border">
-              {filteredMailboxes.length === 0 ? (
+              {mailboxes.length === 0 ? (
                 <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-                  {loadingMailboxes ? (
-                    "Checking mailbox access…"
-                  ) : showAddressFallback ? (
-                    <div className="space-y-3">
-                      <p>No accessible mailboxes match that search.</p>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled={resolvingAddress}
-                        onClick={() => void resolveAddressAsMailbox(search)}
-                      >
-                        {resolvingAddress ? "Checking access…" : `Check access to ${search.trim()}`}
-                      </Button>
-                    </div>
-                  ) : !hasLoadedMailboxes ? (
-                    <button
-                      type="button"
-                      className="text-primary underline-offset-4 hover:underline"
-                      onClick={() => void loadMailboxes()}
-                    >
-                      Load your mailbox
-                    </button>
-                  ) : search.trim() ? (
-                    "No accessible mailboxes match your search."
-                  ) : (
-                    "Type a name or email to search for shared mailboxes you can access."
-                  )}
+                  {loadingMailboxes
+                    ? "Checking which mailboxes you can access. This may take a moment…"
+                    : "No accessible mailboxes found. Ask your Exchange admin to grant you Full Access to the shared mailbox."}
                 </div>
               ) : (
                 <ul className="divide-y">
-                  {filteredMailboxes.map((mailbox) => {
+                  {mailboxes.map((mailbox) => {
                     const isSelected = selectedMailbox?.id === mailbox.id;
                     const address = mailboxAddress(mailbox);
                     return (

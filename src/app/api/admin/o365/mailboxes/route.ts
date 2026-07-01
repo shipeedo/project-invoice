@@ -3,7 +3,7 @@ import { auth } from "@/lib/auth";
 import { getO365Connection, getValidAccessToken } from "@/lib/o365/connection";
 import { listGraphMailboxes } from "@/lib/o365/graph";
 
-export async function GET(request: Request) {
+export async function GET() {
   const session = await auth();
   if (!session?.user?.organizationId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -18,12 +18,9 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Office 365 is not connected" }, { status: 400 });
   }
 
-  const url = new URL(request.url);
-  const search = url.searchParams.get("search") ?? undefined;
-
   try {
     const accessToken = await getValidAccessToken(connection);
-    const mailboxes = await listGraphMailboxes(accessToken, search);
+    const mailboxes = await listGraphMailboxes(accessToken);
     return NextResponse.json({ mailboxes });
   } catch (error) {
     return NextResponse.json(
