@@ -46,6 +46,8 @@ export type SyncInboxResult = {
   invoicesProcessed: number;
   skipped: number;
   errors: string[];
+  /** True when the sync could not run at all (auth, mailbox, connection). */
+  fatal: boolean;
 };
 
 function isOutboundFromMailbox(message: GraphMessage, mailboxUpn: string) {
@@ -108,64 +110,80 @@ async function syncMessageAttachments(params: {
   });
 
   for (const attachment of attachmentList.value) {
-    if (!attachment.id) continue;
-    if (attachment["@odata.type"] && !attachment["@odata.type"].includes("fileAttachment")) {
-      continue;
-    }
-
-    const fileName = attachment.name ?? attachment.id;
-    if (!fileName) continue;
-
-    const existing = await db.query.mailboxMessageAttachments.findFirst({
-      where: and(
-        eq(mailboxMessageAttachments.messageId, params.dbMessageId),
-        eq(mailboxMessageAttachments.graphAttachmentId, attachment.id),
-      ),
-    });
-
-    if (existing) {
-      if (existing.contentId == null) {
-        const meta = await getFileAttachmentMetadata({
-          accessToken: params.accessToken,
-          mailbox: params.mailbox,
-          messageId: params.graphMessageId,
-          attachmentId: attachment.id,
-        });
-        await db
-          .update(mailboxMessageAttachments)
-          .set({
-            isInline: meta.isInline ?? attachment.isInline ?? false,
-            contentId: meta.contentId ?? null,
-          })
-          .where(eq(mailboxMessageAttachments.id, existing.id));
+    try {
+      if (!attachment.id) continue;
+      if (attachment["@odata.type"] && !attachment["@odata.type"].includes("fileAttachment")) {
+        continue;
       }
-      continue;
+
+      const fileName = attachment.name ?? attachment.id;
+      if (!fileName) continue;
+
+      const existing = await db.query.mailboxMessageAttachments.findFirst({
+        where: and(
+          eq(mailboxMessageAttachments.messageId, params.dbMessageId),
+          eq(mailboxMessageAttachments.graphAttachmentId, attachment.id),
+        ),
+      });
+
+      if (existing) {
+        const isInline = attachment.isInline ?? existing.isInline ?? false;
+        const updates: {
+          isInline?: boolean;
+          contentId?: string | null;
+        } = {};
+
+        if (existing.isInline !== isInline) {
+          updates.isInline = isInline;
+        }
+
+        if (existing.contentId == null && isInline) {
+          const meta = await getFileAttachmentMetadata({
+            accessToken: params.accessToken,
+            mailbox: params.mailbox,
+            messageId: params.graphMessageId,
+            attachmentId: attachment.id,
+          });
+          updates.isInline = meta.isInline ?? isInline;
+          updates.contentId = meta.contentId ?? null;
+        }
+
+        if (Object.keys(updates).length > 0) {
+          await db
+            .update(mailboxMessageAttachments)
+            .set(updates)
+            .where(eq(mailboxMessageAttachments.id, existing.id));
+        }
+        continue;
+      }
+
+      const downloaded = await downloadFileAttachment({
+        accessToken: params.accessToken,
+        mailbox: params.mailbox,
+        messageId: params.graphMessageId,
+        attachmentId: attachment.id,
+      });
+
+      const saved = await saveBufferToUploads({
+        buffer: downloaded.buffer,
+        fileName: downloaded.name,
+        mimeType: downloaded.contentType,
+        subdir: "email",
+      });
+
+      await db.insert(mailboxMessageAttachments).values({
+        messageId: params.dbMessageId,
+        graphAttachmentId: attachment.id,
+        fileName: downloaded.name,
+        filePath: saved.storedPath,
+        mimeType: saved.mimeType,
+        size: saved.size,
+        isInline: downloaded.isInline,
+        contentId: downloaded.contentId,
+      });
+    } catch {
+      // Skip individual attachment failures so one bad file does not fail the message.
     }
-
-    const downloaded = await downloadFileAttachment({
-      accessToken: params.accessToken,
-      mailbox: params.mailbox,
-      messageId: params.graphMessageId,
-      attachmentId: attachment.id,
-    });
-
-    const saved = await saveBufferToUploads({
-      buffer: downloaded.buffer,
-      fileName: downloaded.name,
-      mimeType: downloaded.contentType,
-      subdir: "email",
-    });
-
-    await db.insert(mailboxMessageAttachments).values({
-      messageId: params.dbMessageId,
-      graphAttachmentId: attachment.id,
-      fileName: downloaded.name,
-      filePath: saved.storedPath,
-      mimeType: saved.mimeType,
-      size: saved.size,
-      isInline: downloaded.isInline,
-      contentId: downloaded.contentId,
-    });
   }
 }
 
@@ -387,10 +405,12 @@ export async function syncOrganizationInbox(
     invoicesProcessed: 0,
     skipped: 0,
     errors: [],
+    fatal: false,
   };
 
   if (!connection.selectedMailboxUpn) {
     result.errors.push("No mailbox selected");
+    result.fatal = true;
     return result;
   }
 
@@ -438,6 +458,7 @@ export async function syncOrganizationInbox(
       result.errors.push(
         "No inbox messages returned from Microsoft Graph — verify the shared mailbox has mail and you have Full Access in Exchange",
       );
+      result.fatal = true;
       return result;
     }
 
@@ -497,6 +518,7 @@ export async function syncOrganizationInbox(
     }
   } catch (error) {
     result.errors.push(error instanceof Error ? error.message : "Sync failed");
+    result.fatal = true;
   }
 
   return result;

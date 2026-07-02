@@ -32,7 +32,7 @@ function parseSyncEvent(line: string): SyncProgressEvent | null {
 }
 
 function completionMessage(result: PollResult) {
-  if (result.errors.length > 0 && result.synced === 0 && result.skipped === 0) {
+  if (result.fatal && result.synced === 0 && result.skipped === 0) {
     return result.errors[0] ?? "Sync failed";
   }
 
@@ -44,7 +44,11 @@ function completionMessage(result: PollResult) {
     if (result.invoicesProcessed > 0) {
       parts.push(`${result.invoicesProcessed} invoices processed`);
     }
-    return `Sync complete — ${parts.join(", ")}.`;
+    const summary = `Sync complete — ${parts.join(", ")}.`;
+    if (result.errors.length > 0) {
+      return `${summary} ${result.errors.length} message(s) had errors.`;
+    }
+    return summary;
   }
 
   return "Sync complete — no new messages found.";
@@ -118,8 +122,12 @@ export function InboxSyncControls({ canSync, lastSyncedAt }: InboxSyncControlsPr
                 : null,
             );
             setSuccess(completionMessage(event.result));
-            if (event.result.errors.length > 0) {
+            if (event.result.errors.length > 0 && event.result.fatal) {
               setError(event.result.errors.join("; "));
+            } else if (event.result.errors.length > 0) {
+              setError(
+                `${event.result.errors.length} message(s) could not be synced. The mailbox connection is still active.`,
+              );
             }
             router.refresh();
           } else if (event.type === "error") {

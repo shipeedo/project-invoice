@@ -34,20 +34,26 @@ async function pollOrganizationConnection(
 ) {
   const result = await syncOrganizationInbox(connection, options);
 
-  const shouldAdvanceSyncCursor =
-    result.errors.length === 0 && (result.synced > 0 || result.skipped > 0);
+  const processedMessages = result.synced > 0 || result.skipped > 0;
+  const shouldAdvanceSyncCursor = processedMessages;
+  const warningSummary =
+    result.errors.length > 0
+      ? result.errors.length <= 3
+        ? result.errors.join("; ")
+        : `${result.errors.slice(0, 3).join("; ")} (+${result.errors.length - 3} more)`
+      : null;
 
   await db
     .update(o365Connections)
     .set({
       lastSyncedAt: shouldAdvanceSyncCursor ? new Date() : connection.lastSyncedAt,
-      status: result.errors.length > 0 ? "ERROR" : "CONNECTED",
-      lastError: result.errors.length > 0 ? result.errors.join("; ") : null,
+      status: result.fatal ? "ERROR" : "CONNECTED",
+      lastError: result.fatal ? warningSummary : processedMessages ? null : warningSummary,
       updatedAt: new Date(),
     })
     .where(eq(o365Connections.id, connection.id));
 
-  if (result.errors.length > 0 && result.synced === 0) {
+  if (result.fatal) {
     await markO365ConnectionError(
       connection.organizationId,
       result.errors.join("; "),
@@ -82,7 +88,11 @@ export async function pollOrganizationMailbox(
   options?: { onProgress?: (event: SyncProgressEvent) => void },
 ) {
   const connection = await getO365Connection(organizationId);
-  if (!connection || connection.status !== "CONNECTED") {
+  if (
+    !connection ||
+    connection.status === "DISCONNECTED" ||
+    !connection.accessTokenEncrypted
+  ) {
     return {
       organizationId,
       synced: 0,
@@ -90,6 +100,7 @@ export async function pollOrganizationMailbox(
       processed: 0,
       skipped: 0,
       errors: ["O365 is not connected"],
+      fatal: true,
     } satisfies PollResult;
   }
 

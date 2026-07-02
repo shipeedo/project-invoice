@@ -360,6 +360,9 @@ export async function getMessageDetails(params: {
   );
 }
 
+const ATTACHMENT_METADATA_SELECT =
+  "id,name,contentType,size,isInline,microsoft.graph.fileAttachment/contentId";
+
 export async function listMessageAttachments(params: {
   accessToken: string;
   mailbox: string;
@@ -379,7 +382,7 @@ export async function getFileAttachmentMetadata(params: {
 }) {
   return graphFetch<GraphAttachment>(
     params.accessToken,
-    `/users/${encodeURIComponent(params.mailbox)}/messages/${encodeURIComponent(params.messageId)}/attachments/${encodeURIComponent(params.attachmentId)}?$select=id,name,contentType,size,isInline,contentId`,
+    `/users/${encodeURIComponent(params.mailbox)}/messages/${encodeURIComponent(params.messageId)}/attachments/${encodeURIComponent(params.attachmentId)}?$select=${ATTACHMENT_METADATA_SELECT}`,
   );
 }
 

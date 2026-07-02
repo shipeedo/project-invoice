@@ -12,8 +12,11 @@ export default async function InboxPage() {
     loadInboxConnection(session.user.organizationId),
   ]);
 
-  const connected = connection?.status === "CONNECTED";
-  const canSync = connected && Boolean(connection?.selectedMailboxUpn);
+  const canSync =
+    Boolean(connection?.selectedMailboxUpn) &&
+    connection?.status !== "DISCONNECTED" &&
+    Boolean(connection?.accessTokenEncrypted);
+  const connected = connection?.status === "CONNECTED" || canSync;
 
   return (
     <AppShell user={session.user} activePath="/inbox" fillViewport breadcrumbs={[{ label: "Inbox" }]}>

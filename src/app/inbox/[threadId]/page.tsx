@@ -29,7 +29,9 @@ export default async function InboxThreadPage({ params }: PageProps) {
   }
 
   const canSync =
-    connection?.status === "CONNECTED" && Boolean(connection.selectedMailboxUpn);
+    Boolean(connection?.selectedMailboxUpn) &&
+    connection?.status !== "DISCONNECTED" &&
+    Boolean(connection?.accessTokenEncrypted);
 
   return (
     <AppShell
