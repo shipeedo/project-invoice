@@ -1,4 +1,6 @@
-import { InboxSyncControls } from "@/components/inbox-sync-controls";
+"use client";
+
+import { InboxSyncProvider } from "@/components/inbox-sync-context";
 import { InboxThreadList, type InboxThreadSummary } from "@/components/inbox-thread-list";
 import { cn } from "@/lib/utils";
 
@@ -12,12 +14,11 @@ type InboxLayoutProps = {
   children: React.ReactNode;
 };
 
-export function InboxLayout({
+function InboxLayoutContent({
   threads,
   activeThreadId,
-  sync,
   children,
-}: InboxLayoutProps) {
+}: Omit<InboxLayoutProps, "sync">) {
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="flex min-h-0 flex-1 overflow-hidden rounded-xl border bg-background shadow-sm">
@@ -28,12 +29,6 @@ export function InboxLayout({
           )}
           style={{ maxWidth: 350 }}
         >
-          {sync ? (
-            <InboxSyncControls
-              canSync={sync.canSync}
-              lastSyncedAt={sync.lastSyncedAt}
-            />
-          ) : null}
           <InboxThreadList threads={threads} activeThreadId={activeThreadId} />
         </aside>
         <main
@@ -47,5 +42,28 @@ export function InboxLayout({
         </main>
       </div>
     </div>
+  );
+}
+
+export function InboxLayout({
+  threads,
+  activeThreadId,
+  sync,
+  children,
+}: InboxLayoutProps) {
+  if (!sync) {
+    return (
+      <InboxLayoutContent threads={threads} activeThreadId={activeThreadId}>
+        {children}
+      </InboxLayoutContent>
+    );
+  }
+
+  return (
+    <InboxSyncProvider canSync={sync.canSync}>
+      <InboxLayoutContent threads={threads} activeThreadId={activeThreadId}>
+        {children}
+      </InboxLayoutContent>
+    </InboxSyncProvider>
   );
 }

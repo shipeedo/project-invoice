@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { InboxSyncButton } from "@/components/inbox-sync-context";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -78,12 +79,15 @@ export function InboxThreadList({ threads, activeThreadId }: InboxThreadListProp
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="shrink-0 border-b p-3">
-        <Input
-          value={filter}
-          onChange={(event) => setFilter(event.target.value)}
-          placeholder="Search mail…"
-          className="bg-background"
-        />
+        <div className="flex items-center gap-2">
+          <Input
+            value={filter}
+            onChange={(event) => setFilter(event.target.value)}
+            placeholder="Search mail…"
+            className="min-w-0 flex-1 bg-background"
+          />
+          <InboxSyncButton />
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto">
