@@ -208,14 +208,12 @@ export function InboxConversationMessage({
             </div>
           </div>
 
-          <CollapsibleContent className="px-4 py-4">
-            <div className="w-full min-w-0 text-sm leading-relaxed">
+          <CollapsibleContent className="bg-white px-4 py-4">
+            <div className="w-full min-w-0 text-sm leading-relaxed text-foreground">
               {renderedHtml ? (
                 <EmailMessageBody html={renderedHtml} />
               ) : message.bodyText ? (
-                <div className="rounded-md bg-white px-4 py-3 text-foreground">
-                  <p className="whitespace-pre-wrap break-words">{message.bodyText}</p>
-                </div>
+                <p className="whitespace-pre-wrap break-words">{message.bodyText}</p>
               ) : (
                 <p className="text-muted-foreground">No message body.</p>
               )}

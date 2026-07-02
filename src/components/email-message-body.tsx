@@ -52,7 +52,7 @@ export function EmailMessageBody({ html, className }: EmailMessageBodyProps) {
   return (
     <div
       ref={hostRef}
-      className={cn("overflow-hidden rounded-md bg-white", className)}
+      className={cn("overflow-hidden", className)}
     />
   );
 }
