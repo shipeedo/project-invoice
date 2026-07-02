@@ -5,6 +5,7 @@ import {
   markO365ConnectionError,
 } from "@/lib/o365/connection";
 import { syncOrganizationInbox, type SyncInboxResult } from "@/lib/o365/sync-inbox";
+import type { SyncProgressEvent } from "@/lib/o365/sync-events";
 
 export type PollResult = SyncInboxResult & {
   processed: number;
@@ -17,18 +18,21 @@ function toPollResult(sync: SyncInboxResult): PollResult {
   };
 }
 
-async function pollOrganizationConnection(connection: {
-  id: string;
-  organizationId: string;
-  accessTokenEncrypted: string | null;
-  refreshTokenEncrypted: string | null;
-  tokenExpiresAt: Date | null;
-  microsoftTenantId: string | null;
-  selectedMailboxId: string | null;
-  selectedMailboxUpn: string | null;
-  lastSyncedAt: Date | null;
-}) {
-  const result = await syncOrganizationInbox(connection);
+async function pollOrganizationConnection(
+  connection: {
+    id: string;
+    organizationId: string;
+    accessTokenEncrypted: string | null;
+    refreshTokenEncrypted: string | null;
+    tokenExpiresAt: Date | null;
+    microsoftTenantId: string | null;
+    selectedMailboxId: string | null;
+    selectedMailboxUpn: string | null;
+    lastSyncedAt: Date | null;
+  },
+  options?: { onProgress?: (event: SyncProgressEvent) => void },
+) {
+  const result = await syncOrganizationInbox(connection, options);
 
   const shouldAdvanceSyncCursor =
     result.errors.length === 0 && (result.synced > 0 || result.skipped > 0);
@@ -73,7 +77,10 @@ export async function pollAllO365Mailboxes() {
   return results;
 }
 
-export async function pollOrganizationMailbox(organizationId: string) {
+export async function pollOrganizationMailbox(
+  organizationId: string,
+  options?: { onProgress?: (event: SyncProgressEvent) => void },
+) {
   const connection = await getO365Connection(organizationId);
   if (!connection || connection.status !== "CONNECTED") {
     return {
@@ -86,5 +93,5 @@ export async function pollOrganizationMailbox(organizationId: string) {
     } satisfies PollResult;
   }
 
-  return pollOrganizationConnection(connection);
+  return pollOrganizationConnection(connection, options);
 }

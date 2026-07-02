@@ -1,15 +1,21 @@
+import { InboxSyncControls } from "@/components/inbox-sync-controls";
 import { InboxThreadList, type InboxThreadSummary } from "@/components/inbox-thread-list";
 import { cn } from "@/lib/utils";
 
 type InboxLayoutProps = {
   threads: InboxThreadSummary[];
   activeThreadId?: string | null;
+  sync?: {
+    canSync: boolean;
+    lastSyncedAt: string | null;
+  };
   children: React.ReactNode;
 };
 
 export function InboxLayout({
   threads,
   activeThreadId,
+  sync,
   children,
 }: InboxLayoutProps) {
   return (
@@ -22,6 +28,12 @@ export function InboxLayout({
           )}
           style={{ maxWidth: 350 }}
         >
+          {sync ? (
+            <InboxSyncControls
+              canSync={sync.canSync}
+              lastSyncedAt={sync.lastSyncedAt}
+            />
+          ) : null}
           <InboxThreadList threads={threads} activeThreadId={activeThreadId} />
         </aside>
         <main

@@ -25,6 +25,7 @@ import {
   type GraphMessage,
 } from "@/lib/o365/graph";
 import { processEmailInvoice } from "@/lib/o365/process-email";
+import type { SyncProgressEvent } from "@/lib/o365/sync-events";
 import { saveBufferToUploads } from "@/lib/uploads";
 
 type SyncConnection = {
@@ -375,7 +376,11 @@ async function tryProcessInvoiceFromMessage(params: {
   return outcome;
 }
 
-export async function syncOrganizationInbox(connection: SyncConnection) {
+export async function syncOrganizationInbox(
+  connection: SyncConnection,
+  options?: { onProgress?: (event: SyncProgressEvent) => void },
+) {
+  const report = options?.onProgress;
   const result: SyncInboxResult = {
     organizationId: connection.organizationId,
     synced: 0,
@@ -390,6 +395,7 @@ export async function syncOrganizationInbox(connection: SyncConnection) {
   }
 
   try {
+    report?.({ type: "status", message: "Connecting to mailbox…" });
     const accessToken = await getValidAccessToken(connection);
     let graphMailbox = resolveGraphMailboxUser(connection);
 
@@ -417,6 +423,7 @@ export async function syncOrganizationInbox(connection: SyncConnection) {
         ? new Date(connection.lastSyncedAt.getTime() - 5 * 60 * 1000)
         : null;
 
+    report?.({ type: "status", message: "Fetching inbox messages…" });
     const messages = await listInboxMessages({
       accessToken,
       mailbox: graphMailbox!,
@@ -425,14 +432,30 @@ export async function syncOrganizationInbox(connection: SyncConnection) {
       top: hasSyncedBefore ? 50 : 100,
     });
 
-    if (messages.value.length === 0 && !hasSyncedBefore) {
+    const total = messages.value.length;
+
+    if (total === 0 && !hasSyncedBefore) {
       result.errors.push(
         "No inbox messages returned from Microsoft Graph — verify the shared mailbox has mail and you have Full Access in Exchange",
       );
       return result;
     }
 
-    for (const summary of messages.value) {
+    if (total === 0) {
+      report?.({ type: "status", message: "No new messages to sync." });
+    }
+
+    for (let index = 0; index < messages.value.length; index++) {
+      const summary = messages.value[index];
+      const current = index + 1;
+      report?.({
+        type: "progress",
+        current,
+        total,
+        message: `Downloading message ${current}/${total}`,
+        subject: summary.subject ?? undefined,
+      });
+
       try {
         const synced = await syncGraphMessage({
           connection,
