@@ -209,17 +209,9 @@ Received → Processing → Pending Approval → Approved → Ready for Payment
 
 | Phase | Focus |
 |-------|-------|
-| **1a — Pilot** | PDF upload, AI Gateway extraction, routing rules (priority + 404), Shipeedo auth, simple approval, credit draft email |
-| **1b — MVP** | O365 mailbox intake, CSV attachment handling, email visibility in portal |
+| **1a** | PDF upload, AI Gateway extraction, routing rules (priority + 404), Shipeedo auth, simple approval, credit draft email |
+| **1b** | O365 mailbox intake, CSV attachment handling, email visibility in portal |
 | **2** | Line-item review actions, bulk approve for high-volume invoices |
-| **3** | WMS integration, consignment matching, productisation |
+| **3** | WMS integration, consignment matching |
+| **4** | Productisation |
 
----
-
-## Action Items
-
-| Item | Owner | Status |
-|------|-------|--------|
-| Shipeedo OAuth client registered (`project-invoice`) | Jay | **Done** |
-| O365 platform Azure app registered | Jay | **Done** |
-| Complete [environment setup](environment-setup.md) (local + production secrets) | Jay | **Pending** |
