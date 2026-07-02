@@ -21,10 +21,10 @@ function Progress({
     >
       <div
         className={cn(
-          "h-full rounded-full bg-primary",
+          "h-full bg-primary",
           indeterminate
             ? "w-1/3 animate-[progress-indeterminate_1.2s_ease-in-out_infinite]"
-            : "transition-[width] duration-300 ease-out",
+            : "rounded-full transition-[width] duration-300 ease-out",
         )}
         style={indeterminate ? undefined : { width: `${Math.min(100, Math.max(0, value))}%` }}
       />

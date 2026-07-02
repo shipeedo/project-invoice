@@ -12,6 +12,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   Dialog,
   DialogContent,
@@ -94,7 +95,6 @@ export function InboxSyncProvider({ canSync, children }: InboxSyncProviderProps)
   );
   const [logEntries, setLogEntries] = useState<SyncLogEntry[]>([]);
   const [logDialogOpen, setLogDialogOpen] = useState(false);
-  const [completionNote, setCompletionNote] = useState<string | null>(null);
 
   const appendLog = useCallback((message: string, entrySubject?: string) => {
     logIdRef.current += 1;
@@ -114,7 +114,6 @@ export function InboxSyncProvider({ canSync, children }: InboxSyncProviderProps)
     setSubject(null);
     setProgress(null);
     setLogEntries([]);
-    setCompletionNote(null);
     logIdRef.current = 0;
   }, []);
 
@@ -169,18 +168,15 @@ export function InboxSyncProvider({ canSync, children }: InboxSyncProviderProps)
                 : null,
             );
             const summary = completionMessage(event.result);
-            setCompletionNote(summary);
             appendLog(summary);
             router.refresh();
           } else if (event.type === "error") {
-            setCompletionNote(event.message);
             appendLog(event.message);
           }
         }
       }
     } catch (syncError) {
       const message = syncError instanceof Error ? syncError.message : "Sync failed";
-      setCompletionNote(message);
       appendLog(message);
     } finally {
       setSyncing(false);
@@ -194,13 +190,6 @@ export function InboxSyncProvider({ canSync, children }: InboxSyncProviderProps)
     }
     void startSync();
   }, [startSync, syncing]);
-
-  useEffect(() => {
-    if (!syncing && completionNote) {
-      const timer = window.setTimeout(() => setCompletionNote(null), 4000);
-      return () => window.clearTimeout(timer);
-    }
-  }, [syncing, completionNote]);
 
   const value = useMemo(
     () => ({
@@ -229,47 +218,19 @@ export function InboxSyncProvider({ canSync, children }: InboxSyncProviderProps)
   const progressValue =
     progress && progress.total > 0
       ? Math.round((progress.current / progress.total) * 100)
-      : syncing
-        ? undefined
-        : 0;
-
-  const showProgressBar = syncing || Boolean(completionNote);
+      : undefined;
 
   return (
     <InboxSyncContext.Provider value={value}>
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        {showProgressBar ? (
-          <div className="sticky top-0 z-20 shrink-0 border-b bg-background/95 px-4 py-2 backdrop-blur-sm">
-            <div className="flex items-center gap-3">
-              <div className="min-w-0 flex-1 space-y-1">
-                <Progress value={progressValue} className="h-1.5" />
-                <div className="flex min-w-0 items-baseline gap-2 text-xs text-muted-foreground">
-                  <span className="shrink-0 font-medium text-foreground">
-                    {syncing ? statusMessage ?? "Syncing…" : completionNote}
-                  </span>
-                  {syncing && subject ? (
-                    <span className="truncate" title={subject}>
-                      {subject}
-                    </span>
-                  ) : null}
-                </div>
-              </div>
-              {syncing ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="shrink-0 text-xs"
-                  onClick={() => setLogDialogOpen(true)}
-                >
-                  View log
-                </Button>
-              ) : null}
-            </div>
-          </div>
-        ) : null}
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">{children}</div>
-      </div>
+      {typeof document !== "undefined" && syncing
+        ? createPortal(
+            <div className="fixed inset-x-0 top-0 z-[100]">
+              <Progress value={progressValue} className="h-1 rounded-none bg-primary/20" />
+            </div>,
+            document.body,
+          )
+        : null}
+      {children}
       <InboxSyncLogDialog />
     </InboxSyncContext.Provider>
   );
@@ -310,38 +271,76 @@ export function InboxSyncButton({ className }: { className?: string }) {
 }
 
 function InboxSyncLogDialog() {
-  const { syncing, logEntries, logDialogOpen, setLogDialogOpen, statusMessage, progress } =
-    useInboxSync();
+  const context = useContext(InboxSyncContext);
+  const logEndRef = useRef<HTMLDivElement>(null);
+  const logDialogOpen = context?.logDialogOpen ?? false;
+  const logEntries = context?.logEntries ?? [];
+
+  useEffect(() => {
+    if (logDialogOpen) {
+      logEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [logDialogOpen, logEntries.length]);
+
+  if (!context) return null;
+
+  const {
+    syncing,
+    logDialogOpen: isOpen,
+    setLogDialogOpen,
+    statusMessage,
+    subject,
+    progress,
+  } = context;
 
   return (
-    <Dialog open={logDialogOpen} onOpenChange={setLogDialogOpen}>
+    <Dialog open={isOpen} onOpenChange={setLogDialogOpen}>
       <DialogContent className="flex max-h-[min(80vh,560px)] flex-col gap-0 overflow-hidden sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{syncing ? "Sync in progress" : "Sync log"}</DialogTitle>
           <DialogDescription>
-            {syncing && progress
-              ? `${statusMessage ?? "Syncing"} (${progress.current}/${progress.total})`
+            {syncing
+              ? progress
+                ? `${statusMessage ?? "Syncing mailbox"} (${progress.current}/${progress.total})`
+                : (statusMessage ?? "Syncing mailbox")
               : "Messages downloaded during the latest sync."}
           </DialogDescription>
         </DialogHeader>
+        {syncing && (statusMessage || subject) ? (
+          <div className="rounded-lg border bg-muted/30 px-3 py-2 text-sm">
+            {statusMessage ? <p className="font-medium">{statusMessage}</p> : null}
+            {subject ? (
+              <p className="mt-0.5 truncate text-muted-foreground" title={subject}>
+                {subject}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
         <div className="min-h-0 flex-1 overflow-y-auto border-t py-2">
           {logEntries.length === 0 ? (
             <p className="px-1 py-4 text-sm text-muted-foreground">No log entries yet.</p>
           ) : (
             <ul className="space-y-2">
-              {logEntries.map((entry) => (
-                <li
-                  key={entry.id}
-                  className="rounded-md border bg-muted/20 px-3 py-2 text-sm"
-                >
-                  <p className="font-medium">{entry.message}</p>
-                  {entry.subject ? (
-                    <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                      {entry.subject}
-                    </p>
-                  ) : null}
-                </li>
-              ))}
+              {logEntries.map((entry, index) => {
+                const isLatest = index === logEntries.length - 1;
+                return (
+                  <li
+                    key={entry.id}
+                    className={cn(
+                      "rounded-md border px-3 py-2 text-sm",
+                      syncing && isLatest ? "border-primary/40 bg-primary/5" : "bg-muted/20",
+                    )}
+                  >
+                    <p className="font-medium">{entry.message}</p>
+                    {entry.subject ? (
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                        {entry.subject}
+                      </p>
+                    ) : null}
+                  </li>
+                );
+              })}
+              <div ref={logEndRef} />
             </ul>
           )}
         </div>
