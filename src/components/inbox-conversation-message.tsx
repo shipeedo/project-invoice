@@ -61,20 +61,17 @@ export type ConversationMessage = {
 type InboxConversationMessageProps = {
   message: ConversationMessage;
   index: number;
-  total: number;
   onCreateSupplier: (message: ConversationMessage) => void;
 };
 
 export function InboxConversationMessage({
   message,
   index,
-  total,
   onCreateSupplier,
 }: InboxConversationMessageProps) {
   const senderLabel = message.fromName
     ? `${message.fromName} <${message.fromEmail}>`
     : (message.fromEmail ?? "Unknown sender");
-  const isLatest = index === total - 1;
   const isLinked = Boolean(message.supplierId);
   const displayAttachments = message.attachments.filter(isDisplayAttachment);
   const renderedHtml = useMemo(() => {
@@ -87,32 +84,15 @@ export function InboxConversationMessage({
       defaultOpen
       className={cn("group/collapsible relative", index > 0 && "mt-3")}
     >
-      <div className="flex gap-3">
-        <div className="flex w-5 shrink-0 flex-col items-center">
-          <div
-            className={cn(
-              "mt-3 size-3 rounded-full border-2",
-              message.direction === "OUTBOUND"
-                ? "border-primary bg-primary/30"
-                : isLinked
-                  ? "border-emerald-600 bg-emerald-500"
-                  : "border-muted-foreground/40 bg-muted",
-            )}
-          />
-          {!isLatest ? (
-            <div className="mt-1 w-px flex-1 bg-border group-last:hidden" />
-          ) : null}
-        </div>
-
-        <div
-          className={cn(
-            "min-w-0 flex-1 overflow-hidden rounded-lg border bg-background",
-            message.direction === "INBOUND" &&
-              (isLinked
-                ? "border-emerald-400 bg-emerald-50/90 shadow-sm ring-1 ring-emerald-200/80"
-                : "border-muted-foreground/25 bg-muted/30"),
-          )}
-        >
+      <div
+        className={cn(
+          "min-w-0 overflow-hidden rounded-lg border bg-background",
+          message.direction === "INBOUND" &&
+            (isLinked
+              ? "border-emerald-400 bg-emerald-50/90 shadow-sm ring-1 ring-emerald-200/80"
+              : "border-muted-foreground/25 bg-muted/30"),
+        )}
+      >
           <div
             className={cn(
               "flex items-start gap-2 border-b px-4 py-2.5",
@@ -219,7 +199,6 @@ export function InboxConversationMessage({
               )}
             </div>
           </CollapsibleContent>
-        </div>
       </div>
     </Collapsible>
   );

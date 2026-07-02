@@ -90,7 +90,6 @@ export function InboxThreadView({
                 key={message.id}
                 message={message}
                 index={index}
-                total={messages.length}
                 onCreateSupplier={openCreateSupplierPanel}
               />
             ))}
