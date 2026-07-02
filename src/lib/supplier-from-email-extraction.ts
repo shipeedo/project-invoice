@@ -1,6 +1,7 @@
 import {
   buildSupplierFromEmailUserPrompt,
   SUPPLIER_FROM_EMAIL_SYSTEM_PROMPT,
+  type SupplierFromEmailThreadMessage,
 } from "@/lib/extraction-prompts";
 import { parseJsonContent } from "@/lib/extraction";
 import type { MailboxMessage } from "@/lib/db";
@@ -12,7 +13,19 @@ export type ExtractedSupplierFromEmail = {
   domain: string | null;
 };
 
-const MAX_EMAIL_BODY_CHARS = 24_000;
+export type SupplierFromEmailCandidate = ExtractedSupplierFromEmail & {
+  label: string;
+  source: string;
+  confidence: "high" | "medium" | "low";
+  reasoning: string | null;
+};
+
+export type ExtractedSuppliersFromEmailThread = {
+  candidates: SupplierFromEmailCandidate[];
+  recommendedIndex: number;
+};
+
+const MAX_THREAD_CHARS = 48_000;
 
 function parseEmailList(value: string | null | undefined): string[] {
   if (!value) return [];
@@ -74,6 +87,11 @@ function normalizeDomain(value: unknown, senderEmail: string | null): string | n
   return senderEmail.split("@")[1]?.toLowerCase() ?? null;
 }
 
+function normalizeConfidence(value: unknown): SupplierFromEmailCandidate["confidence"] {
+  if (value === "high" || value === "medium" || value === "low") return value;
+  return "medium";
+}
+
 export function normalizeExtractedSupplierFromEmail(
   raw: Partial<ExtractedSupplierFromEmail>,
 ): ExtractedSupplierFromEmail {
@@ -86,10 +104,123 @@ export function normalizeExtractedSupplierFromEmail(
   };
 }
 
-export async function extractSupplierFromEmail(
-  message: MailboxMessage,
-): Promise<{
-  data: ExtractedSupplierFromEmail | null;
+function normalizeCandidate(raw: Record<string, unknown>): SupplierFromEmailCandidate | null {
+  const fields = normalizeExtractedSupplierFromEmail(raw);
+  if (!fields.company && !fields.senderEmail) return null;
+
+  return {
+    ...fields,
+    label: normalizeText(raw.label) ?? fields.company ?? fields.senderEmail ?? "Supplier",
+    source: normalizeText(raw.source) ?? "other",
+    confidence: normalizeConfidence(raw.confidence),
+    reasoning: normalizeText(raw.reasoning),
+  };
+}
+
+function buildThreadMessages(
+  messages: MailboxMessage[],
+  focusMessageId?: string,
+): SupplierFromEmailThreadMessage[] {
+  const sorted = [...messages].sort((left, right) => {
+    const leftTime = left.receivedAt?.getTime() ?? 0;
+    const rightTime = right.receivedAt?.getTime() ?? 0;
+    return leftTime - rightTime;
+  });
+
+  let remainingChars = MAX_THREAD_CHARS;
+  const threadMessages: SupplierFromEmailThreadMessage[] = [];
+
+  for (const message of sorted) {
+    if (remainingChars <= 0) break;
+
+    const body = resolveEmailBody(message).slice(0, remainingChars);
+    remainingChars -= body.length;
+
+    threadMessages.push({
+      id: message.id,
+      direction: message.direction,
+      fromName: message.fromName,
+      fromEmail: message.fromEmail,
+      toEmails: parseEmailList(message.toEmails),
+      ccEmails: parseEmailList(message.ccEmails),
+      subject: message.subject,
+      receivedAt: message.receivedAt
+        ? new Date(message.receivedAt).toISOString()
+        : null,
+      body: body || "(No message body)",
+    });
+  }
+
+  if (focusMessageId && !threadMessages.some((message) => message.id === focusMessageId)) {
+    const focusMessage = sorted.find((message) => message.id === focusMessageId);
+    if (focusMessage) {
+      threadMessages.push({
+        id: focusMessage.id,
+        direction: focusMessage.direction,
+        fromName: focusMessage.fromName,
+        fromEmail: focusMessage.fromEmail,
+        toEmails: parseEmailList(focusMessage.toEmails),
+        ccEmails: parseEmailList(focusMessage.ccEmails),
+        subject: focusMessage.subject,
+        receivedAt: focusMessage.receivedAt
+          ? new Date(focusMessage.receivedAt).toISOString()
+          : null,
+        body: resolveEmailBody(focusMessage).slice(0, MAX_THREAD_CHARS) || "(No message body)",
+      });
+    }
+  }
+
+  return threadMessages;
+}
+
+export function normalizeExtractedSuppliersFromEmailThread(
+  raw: Record<string, unknown>,
+): ExtractedSuppliersFromEmailThread {
+  if (Array.isArray(raw.candidates)) {
+    const candidates = raw.candidates
+      .map((entry) =>
+        entry && typeof entry === "object"
+          ? normalizeCandidate(entry as Record<string, unknown>)
+          : null,
+      )
+      .filter((entry): entry is SupplierFromEmailCandidate => entry !== null);
+
+    if (candidates.length > 0) {
+      const recommendedIndex =
+        typeof raw.recommendedIndex === "number" &&
+        raw.recommendedIndex >= 0 &&
+        raw.recommendedIndex < candidates.length
+          ? raw.recommendedIndex
+          : 0;
+
+      return { candidates, recommendedIndex };
+    }
+  }
+
+  const legacy = normalizeExtractedSupplierFromEmail(raw);
+  if (legacy.company || legacy.senderEmail) {
+    return {
+      candidates: [
+        {
+          ...legacy,
+          label: legacy.company ?? legacy.senderEmail ?? "Supplier",
+          source: "email_sender",
+          confidence: "medium",
+          reasoning: null,
+        },
+      ],
+      recommendedIndex: 0,
+    };
+  }
+
+  return { candidates: [], recommendedIndex: 0 };
+}
+
+export async function extractSupplierFromEmailThread(params: {
+  messages: MailboxMessage[];
+  focusMessageId?: string;
+}): Promise<{
+  data: ExtractedSuppliersFromEmailThread | null;
   raw: unknown;
   error?: string;
 }> {
@@ -102,19 +233,18 @@ export async function extractSupplierFromEmail(
     };
   }
 
-  const body = resolveEmailBody(message).slice(0, MAX_EMAIL_BODY_CHARS);
-  const receivedAt = message.receivedAt
-    ? new Date(message.receivedAt).toISOString()
-    : null;
+  if (params.messages.length === 0) {
+    return {
+      data: null,
+      raw: null,
+      error: "No messages in thread",
+    };
+  }
 
+  const threadMessages = buildThreadMessages(params.messages, params.focusMessageId);
   const userPrompt = buildSupplierFromEmailUserPrompt({
-    fromName: message.fromName,
-    fromEmail: message.fromEmail,
-    toEmails: parseEmailList(message.toEmails),
-    ccEmails: parseEmailList(message.ccEmails),
-    subject: message.subject,
-    receivedAt,
-    body: body || "(No message body)",
+    messages: threadMessages,
+    focusMessageId: params.focusMessageId,
   });
 
   const gatewayUrl =
@@ -166,9 +296,17 @@ export async function extractSupplierFromEmail(
       };
     }
 
-    const parsed = normalizeExtractedSupplierFromEmail(
-      JSON.parse(parseJsonContent(content)) as Partial<ExtractedSupplierFromEmail>,
+    const parsed = normalizeExtractedSuppliersFromEmailThread(
+      JSON.parse(parseJsonContent(content)) as Record<string, unknown>,
     );
+
+    if (parsed.candidates.length === 0) {
+      return {
+        data: null,
+        raw: completion,
+        error: "AI could not identify any supplier candidates in this thread",
+      };
+    }
 
     return { data: parsed, raw: completion };
   } catch (error) {
@@ -178,4 +316,30 @@ export async function extractSupplierFromEmail(
       error: error instanceof Error ? error.message : "Extraction failed",
     };
   }
+}
+
+/** @deprecated Use extractSupplierFromEmailThread */
+export async function extractSupplierFromEmail(message: MailboxMessage) {
+  const result = await extractSupplierFromEmailThread({
+    messages: [message],
+    focusMessageId: message.id,
+  });
+
+  if (!result.data) {
+    return { data: null, raw: result.raw, error: result.error };
+  }
+
+  const recommended = result.data.candidates[result.data.recommendedIndex] ?? null;
+  return {
+    data: recommended
+      ? {
+          company: recommended.company,
+          senderEmail: recommended.senderEmail,
+          contactName: recommended.contactName,
+          domain: recommended.domain,
+        }
+      : null,
+    raw: result.raw,
+    error: result.error,
+  };
 }

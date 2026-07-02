@@ -2,21 +2,25 @@ import { asc, eq } from "drizzle-orm";
 import { AppShell } from "@/components/app-shell";
 import { SuppliersManager } from "@/components/suppliers-manager";
 import { db, suppliers } from "@/lib/db";
-import {
-  parseSupplierFieldMappings,
-} from "@/lib/extraction-types";
+import { parseSupplierFieldMappings } from "@/lib/extraction-types";
 import { getSupplierSuggestions } from "@/lib/email-contacts";
+import {
+  emptySupplierInvoiceStats,
+  getSupplierInvoiceStats,
+} from "@/lib/supplier-stats";
 import { requireRole } from "@/lib/session";
 
 export default async function SuppliersPage() {
   const session = await requireRole(["ADMIN"]);
+  const organizationId = session.user.organizationId;
 
-  const [rows, suggestions] = await Promise.all([
+  const [rows, suggestions, stats] = await Promise.all([
     db.query.suppliers.findMany({
-      where: eq(suppliers.organizationId, session.user.organizationId),
+      where: eq(suppliers.organizationId, organizationId),
       orderBy: asc(suppliers.name),
     }),
-    getSupplierSuggestions(session.user.organizationId),
+    getSupplierSuggestions(organizationId),
+    getSupplierInvoiceStats(organizationId),
   ]);
 
   return (
@@ -34,14 +38,19 @@ export default async function SuppliersPage() {
           </p>
         </div>
         <SuppliersManager
-          initialSuppliers={rows.map((supplier) => ({
-            id: supplier.id,
-            name: supplier.name,
-            emailAddresses: JSON.parse(supplier.emailAddresses) as string[],
-            emailDomains: JSON.parse(supplier.emailDomains) as string[],
-            extractionPrompt: supplier.extractionPrompt,
-            fieldMappings: parseSupplierFieldMappings(supplier.fieldMappings),
-          }))}
+          initialSuppliers={rows.map((supplier) => {
+            const invoiceStats = stats.get(supplier.id) ?? emptySupplierInvoiceStats();
+            return {
+              id: supplier.id,
+              name: supplier.name,
+              emailAddresses: JSON.parse(supplier.emailAddresses) as string[],
+              emailDomains: JSON.parse(supplier.emailDomains) as string[],
+              extractionPrompt: supplier.extractionPrompt,
+              fieldMappings: parseSupplierFieldMappings(supplier.fieldMappings),
+              invoiceCount: invoiceStats.invoiceCount,
+              lastInvoiceAt: invoiceStats.lastInvoiceAt,
+            };
+          })}
           initialSuggestions={suggestions}
         />
       </div>

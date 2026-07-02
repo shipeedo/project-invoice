@@ -4,6 +4,10 @@ import { auth } from "@/lib/auth";
 import { db, suppliers } from "@/lib/db";
 import { buildNewSupplierValues } from "@/lib/supplier-extraction";
 import { parseSupplierFieldMappings } from "@/lib/extraction-types";
+import {
+  emptySupplierInvoiceStats,
+  getSupplierInvoiceStats,
+} from "@/lib/supplier-stats";
 
 export async function GET() {
   const session = await auth();
@@ -11,18 +15,27 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const rows = await db.query.suppliers.findMany({
-    where: eq(suppliers.organizationId, session.user.organizationId),
-    orderBy: asc(suppliers.name),
-  });
+  const organizationId = session.user.organizationId;
+  const [rows, stats] = await Promise.all([
+    db.query.suppliers.findMany({
+      where: eq(suppliers.organizationId, organizationId),
+      orderBy: asc(suppliers.name),
+    }),
+    getSupplierInvoiceStats(organizationId),
+  ]);
 
   return NextResponse.json(
-    rows.map((supplier) => ({
-      ...supplier,
-      emailAddresses: JSON.parse(supplier.emailAddresses) as string[],
-      emailDomains: JSON.parse(supplier.emailDomains) as string[],
-      fieldMappings: parseSupplierFieldMappings(supplier.fieldMappings),
-    })),
+    rows.map((supplier) => {
+      const invoiceStats = stats.get(supplier.id) ?? emptySupplierInvoiceStats();
+      return {
+        ...supplier,
+        emailAddresses: JSON.parse(supplier.emailAddresses) as string[],
+        emailDomains: JSON.parse(supplier.emailDomains) as string[],
+        fieldMappings: parseSupplierFieldMappings(supplier.fieldMappings),
+        invoiceCount: invoiceStats.invoiceCount,
+        lastInvoiceAt: invoiceStats.lastInvoiceAt,
+      };
+    }),
   );
 }
 

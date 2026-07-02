@@ -1,8 +1,8 @@
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db, mailboxMessages } from "@/lib/db";
-import { extractSupplierFromEmail } from "@/lib/supplier-from-email-extraction";
+import { extractSupplierFromEmailThread } from "@/lib/supplier-from-email-extraction";
 
 type RouteContext = {
   params: Promise<{ messageId: string }>;
@@ -27,7 +27,18 @@ export async function POST(_request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const extraction = await extractSupplierFromEmail(message);
+  const threadMessages = await db.query.mailboxMessages.findMany({
+    where: and(
+      eq(mailboxMessages.threadId, message.threadId),
+      eq(mailboxMessages.organizationId, session.user.organizationId),
+    ),
+    orderBy: asc(mailboxMessages.receivedAt),
+  });
+
+  const extraction = await extractSupplierFromEmailThread({
+    messages: threadMessages,
+    focusMessageId: message.id,
+  });
 
   if (!extraction.data) {
     return NextResponse.json(
@@ -36,5 +47,17 @@ export async function POST(_request: Request, context: RouteContext) {
     );
   }
 
-  return NextResponse.json({ extracted: extraction.data });
+  const { candidates, recommendedIndex } = extraction.data;
+  const recommended = candidates[recommendedIndex] ?? candidates[0];
+
+  return NextResponse.json({
+    candidates,
+    recommendedIndex,
+    extracted: {
+      company: recommended.company,
+      senderEmail: recommended.senderEmail,
+      contactName: recommended.contactName,
+      domain: recommended.domain,
+    },
+  });
 }
