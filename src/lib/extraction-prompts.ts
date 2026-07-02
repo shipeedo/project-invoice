@@ -163,7 +163,27 @@ ${threadBlocks.join("\n\n")}`;
 export function buildInvoiceExtractionUserPrompt(
   fileName: string,
   invoiceText: string,
+  emailContext?: {
+    subject?: string | null;
+    fromEmail?: string | null;
+    fromName?: string | null;
+    bodyText?: string | null;
+  },
 ) {
+  const emailSection =
+    emailContext?.bodyText?.trim()
+      ? `
+
+Email context (the invoice arrived via email — use this to clarify ambiguous fields, but prefer attachment/PDF content for line items):
+Subject: ${emailContext.subject ?? "(none)"}
+From: ${emailContext.fromName ? `${emailContext.fromName} <${emailContext.fromEmail}>` : (emailContext.fromEmail ?? "(unknown)")}
+
+Email body:
+"""
+${emailContext.bodyText.trim()}
+"""`
+      : "";
+
   return `Review the following transport/supplier invoice and extract structured data for accounts payable.
 
 File name: ${fileName}
@@ -174,11 +194,44 @@ ${EXTRACTION_JSON_SCHEMA}
 Invoice text (extracted from PDF):
 """
 ${invoiceText}
-"""
+"""${emailSection}
 
 Before responding, mentally verify:
 - Every charge row from the invoice is represented in lineItems
 - lineNumber reflects document order when rows are numbered or sequenced
 - totalAmount matches the invoice's stated total (or explain in notes if not)
 - fieldCandidates lists alternative values for header fields when the document shows more than one possibility`;
+}
+
+export function buildInvoiceExtractionFromEmailUserPrompt(params: {
+  subject?: string | null;
+  fromEmail?: string | null;
+  fromName?: string | null;
+  emailBody: string;
+  attachmentNames?: string[];
+}) {
+  const attachmentLine =
+    params.attachmentNames && params.attachmentNames.length > 0
+      ? `\nAttachments: ${params.attachmentNames.join(", ")}`
+      : "";
+
+  return `Review the following supplier invoice email and extract structured invoice data for accounts payable.
+
+There is no PDF attachment — extract invoice fields and line items from the email body (and any invoice details referenced in the message).
+
+Subject: ${params.subject ?? "(none)"}
+From: ${params.fromName ? `${params.fromName} <${params.fromEmail}>` : (params.fromEmail ?? "(unknown)")}${attachmentLine}
+
+Return JSON matching this schema exactly:
+${EXTRACTION_JSON_SCHEMA}
+
+Email body:
+"""
+${params.emailBody}
+"""
+
+Before responding, mentally verify:
+- Every charge row mentioned in the email is represented in lineItems
+- totalAmount matches any total stated in the email (or explain in notes if not)
+- If the email only references an invoice without line detail, return header fields and an empty or minimal lineItems array with an explanatory note`;
 }

@@ -32,6 +32,26 @@ export function InboxThreadView({
   const [createSupplierMessage, setCreateSupplierMessage] =
     useState<ConversationMessage | null>(null);
   const [createSupplierOpen, setCreateSupplierOpen] = useState(false);
+  const [processingInvoiceId, setProcessingInvoiceId] = useState<string | null>(null);
+
+  async function handleProcessInvoice(messageId: string) {
+    setProcessingInvoiceId(messageId);
+    setError(null);
+
+    const response = await fetch(`/api/inbox/messages/${messageId}/process-invoice`, {
+      method: "POST",
+    });
+
+    setProcessingInvoiceId(null);
+
+    if (!response.ok) {
+      const payload = (await response.json()) as { error?: string };
+      setError(payload.error ?? "Failed to create invoice");
+      return;
+    }
+
+    router.refresh();
+  }
 
   async function handleReply(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -91,6 +111,8 @@ export function InboxThreadView({
                 message={message}
                 index={index}
                 onCreateSupplier={openCreateSupplierPanel}
+                onProcessInvoice={handleProcessInvoice}
+                processingInvoiceId={processingInvoiceId}
               />
             ))}
           </div>

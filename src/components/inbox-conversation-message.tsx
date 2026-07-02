@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMemo } from "react";
-import { ChevronDownIcon, FileTextIcon, PaperclipIcon } from "lucide-react";
+import { ChevronDownIcon, FileTextIcon, Loader2Icon, PaperclipIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -62,18 +62,28 @@ type InboxConversationMessageProps = {
   message: ConversationMessage;
   index: number;
   onCreateSupplier: (message: ConversationMessage) => void;
+  onProcessInvoice?: (messageId: string) => Promise<void>;
+  processingInvoiceId?: string | null;
 };
 
 export function InboxConversationMessage({
   message,
   index,
   onCreateSupplier,
+  onProcessInvoice,
+  processingInvoiceId,
 }: InboxConversationMessageProps) {
   const senderLabel = message.fromName
     ? `${message.fromName} <${message.fromEmail}>`
     : (message.fromEmail ?? "Unknown sender");
   const isLinked = Boolean(message.supplierId);
   const displayAttachments = message.attachments.filter(isDisplayAttachment);
+  const canProcessInvoice =
+    message.direction === "INBOUND" &&
+    isLinked &&
+    !message.invoice &&
+    (displayAttachments.length > 0 || Boolean(message.bodyText || message.bodyHtml));
+  const isProcessing = processingInvoiceId === message.id;
   const renderedHtml = useMemo(() => {
     if (!message.bodyHtml) return null;
     return prepareEmailHtmlForDisplay(message.bodyHtml, message.attachments);
@@ -167,6 +177,25 @@ export function InboxConversationMessage({
             </div>
 
             <div className="flex shrink-0 items-center gap-1.5">
+              {canProcessInvoice && onProcessInvoice ? (
+                <Button
+                  size="sm"
+                  disabled={isProcessing}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void onProcessInvoice(message.id);
+                  }}
+                >
+                  {isProcessing ? (
+                    <>
+                      <Loader2Icon className="size-3.5 animate-spin" />
+                      Processing…
+                    </>
+                  ) : (
+                    "Create invoice"
+                  )}
+                </Button>
+              ) : null}
               {message.direction === "INBOUND" && !message.supplierId ? (
                 <Button
                   size="sm"

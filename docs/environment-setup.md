@@ -65,13 +65,18 @@ Platform-level only — powers the admin "Connect Office 365" flow for all tenan
 
 Customer tenant IDs, tokens, and mailbox selection are **not** env vars — configured in the UI. See [o365.md](o365.md).
 
-### AI Gateway (invoice extraction)
+### AI (invoice extraction)
+
+When `AI_BASE_URL` is set, the app uses a local OpenAI-compatible API instead of AI Gateway.
 
 | Variable | Secret? | Notes |
 |----------|---------|-------|
-| `AI_GATEWAY_API_KEY` | **Yes** | Vercel AI Gateway key (`vck_...`) for header + line item extraction |
+| `AI_BASE_URL` | No | Local OpenAI-compatible base URL (e.g. `http://127.0.0.1:8000/v1`). When set, enables local mode. |
+| `AI_API_KEY` | **Yes** | API key for local mode (required when `AI_BASE_URL` is set) |
+| `AI_MODEL` | No | Model name — required in local mode; optional override for AI Gateway |
+| `AI_GATEWAY_API_KEY` | **Yes** | Vercel AI Gateway key (`vck_...`) — used when `AI_BASE_URL` is not set |
 | `AI_GATEWAY_URL` | No | Default: `https://ai-gateway.vercel.sh/v1/chat/completions` |
-| `AI_GATEWAY_MODEL` | No | Default: `openai/gpt-4o-mini` |
+| `AI_GATEWAY_MODEL` | No | Default: `openai/gpt-4o-mini` (fallback when `AI_MODEL` is unset) |
 
 ---
 

@@ -1,12 +1,23 @@
 import { readFile } from "fs/promises";
 import pdf from "pdf-parse";
+import { callAiChatCompletion } from "@/lib/ai-chat";
 import { getUploadAbsolutePath } from "@/lib/uploads";
-import { buildInvoiceExtractionUserPrompt } from "@/lib/extraction-prompts";
+import {
+  buildInvoiceExtractionFromEmailUserPrompt,
+  buildInvoiceExtractionUserPrompt,
+} from "@/lib/extraction-prompts";
 import type { ExtractionCandidates, FieldCandidate } from "@/lib/extraction-types";
 import {
   resolveExtractionSystemPrompt,
   type SupplierExtractionContext,
 } from "@/lib/supplier-extraction";
+
+export type EmailExtractionContext = {
+  subject?: string | null;
+  fromEmail?: string | null;
+  fromName?: string | null;
+  bodyText?: string | null;
+};
 
 export type ExtractedLineItem = {
   lineNumber?: number;
@@ -47,22 +58,13 @@ export async function extractInvoiceFromPdf(
   filePath: string,
   fileName: string,
   supplierContext?: SupplierExtractionContext | null,
+  emailContext?: EmailExtractionContext | null,
 ): Promise<{
   data: ExtractedInvoice | null;
   raw: unknown;
   fieldCandidates: ExtractionCandidates | null;
   error?: string;
 }> {
-  const apiKey = process.env.AI_GATEWAY_API_KEY;
-  if (!apiKey) {
-    return {
-      data: null,
-      raw: null,
-      fieldCandidates: null,
-      error: "AI_GATEWAY_API_KEY is not configured",
-    };
-  }
-
   let text: string;
   try {
     text = await extractTextFromPdf(filePath);
@@ -84,67 +86,76 @@ export async function extractInvoiceFromPdf(
     };
   }
 
-  const gatewayUrl =
-    process.env.AI_GATEWAY_URL ?? "https://ai-gateway.vercel.sh/v1/chat/completions";
-  const model = process.env.AI_GATEWAY_MODEL ?? "openai/gpt-4o-mini";
-
   const systemPrompt = resolveExtractionSystemPrompt(supplierContext);
 
   const userPrompt = buildInvoiceExtractionUserPrompt(
     fileName,
     text.slice(0, MAX_INVOICE_TEXT_CHARS),
+    emailContext ?? undefined,
   );
 
+  return callExtractionAI({ systemPrompt, userPrompt });
+}
+
+export async function extractInvoiceFromEmailBody(
+  params: {
+    subject?: string | null;
+    fromEmail?: string | null;
+    fromName?: string | null;
+    bodyText: string;
+    attachmentNames?: string[];
+  },
+  supplierContext?: SupplierExtractionContext | null,
+): Promise<{
+  data: ExtractedInvoice | null;
+  raw: unknown;
+  fieldCandidates: ExtractionCandidates | null;
+  error?: string;
+}> {
+  const trimmedBody = params.bodyText.trim();
+  if (!trimmedBody) {
+    return {
+      data: null,
+      raw: null,
+      fieldCandidates: null,
+      error: "Email body is empty",
+    };
+  }
+
+  const systemPrompt = resolveExtractionSystemPrompt(supplierContext);
+  const userPrompt = buildInvoiceExtractionFromEmailUserPrompt({
+    subject: params.subject,
+    fromEmail: params.fromEmail,
+    fromName: params.fromName,
+    emailBody: trimmedBody.slice(0, MAX_INVOICE_TEXT_CHARS),
+    attachmentNames: params.attachmentNames,
+  });
+
+  return callExtractionAI({ systemPrompt, userPrompt });
+}
+
+async function callExtractionAI(params: {
+  systemPrompt: string;
+  userPrompt: string;
+}): Promise<{
+  data: ExtractedInvoice | null;
+  raw: unknown;
+  fieldCandidates: ExtractionCandidates | null;
+  error?: string;
+}> {
   try {
-    const requestBody: Record<string, unknown> = {
-      model,
-      temperature: 0,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
-    };
-
-    // Vercel AI Gateway rejects response_format on some models; OpenAI direct accepts it.
-    if (!gatewayUrl.includes("ai-gateway.vercel.sh")) {
-      requestBody.response_format = { type: "json_object" };
-    }
-
-    const response = await fetch(gatewayUrl, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(requestBody),
-    });
-
-    if (!response.ok) {
-      const body = await response.text();
+    const result = await callAiChatCompletion(params);
+    if ("error" in result) {
       return {
         data: null,
-        raw: body,
+        raw: result.raw,
         fieldCandidates: null,
-        error: `AI Gateway error (${response.status})`,
-      };
-    }
-
-    const completion = (await response.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-
-    const content = completion.choices?.[0]?.message?.content;
-    if (!content) {
-      return {
-        data: null,
-        raw: completion,
-        fieldCandidates: null,
-        error: "AI Gateway returned an empty response",
+        error: result.error,
       };
     }
 
     const parsed = normalizeExtractedInvoice(
-      JSON.parse(parseJsonContent(content)) as ExtractedInvoice,
+      JSON.parse(parseJsonContent(result.content)) as ExtractedInvoice,
     );
 
     if (parsed.lineItems.length === 0) {
@@ -156,7 +167,7 @@ export async function extractInvoiceFromPdf(
 
     return {
       data: parsed,
-      raw: completion,
+      raw: result.raw,
       fieldCandidates: parsed.fieldCandidates ?? null,
     };
   } catch (error) {

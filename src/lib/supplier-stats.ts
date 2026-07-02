@@ -3,8 +3,24 @@ import { db, invoices } from "@/lib/db";
 
 export type SupplierInvoiceStats = {
   invoiceCount: number;
-  lastInvoiceAt: Date | string | null;
+  lastInvoiceAt: Date | null;
 };
+
+function normalizeTimestamp(value: unknown): Date | null {
+  if (value == null) return null;
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+    const date = new Date(Number(value));
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  return null;
+}
 
 export async function getSupplierInvoiceStats(
   organizationId: string,
@@ -31,7 +47,7 @@ export async function getSupplierInvoiceStats(
     if (!row.supplierId) continue;
     stats.set(row.supplierId, {
       invoiceCount: row.invoiceCount,
-      lastInvoiceAt: row.lastInvoiceAt ?? null,
+      lastInvoiceAt: normalizeTimestamp(row.lastInvoiceAt),
     });
   }
   return stats;

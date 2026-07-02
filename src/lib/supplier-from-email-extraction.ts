@@ -3,6 +3,7 @@ import {
   SUPPLIER_FROM_EMAIL_SYSTEM_PROMPT,
   type SupplierFromEmailThreadMessage,
 } from "@/lib/extraction-prompts";
+import { callAiChatCompletion } from "@/lib/ai-chat";
 import { parseJsonContent } from "@/lib/extraction";
 import type { MailboxMessage } from "@/lib/db";
 
@@ -224,15 +225,6 @@ export async function extractSupplierFromEmailThread(params: {
   raw: unknown;
   error?: string;
 }> {
-  const apiKey = process.env.AI_GATEWAY_API_KEY;
-  if (!apiKey) {
-    return {
-      data: null,
-      raw: null,
-      error: "AI_GATEWAY_API_KEY is not configured",
-    };
-  }
-
   if (params.messages.length === 0) {
     return {
       data: null,
@@ -247,68 +239,33 @@ export async function extractSupplierFromEmailThread(params: {
     focusMessageId: params.focusMessageId,
   });
 
-  const gatewayUrl =
-    process.env.AI_GATEWAY_URL ?? "https://ai-gateway.vercel.sh/v1/chat/completions";
-  const model = process.env.AI_GATEWAY_MODEL ?? "openai/gpt-4o-mini";
-
   try {
-    const requestBody: Record<string, unknown> = {
-      model,
-      temperature: 0,
-      messages: [
-        { role: "system", content: SUPPLIER_FROM_EMAIL_SYSTEM_PROMPT },
-        { role: "user", content: userPrompt },
-      ],
-    };
-
-    if (!gatewayUrl.includes("ai-gateway.vercel.sh")) {
-      requestBody.response_format = { type: "json_object" };
-    }
-
-    const response = await fetch(gatewayUrl, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(requestBody),
+    const result = await callAiChatCompletion({
+      systemPrompt: SUPPLIER_FROM_EMAIL_SYSTEM_PROMPT,
+      userPrompt,
     });
 
-    if (!response.ok) {
-      const responseBody = await response.text();
+    if ("error" in result) {
       return {
         data: null,
-        raw: responseBody,
-        error: `AI Gateway error (${response.status})`,
-      };
-    }
-
-    const completion = (await response.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-
-    const content = completion.choices?.[0]?.message?.content;
-    if (!content) {
-      return {
-        data: null,
-        raw: completion,
-        error: "AI Gateway returned an empty response",
+        raw: result.raw,
+        error: result.error,
       };
     }
 
     const parsed = normalizeExtractedSuppliersFromEmailThread(
-      JSON.parse(parseJsonContent(content)) as Record<string, unknown>,
+      JSON.parse(parseJsonContent(result.content)) as Record<string, unknown>,
     );
 
     if (parsed.candidates.length === 0) {
       return {
         data: null,
-        raw: completion,
+        raw: result.raw,
         error: "AI could not identify any supplier candidates in this thread",
       };
     }
 
-    return { data: parsed, raw: completion };
+    return { data: parsed, raw: result.raw };
   } catch (error) {
     return {
       data: null,

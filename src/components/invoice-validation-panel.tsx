@@ -1,21 +1,35 @@
 "use client";
 
+import { CheckIcon, PencilIcon, PlusIcon, Wand2Icon } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
 import type { ExtractedLineItem } from "@/lib/extraction";
 import type { ExtractionCandidates, FieldCandidate, ValidatableField } from "@/lib/extraction-types";
+import { formatCurrency } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 type SupplierOption = {
   id: string;
@@ -48,12 +62,12 @@ type FieldConfig = {
 };
 
 const FIELD_CONFIG: FieldConfig[] = [
-  { key: "vendorName", label: "Supplier name", type: "text" },
+  { key: "vendorName", label: "Supplier", type: "text" },
   { key: "vendorEmail", label: "Supplier email", type: "text" },
-  { key: "invoiceNumber", label: "Invoice number", type: "text" },
+  { key: "invoiceNumber", label: "Invoice no.", type: "text" },
   { key: "invoiceDate", label: "Invoice date", type: "date" },
   { key: "dueDate", label: "Due date", type: "date" },
-  { key: "totalAmount", label: "Total amount", type: "number" },
+  { key: "totalAmount", label: "Total", type: "number" },
   { key: "currency", label: "Currency", type: "text" },
 ];
 
@@ -78,7 +92,7 @@ function uniqueCandidates(
     if (!seen.has(key) && !merged.some((entry) => entry.value === currentValue)) {
       merged.unshift({
         value: currentValue,
-        label: `Current: ${currentValue}`,
+        label: currentValue,
         source: "selected",
       });
     }
@@ -87,8 +101,220 @@ function uniqueCandidates(
   return merged;
 }
 
-function formatCandidateLabel(candidate: FieldCandidate) {
-  return `${candidate.label} (${candidate.source.replaceAll("_", " ")})`;
+function formatSourceLabel(source: string) {
+  return source.replaceAll("_", " ");
+}
+
+function formatDisplayValue(
+  key: ValidatableField,
+  value: string,
+  currency: string,
+): string {
+  if (!value.trim()) return "—";
+
+  if (key === "invoiceDate" || key === "dueDate") {
+    const date = new Date(value);
+    if (!Number.isNaN(date.getTime())) {
+      return new Intl.DateTimeFormat("en-AU", { dateStyle: "medium" }).format(date);
+    }
+  }
+
+  if (key === "totalAmount") {
+    const amount = Number(value);
+    if (!Number.isNaN(amount)) {
+      return formatCurrency(amount, currency || "AUD");
+    }
+  }
+
+  return value;
+}
+
+type SupplierFeaturedOptionProps = {
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+  tone?: "create" | "matched";
+};
+
+function SupplierFeaturedOption({
+  icon,
+  title,
+  description,
+  tone = "create",
+}: SupplierFeaturedOptionProps) {
+  return (
+    <span className="flex items-center gap-3 py-1">
+      <span
+        className={cn(
+          "flex size-10 shrink-0 items-center justify-center rounded-lg",
+          tone === "create"
+            ? "bg-primary/10 text-primary"
+            : "bg-secondary text-secondary-foreground",
+        )}
+      >
+        {icon}
+      </span>
+      <span className="flex min-w-0 flex-col gap-0.5 text-left">
+        <span className="text-sm font-semibold leading-tight">{title}</span>
+        <span className="text-xs leading-snug text-muted-foreground">{description}</span>
+      </span>
+    </span>
+  );
+}
+
+function SupplierSelectTriggerLabel({
+  createSupplier,
+  supplierId,
+  initialSupplierId,
+  supplierName,
+  suppliers,
+}: {
+  createSupplier: boolean;
+  supplierId: string;
+  initialSupplierId: string | null;
+  supplierName: string | null;
+  suppliers: SupplierOption[];
+}) {
+  if (createSupplier) {
+    return (
+      <span className="flex items-center gap-2">
+        <PlusIcon className="size-4 shrink-0 text-primary" />
+        <span className="font-medium">Create from confirmed name</span>
+      </span>
+    );
+  }
+
+  if (initialSupplierId && supplierId === initialSupplierId && supplierName) {
+    return (
+      <span className="flex items-center gap-2">
+        <Wand2Icon className="size-4 shrink-0 text-muted-foreground" />
+        <span className="font-medium">Matched: {supplierName}</span>
+      </span>
+    );
+  }
+
+  const supplier = suppliers.find((entry) => entry.id === supplierId);
+  return supplier?.name ?? null;
+}
+
+type ValidationFieldRowProps = {
+  config: FieldConfig;
+  value: string;
+  currency: string;
+  options: FieldCandidate[];
+  selectedSource?: string;
+  isEditing: boolean;
+  onStartEdit: () => void;
+  onCancelEdit: () => void;
+  onDoneEdit: () => void;
+  onChange: (value: string) => void;
+  onApplyCandidate: (candidate: FieldCandidate) => void;
+};
+
+function ValidationFieldRow({
+  config,
+  value,
+  currency,
+  options,
+  selectedSource,
+  isEditing,
+  onStartEdit,
+  onCancelEdit,
+  onDoneEdit,
+  onChange,
+  onApplyCandidate,
+}: ValidationFieldRowProps) {
+  const displayValue = formatDisplayValue(config.key, value, currency);
+  const hasSuggestions = options.length > 0;
+
+  if (isEditing) {
+    return (
+      <div className="col-span-full flex flex-col gap-3 rounded-lg bg-muted/40 px-3 py-3">
+        <div className="flex items-center justify-between gap-3">
+          <Label htmlFor={config.key} className="text-sm font-medium">
+            {config.label}
+          </Label>
+          <div className="flex items-center gap-1">
+            <Button type="button" size="xs" onClick={onDoneEdit}>
+              <CheckIcon data-icon="inline-start" />
+              Done
+            </Button>
+            <Button type="button" size="xs" variant="ghost" onClick={onCancelEdit}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+
+        <Input
+          id={config.key}
+          type={config.type}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          required={config.key === "vendorName"}
+          autoFocus
+        />
+
+        {hasSuggestions ? (
+          <div className="flex flex-col gap-2">
+            <p className="text-xs text-muted-foreground">
+              From email and attachments
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {options.map((candidate) => {
+                const isSelected =
+                  value === candidate.value && selectedSource === candidate.source;
+
+                return (
+                  <button
+                    key={`${candidate.source}-${candidate.value}`}
+                    type="button"
+                    className="max-w-full rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    onClick={() => onApplyCandidate(candidate)}
+                  >
+                    <Badge
+                      variant={isSelected ? "default" : "outline"}
+                      className="h-auto max-w-full py-1 whitespace-normal"
+                      title={formatSourceLabel(candidate.source)}
+                    >
+                      {candidate.label}
+                    </Badge>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            No other values found in the source.
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="group/field grid grid-cols-[7rem_minmax(0,1fr)_auto] items-baseline gap-x-3 py-2">
+      <span className="text-sm text-muted-foreground">{config.label}</span>
+      <span
+        className={cn(
+          "min-w-0 truncate text-sm",
+          displayValue === "—" ? "text-muted-foreground" : "font-medium",
+        )}
+      >
+        {displayValue}
+      </span>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-xs"
+        className="opacity-0 transition-opacity group-hover/field:opacity-100 focus-visible:opacity-100"
+        aria-label={`Edit ${config.label.toLowerCase()}`}
+        onClick={onStartEdit}
+      >
+        <PencilIcon />
+      </Button>
+    </div>
+  );
 }
 
 export function InvoiceValidationPanel({
@@ -103,6 +329,9 @@ export function InvoiceValidationPanel({
 }: InvoiceValidationPanelProps) {
   const router = useRouter();
   const [fields, setFields] = useState(initialFields);
+  const [editingFields, setEditingFields] = useState<Partial<Record<ValidatableField, string>>>(
+    {},
+  );
   const [selectedSources, setSelectedSources] = useState<
     Partial<Record<ValidatableField, string>>
   >({});
@@ -127,6 +356,27 @@ export function InvoiceValidationPanel({
     );
   }, [candidates, fields]);
 
+  const supplierSelectItems = useMemo(() => {
+    const items: Array<{ label: string; value: string }> = [
+      { label: "Create from confirmed name", value: "create" },
+    ];
+
+    if (supplierName && initialSupplierId) {
+      items.push({
+        label: `Matched: ${supplierName}`,
+        value: initialSupplierId,
+      });
+    }
+
+    for (const supplier of suppliers) {
+      if (supplier.id !== initialSupplierId) {
+        items.push({ label: supplier.name, value: supplier.id });
+      }
+    }
+
+    return items;
+  }, [suppliers, initialSupplierId, supplierName]);
+
   if (!canValidate) {
     return null;
   }
@@ -138,6 +388,33 @@ export function InvoiceValidationPanel({
   function applyCandidate(field: ValidatableField, candidate: FieldCandidate) {
     updateField(field, candidate.value);
     setSelectedSources((current) => ({ ...current, [field]: candidate.source }));
+  }
+
+  function startEditing(field: ValidatableField) {
+    setEditingFields((current) => ({
+      ...current,
+      [field]: fields[field],
+    }));
+  }
+
+  function cancelEditing(field: ValidatableField) {
+    const previous = editingFields[field];
+    if (previous !== undefined) {
+      updateField(field, previous);
+    }
+    setEditingFields((current) => {
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
+  }
+
+  function finishEditing(field: ValidatableField) {
+    setEditingFields((current) => {
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
   }
 
   async function handleSubmit(event: React.FormEvent) {
@@ -186,20 +463,21 @@ export function InvoiceValidationPanel({
   }
 
   return (
-    <Card className="border-primary/30">
-      <CardHeader>
-        <CardTitle>Validate extraction</CardTitle>
+    <Card>
+      <CardHeader className="pb-4">
+        <CardTitle>Review extraction</CardTitle>
         <CardDescription>
-          Review AI-extracted fields, pick the correct match when multiple options
-          exist, and confirm before routing for approval. Your choices teach the
-          system for future invoices from this supplier.
+          Check each field against the source. Edit only what needs correcting.
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="space-y-2">
-            <Label>Linked supplier</Label>
+        <form id="invoice-validation-form" onSubmit={handleSubmit} className="flex flex-col gap-4">
+          <div className="grid gap-4 sm:grid-cols-[7rem_minmax(0,1fr)] sm:items-center">
+            <Label htmlFor="linked-supplier" className="text-sm text-muted-foreground">
+              Supplier
+            </Label>
             <Select
+              items={supplierSelectItems}
               value={createSupplier ? "create" : supplierId}
               onValueChange={(value) => {
                 if (!value || value === "create") {
@@ -211,89 +489,89 @@ export function InvoiceValidationPanel({
                 }
               }}
             >
-              <SelectTrigger>
-                <SelectValue placeholder="Select supplier" />
+              <SelectTrigger id="linked-supplier" className="h-10 w-full">
+                <SelectValue placeholder="Select supplier">
+                  <SupplierSelectTriggerLabel
+                    createSupplier={createSupplier}
+                    supplierId={supplierId}
+                    initialSupplierId={initialSupplierId}
+                    supplierName={supplierName}
+                    suppliers={suppliers}
+                  />
+                </SelectValue>
               </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="create">
-                  Create supplier from confirmed name
-                </SelectItem>
-                {supplierName && initialSupplierId ? (
-                  <SelectItem value={initialSupplierId}>
-                    Matched: {supplierName}
+              <SelectContent alignItemWithTrigger={false} className="min-w-[var(--anchor-width)]">
+                <SelectGroup>
+                  <SelectItem value="create" className="py-2.5 pl-2">
+                    <SupplierFeaturedOption
+                      tone="create"
+                      icon={<PlusIcon className="size-5" />}
+                      title="Create from confirmed name"
+                      description="Add a new supplier using the confirmed fields"
+                    />
                   </SelectItem>
-                ) : null}
-                {suppliers
-                  .filter((supplier) => supplier.id !== initialSupplierId)
-                  .map((supplier) => (
-                    <SelectItem key={supplier.id} value={supplier.id}>
-                      {supplier.name}
+                  {supplierName && initialSupplierId ? (
+                    <SelectItem value={initialSupplierId} className="py-2.5 pl-2">
+                      <SupplierFeaturedOption
+                        tone="matched"
+                        icon={<Wand2Icon className="size-5" />}
+                        title={`Matched: ${supplierName}`}
+                        description="Use the supplier linked from this email"
+                      />
                     </SelectItem>
-                  ))}
+                  ) : null}
+                </SelectGroup>
+                {suppliers.some((supplier) => supplier.id !== initialSupplierId) ? (
+                  <>
+                    <SelectSeparator />
+                    <SelectGroup>
+                      {suppliers
+                        .filter((supplier) => supplier.id !== initialSupplierId)
+                        .map((supplier) => (
+                          <SelectItem key={supplier.id} value={supplier.id}>
+                            {supplier.name}
+                          </SelectItem>
+                        ))}
+                    </SelectGroup>
+                  </>
+                ) : null}
               </SelectContent>
             </Select>
           </div>
 
-          {FIELD_CONFIG.map((config) => {
-            const options = fieldOptions[config.key];
-            const hasAlternatives = options.length > 1;
+          <Separator />
 
-            return (
-              <div key={config.key} className="space-y-2 rounded-lg border p-4">
-                <Label htmlFor={config.key}>{config.label}</Label>
-                <Input
-                  id={config.key}
-                  type={config.type}
-                  value={fields[config.key]}
-                  onChange={(event) => updateField(config.key, event.target.value)}
-                  required={config.key === "vendorName"}
-                />
-
-                {hasAlternatives ? (
-                  <div className="space-y-2">
-                    <p className="text-xs text-muted-foreground">
-                      Possible matches from the PDF:
-                    </p>
-                    <div className="flex flex-wrap gap-2">
-                      {options.map((candidate) => {
-                        const isSelected =
-                          fields[config.key] === candidate.value &&
-                          selectedSources[config.key] === candidate.source;
-
-                        return (
-                          <Button
-                            key={`${candidate.source}-${candidate.value}`}
-                            type="button"
-                            size="sm"
-                            variant={isSelected ? "default" : "outline"}
-                            onClick={() => applyCandidate(config.key, candidate)}
-                          >
-                            {formatCandidateLabel(candidate)}
-                          </Button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ) : options.length === 1 ? (
-                  <p className="text-xs text-muted-foreground">
-                    Match: {formatCandidateLabel(options[0])}
-                  </p>
-                ) : null}
-              </div>
-            );
-          })}
+          <div className="grid gap-x-10 sm:grid-cols-2">
+            {FIELD_CONFIG.map((config) => (
+              <ValidationFieldRow
+                key={config.key}
+                config={config}
+                value={fields[config.key]}
+                currency={fields.currency}
+                options={fieldOptions[config.key]}
+                selectedSource={selectedSources[config.key]}
+                isEditing={config.key in editingFields}
+                onStartEdit={() => startEditing(config.key)}
+                onCancelEdit={() => cancelEditing(config.key)}
+                onDoneEdit={() => finishEditing(config.key)}
+                onChange={(value) => updateField(config.key, value)}
+                onApplyCandidate={(candidate) => applyCandidate(config.key, candidate)}
+              />
+            ))}
+          </div>
 
           {error ? (
             <Alert variant="destructive">
               <AlertDescription>{error}</AlertDescription>
             </Alert>
           ) : null}
-
-          <Button type="submit" disabled={loading}>
-            {loading ? "Confirming..." : "Confirm extraction & route for approval"}
-          </Button>
         </form>
       </CardContent>
+      <CardFooter className="border-t">
+        <Button type="submit" form="invoice-validation-form" disabled={loading}>
+          {loading ? "Confirming..." : "Confirm and route for approval"}
+        </Button>
+      </CardFooter>
     </Card>
   );
 }
