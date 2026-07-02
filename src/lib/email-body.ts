@@ -28,6 +28,21 @@ export function rewriteInlineImageSources(
   });
 }
 
+export function sanitizeEmailHtmlForDisplay(html: string) {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<link[^>]*>/gi, "")
+    .replace(/<meta[^>]*>/gi, "")
+    .replace(/<base[^>]*>/gi, "");
+}
+
 export function isDisplayAttachment(attachment: { isInline: boolean | null }) {
   return !attachment.isInline;
+}
+
+export function prepareEmailHtmlForDisplay(
+  html: string,
+  attachments: InlineAttachment[],
+) {
+  return sanitizeEmailHtmlForDisplay(rewriteInlineImageSources(html, attachments));
 }

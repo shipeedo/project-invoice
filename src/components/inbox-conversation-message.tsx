@@ -12,8 +12,9 @@ import {
 } from "@/components/ui/collapsible";
 import {
   isDisplayAttachment,
-  rewriteInlineImageSources,
+  prepareEmailHtmlForDisplay,
 } from "@/lib/email-body";
+import { EmailMessageBody } from "@/components/email-message-body";
 import { cn } from "@/lib/utils";
 
 function formatMessageDate(value: Date | string | null) {
@@ -78,7 +79,7 @@ export function InboxConversationMessage({
   const displayAttachments = message.attachments.filter(isDisplayAttachment);
   const renderedHtml = useMemo(() => {
     if (!message.bodyHtml) return null;
-    return rewriteInlineImageSources(message.bodyHtml, message.attachments);
+    return prepareEmailHtmlForDisplay(message.bodyHtml, message.attachments);
   }, [message.bodyHtml, message.attachments]);
 
   return (
@@ -210,12 +211,11 @@ export function InboxConversationMessage({
           <CollapsibleContent className="px-4 py-4">
             <div className="w-full min-w-0 text-sm leading-relaxed">
               {renderedHtml ? (
-                <div
-                  className="prose prose-sm max-w-none break-words [&_*]:max-w-full [&_img]:h-auto [&_img]:max-w-full"
-                  dangerouslySetInnerHTML={{ __html: renderedHtml }}
-                />
+                <EmailMessageBody html={renderedHtml} />
               ) : message.bodyText ? (
-                <p className="whitespace-pre-wrap break-words">{message.bodyText}</p>
+                <div className="rounded-md bg-white px-4 py-3 text-foreground">
+                  <p className="whitespace-pre-wrap break-words">{message.bodyText}</p>
+                </div>
               ) : (
                 <p className="text-muted-foreground">No message body.</p>
               )}
