@@ -7,8 +7,10 @@ export default middlewareAuth((req) => {
   const isLoggedIn = !!req.auth;
   const isAuthRoute = req.nextUrl.pathname.startsWith("/login");
   const isApiAuth = req.nextUrl.pathname.startsWith("/api/auth");
+  const isApiCron = req.nextUrl.pathname.startsWith("/api/cron");
+  const isO365Callback = req.nextUrl.pathname.startsWith("/api/o365/callback");
 
-  if (isApiAuth) return;
+  if (isApiAuth || isApiCron || isO365Callback) return;
 
   if (!isLoggedIn && !isAuthRoute) {
     const loginUrl = new URL("/login", req.nextUrl.origin);

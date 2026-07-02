@@ -1,5 +1,6 @@
 import { db, organizations, users } from "@/lib/db";
 import type { UserRole } from "@/lib/db/types";
+import { userRoles } from "@/lib/db/types";
 import { eq } from "drizzle-orm";
 
 function slugify(value: string) {
@@ -37,15 +38,19 @@ function resolveOrgFromProfile(profile: Record<string, unknown>, email: string) 
   };
 }
 
-function resolveRole(profile: Record<string, unknown>): UserRole {
+function resolveRoleFromProfile(profile: Record<string, unknown>): UserRole | null {
   const role = profile.role ?? profile.roles;
   if (typeof role === "string") {
     const normalized = role.toUpperCase();
     if (normalized === "ADMIN") return "ADMIN";
     if (normalized === "USER") return "USER";
+    if (normalized === "APPROVER") return "APPROVER";
   }
-  if (Array.isArray(role) && role.includes("admin")) return "ADMIN";
-  return "APPROVER";
+  if (Array.isArray(role)) {
+    const normalized = role.map((entry) => String(entry).toLowerCase());
+    if (normalized.includes("admin")) return "ADMIN";
+  }
+  return null;
 }
 
 export async function upsertUserFromProfile(profile: {
@@ -62,7 +67,10 @@ export async function upsertUserFromProfile(profile: {
   }
 
   const orgInfo = resolveOrgFromProfile(profile, email);
-  const role = profile.role ?? resolveRole(profile);
+  const profileRole =
+    profile.role && userRoles.includes(profile.role as UserRole)
+      ? (profile.role as UserRole)
+      : resolveRoleFromProfile(profile);
 
   const existingOrg = await db
     .select()
@@ -81,6 +89,7 @@ export async function upsertUserFromProfile(profile: {
   const existingUser = await db.select().from(users).where(eq(users.email, email)).limit(1);
 
   if (existingUser[0]) {
+    const role = profileRole ?? existingUser[0].role;
     const [user] = await db
       .update(users)
       .set({
@@ -99,7 +108,7 @@ export async function upsertUserFromProfile(profile: {
     .values({
       email,
       name: profile.name ?? email,
-      role,
+      role: profileRole ?? "APPROVER",
       organizationId: organization.id,
     })
     .returning();

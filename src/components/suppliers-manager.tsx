@@ -1,15 +1,31 @@
 "use client";
 
+import { ChevronDownIcon, PencilIcon, PlusIcon } from "lucide-react";
 import { useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import {
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+} from "@/components/ui/combobox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Separator } from "@/components/ui/separator";
 import {
   Sheet,
   SheetContent,
   SheetDescription,
+  SheetFooter,
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
@@ -22,12 +38,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  FIELD_LABELS,
-  type SupplierFieldMappings,
-  VALIDATABLE_FIELDS,
-  type ValidatableField,
-} from "@/lib/extraction-types";
+import type { SupplierFieldMappings } from "@/lib/extraction-types";
+import { formatDate } from "@/lib/format";
 
 type Supplier = {
   id: string;
@@ -36,60 +48,231 @@ type Supplier = {
   emailDomains: string[];
   extractionPrompt: string | null;
   fieldMappings: SupplierFieldMappings;
+  invoiceCount: number;
+  lastInvoiceAt: string | Date | null;
+};
+
+type SupplierSuggestion = {
+  id: string;
+  email: string;
+  displayName: string | null;
+  domain: string | null;
+  messageCount: number;
+  suggestedName: string;
 };
 
 type SuppliersManagerProps = {
   initialSuppliers: Supplier[];
+  initialSuggestions?: SupplierSuggestion[];
 };
 
-type MappingDraft = Partial<
-  Record<
-    ValidatableField,
-    {
-      preferredSource: string;
-      label: string;
-      preferredValue: string;
+function formatInboxMessageCount(count: number) {
+  return `${count} message${count === 1 ? "" : "s"}`;
+}
+
+function CreateSupplierPanel({
+  suggestions,
+  createName,
+  createEmails,
+  createDomains,
+  selectedSuggestion,
+  creating,
+  error,
+  onNameChange,
+  onEmailsChange,
+  onDomainsChange,
+  onSelectSuggestion,
+  onSubmit,
+  onCancel,
+}: {
+  suggestions: SupplierSuggestion[];
+  createName: string;
+  createEmails: string;
+  createDomains: string;
+  selectedSuggestion: SupplierSuggestion | null;
+  creating: boolean;
+  error: string | null;
+  onNameChange: (value: string) => void;
+  onEmailsChange: (value: string) => void;
+  onDomainsChange: (value: string) => void;
+  onSelectSuggestion: (suggestion: SupplierSuggestion | null) => void;
+  onSubmit: () => void;
+  onCancel: () => void;
+}) {
+  const hasSuggestions = suggestions.length > 0;
+
+  function handleNameInputChange(value: string) {
+    onNameChange(value);
+    if (selectedSuggestion && value !== selectedSuggestion.suggestedName) {
+      onSelectSuggestion(null);
     }
-  >
->;
-
-function emptyMappingDraft(mappings: SupplierFieldMappings): MappingDraft {
-  const draft: MappingDraft = {};
-  for (const field of VALIDATABLE_FIELDS) {
-    const mapping = mappings[field];
-    if (!mapping?.preferredSource) continue;
-    draft[field] = {
-      preferredSource: mapping.preferredSource,
-      label: mapping.label ?? "",
-      preferredValue: mapping.preferredValue ?? "",
-    };
   }
-  return draft;
+
+  function handleEmailInputChange(value: string) {
+    onEmailsChange(value);
+    if (selectedSuggestion && value !== selectedSuggestion.email) {
+      onSelectSuggestion(null);
+    }
+  }
+
+  function handleSuggestionPick(suggestion: SupplierSuggestion) {
+    onSelectSuggestion(suggestion);
+  }
+
+  return (
+    <>
+      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-6 py-6">
+        {error ? (
+          <Alert variant="destructive">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        ) : null}
+
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="create-name">Supplier name</Label>
+          {hasSuggestions ? (
+            <Combobox
+              items={suggestions}
+              itemToStringLabel={(suggestion: SupplierSuggestion) => suggestion.suggestedName}
+              itemToStringValue={(suggestion: SupplierSuggestion) => suggestion.suggestedName}
+              isItemEqualToValue={(a, b) => a.id === b.id}
+              inputValue={createName}
+              onInputValueChange={handleNameInputChange}
+              onValueChange={(suggestion) => {
+                if (suggestion) handleSuggestionPick(suggestion);
+              }}
+            >
+              <ComboboxInput
+                id="create-name"
+                className="w-full"
+                placeholder="Acme Transport"
+                showClear={false}
+              />
+              <ComboboxContent>
+                <ComboboxEmpty>No matching inbox senders.</ComboboxEmpty>
+                <ComboboxList>
+                  {(suggestion) => (
+                    <ComboboxItem key={suggestion.id} value={suggestion}>
+                      <div className="flex flex-col gap-0.5">
+                        <span>{suggestion.suggestedName}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {suggestion.email} · {formatInboxMessageCount(suggestion.messageCount)}
+                        </span>
+                      </div>
+                    </ComboboxItem>
+                  )}
+                </ComboboxList>
+              </ComboboxContent>
+            </Combobox>
+          ) : (
+            <Input
+              id="create-name"
+              required
+              placeholder="Acme Transport"
+              value={createName}
+              onChange={(event) => onNameChange(event.target.value)}
+            />
+          )}
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="create-emails">Email addresses</Label>
+          {hasSuggestions ? (
+            <Combobox
+              items={suggestions}
+              itemToStringLabel={(suggestion: SupplierSuggestion) => suggestion.email}
+              itemToStringValue={(suggestion: SupplierSuggestion) => suggestion.email}
+              isItemEqualToValue={(a, b) => a.id === b.id}
+              inputValue={createEmails}
+              onInputValueChange={handleEmailInputChange}
+              onValueChange={(suggestion) => {
+                if (suggestion) handleSuggestionPick(suggestion);
+              }}
+            >
+              <ComboboxInput
+                id="create-emails"
+                className="w-full"
+                placeholder="billing@acme.com"
+                showClear={false}
+              />
+              <ComboboxContent>
+                <ComboboxEmpty>No matching inbox senders.</ComboboxEmpty>
+                <ComboboxList>
+                  {(suggestion) => (
+                    <ComboboxItem key={suggestion.id} value={suggestion}>
+                      <div className="flex flex-col gap-0.5">
+                        <span>{suggestion.email}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {suggestion.suggestedName} · {formatInboxMessageCount(suggestion.messageCount)}
+                        </span>
+                      </div>
+                    </ComboboxItem>
+                  )}
+                </ComboboxList>
+              </ComboboxContent>
+            </Combobox>
+          ) : (
+            <Input
+              id="create-emails"
+              placeholder="billing@acme.com, accounts@acme.com"
+              value={createEmails}
+              onChange={(event) => onEmailsChange(event.target.value)}
+            />
+          )}
+          <p className="text-sm text-muted-foreground">
+            {hasSuggestions
+              ? "Type an address or pick a sender from the inbox. Separate multiple addresses with commas."
+              : "Separate multiple addresses with commas."}
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="create-domains">Email domains</Label>
+          <Input
+            id="create-domains"
+            placeholder="acme.com"
+            value={createDomains}
+            onChange={(event) => onDomainsChange(event.target.value)}
+          />
+          <p className="text-sm text-muted-foreground">
+            Used to match invoices from any address at this domain.
+          </p>
+        </div>
+      </div>
+
+      <Separator />
+
+      <SheetFooter className="mt-auto flex-row justify-end gap-2 px-6 py-4">
+        <Button type="button" variant="outline" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button type="button" onClick={onSubmit} disabled={creating || !createName.trim()}>
+          {creating ? "Creating..." : "Create supplier"}
+        </Button>
+      </SheetFooter>
+    </>
+  );
 }
 
-function mappingDraftToPayload(draft: MappingDraft): SupplierFieldMappings {
-  const mappings: SupplierFieldMappings = {};
-  for (const field of VALIDATABLE_FIELDS) {
-    const entry = draft[field];
-    if (!entry?.preferredSource.trim()) continue;
-    mappings[field] = {
-      preferredSource: entry.preferredSource.trim(),
-      label: entry.label.trim() || undefined,
-      preferredValue: entry.preferredValue.trim() || undefined,
-    };
-  }
-  return mappings;
-}
-
-export function SuppliersManager({ initialSuppliers }: SuppliersManagerProps) {
+export function SuppliersManager({
+  initialSuppliers,
+  initialSuggestions = [],
+}: SuppliersManagerProps) {
   const [suppliers, setSuppliers] = useState(initialSuppliers);
+  const [suggestions, setSuggestions] = useState(initialSuggestions);
+  const [createSheetOpen, setCreateSheetOpen] = useState(false);
+  const [createName, setCreateName] = useState("");
+  const [createEmails, setCreateEmails] = useState("");
+  const [createDomains, setCreateDomains] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [selectedSuggestion, setSelectedSuggestion] = useState<SupplierSuggestion | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
   const [editName, setEditName] = useState("");
   const [editEmails, setEditEmails] = useState("");
   const [editDomains, setEditDomains] = useState("");
   const [editPrompt, setEditPrompt] = useState("");
-  const [editMappings, setEditMappings] = useState<MappingDraft>({});
+  const [originalPrompt, setOriginalPrompt] = useState("");
   const [saving, setSaving] = useState(false);
 
   async function refreshSuppliers() {
@@ -101,56 +284,61 @@ export function SuppliersManager({ initialSuppliers }: SuppliersManagerProps) {
     setSuppliers(await response.json());
   }
 
+  function openCreateSheet() {
+    setCreateSheetOpen(true);
+    setError(null);
+  }
+
+  function closeCreateSheet() {
+    setCreateSheetOpen(false);
+    setCreating(false);
+    setCreateName("");
+    setCreateEmails("");
+    setCreateDomains("");
+    setSelectedSuggestion(null);
+  }
+
   function openEditor(supplier: Supplier) {
     setEditingSupplier(supplier);
     setEditName(supplier.name);
     setEditEmails(supplier.emailAddresses.join(", "));
     setEditDomains(supplier.emailDomains.join(", "));
-    setEditPrompt(supplier.extractionPrompt ?? "");
-    setEditMappings(emptyMappingDraft(supplier.fieldMappings));
+    const prompt = supplier.extractionPrompt ?? "";
+    setEditPrompt(prompt);
+    setOriginalPrompt(prompt);
     setError(null);
   }
 
   function closeEditor() {
     setEditingSupplier(null);
     setSaving(false);
+    setOriginalPrompt("");
   }
 
-  function updateMappingField(
-    field: ValidatableField,
-    key: "preferredSource" | "label" | "preferredValue",
-    value: string,
-  ) {
-    setEditMappings((current) => ({
-      ...current,
-      [field]: {
-        preferredSource: current[field]?.preferredSource ?? "",
-        label: current[field]?.label ?? "",
-        preferredValue: current[field]?.preferredValue ?? "",
-        [key]: value,
-      },
-    }));
-  }
-
-  async function createSupplier(formData: FormData) {
-    const emailAddresses = String(formData.get("emailAddresses") ?? "")
+  async function createSupplier() {
+    const emailAddresses = createEmails
       .split(",")
       .map((value) => value.trim())
       .filter(Boolean);
-    const emailDomains = String(formData.get("emailDomains") ?? "")
+    const emailDomains = createDomains
       .split(",")
       .map((value) => value.trim())
       .filter(Boolean);
+
+    setCreating(true);
+    setError(null);
 
     const response = await fetch("/api/admin/suppliers", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        name: String(formData.get("name")),
+        name: createName,
         emailAddresses,
         emailDomains,
       }),
     });
+
+    setCreating(false);
 
     if (!response.ok) {
       setError("Failed to create supplier");
@@ -158,6 +346,23 @@ export function SuppliersManager({ initialSuppliers }: SuppliersManagerProps) {
     }
 
     await refreshSuppliers();
+    if (selectedSuggestion) {
+      setSuggestions((current) =>
+        current.filter((entry) => entry.id !== selectedSuggestion.id),
+      );
+    }
+    closeCreateSheet();
+  }
+
+  function selectSuggestion(suggestion: SupplierSuggestion | null) {
+    if (suggestion) {
+      setCreateName(suggestion.suggestedName);
+      setCreateEmails(suggestion.email);
+      setCreateDomains(suggestion.domain ?? "");
+      setSelectedSuggestion(suggestion);
+      return;
+    }
+    setSelectedSuggestion(null);
   }
 
   async function saveSupplier() {
@@ -182,8 +387,7 @@ export function SuppliersManager({ initialSuppliers }: SuppliersManagerProps) {
         name: editName,
         emailAddresses,
         emailDomains,
-        extractionPrompt: editPrompt,
-        fieldMappings: mappingDraftToPayload(editMappings),
+        ...(editPrompt !== originalPrompt ? { extractionPrompt: editPrompt } : {}),
       }),
     });
 
@@ -196,14 +400,24 @@ export function SuppliersManager({ initialSuppliers }: SuppliersManagerProps) {
 
     const updated = (await response.json()) as Supplier;
     setSuppliers((current) =>
-      current.map((supplier) => (supplier.id === updated.id ? updated : supplier)),
+      current.map((supplier) =>
+        supplier.id === updated.id
+          ? {
+              ...updated,
+              invoiceCount: supplier.invoiceCount,
+              lastInvoiceAt: supplier.lastInvoiceAt,
+            }
+          : supplier,
+      ),
     );
     closeEditor();
   }
 
+  const isAnySheetOpen = createSheetOpen || Boolean(editingSupplier);
+
   return (
     <div className="space-y-6">
-      {error ? (
+      {error && !isAnySheetOpen ? (
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
@@ -212,6 +426,9 @@ export function SuppliersManager({ initialSuppliers }: SuppliersManagerProps) {
       <Card>
         <CardHeader>
           <CardTitle>Suppliers ({suppliers.length})</CardTitle>
+          <CardDescription>
+            Invoice counts and last received dates are based on invoices linked to each supplier.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <Table>
@@ -219,8 +436,8 @@ export function SuppliersManager({ initialSuppliers }: SuppliersManagerProps) {
               <TableRow>
                 <TableHead>Name</TableHead>
                 <TableHead>Emails</TableHead>
-                <TableHead>Domains</TableHead>
-                <TableHead>Mappings</TableHead>
+                <TableHead className="text-right">Invoices</TableHead>
+                <TableHead>Last invoice</TableHead>
                 <TableHead className="w-[100px]" />
               </TableRow>
             </TableHeader>
@@ -228,20 +445,20 @@ export function SuppliersManager({ initialSuppliers }: SuppliersManagerProps) {
               {suppliers.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={5} className="text-muted-foreground">
-                    No suppliers yet.
+                    No suppliers yet. Create one to start linking inbox senders and invoices.
                   </TableCell>
                 </TableRow>
               ) : (
                 suppliers.map((supplier) => (
                   <TableRow key={supplier.id}>
                     <TableCell className="font-medium">{supplier.name}</TableCell>
-                    <TableCell>{supplier.emailAddresses.join(", ") || "—"}</TableCell>
-                    <TableCell>{supplier.emailDomains.join(", ") || "—"}</TableCell>
-                    <TableCell>
-                      {Object.keys(supplier.fieldMappings).length > 0
-                        ? `${Object.keys(supplier.fieldMappings).length} field(s)`
-                        : "—"}
+                    <TableCell className="max-w-xs truncate">
+                      {supplier.emailAddresses.join(", ") || "—"}
                     </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {supplier.invoiceCount}
+                    </TableCell>
+                    <TableCell>{formatDate(supplier.lastInvoiceAt)}</TableCell>
                     <TableCell>
                       <Button
                         type="button"
@@ -249,6 +466,7 @@ export function SuppliersManager({ initialSuppliers }: SuppliersManagerProps) {
                         size="sm"
                         onClick={() => openEditor(supplier)}
                       >
+                        <PencilIcon />
                         Edit
                       </Button>
                     </TableCell>
@@ -258,53 +476,61 @@ export function SuppliersManager({ initialSuppliers }: SuppliersManagerProps) {
             </TableBody>
           </Table>
         </CardContent>
+        <CardFooter className="border-t">
+          <Button type="button" onClick={openCreateSheet}>
+            <PlusIcon />
+            Create supplier
+          </Button>
+        </CardFooter>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Add supplier</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <form
-            action={async (formData) => {
-              await createSupplier(formData);
-            }}
-            className="space-y-4"
-          >
-            <div className="space-y-2">
-              <Label htmlFor="name">Supplier name</Label>
-              <Input id="name" name="name" required placeholder="Supplier name" />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="emailAddresses">Email addresses</Label>
-              <Input
-                id="emailAddresses"
-                name="emailAddresses"
-                placeholder="Comma-separated"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="emailDomains">Email domains</Label>
-              <Input id="emailDomains" name="emailDomains" placeholder="Comma-separated" />
-            </div>
-            <Button type="submit">Create supplier</Button>
-          </form>
-        </CardContent>
-      </Card>
+      <Sheet open={createSheetOpen} onOpenChange={(open) => !open && closeCreateSheet()}>
+        <SheetContent className="flex w-full flex-col gap-0 overflow-hidden p-0 data-[side=right]:sm:max-w-2xl data-[side=right]:lg:max-w-4xl">
+          <SheetHeader className="px-6 py-5">
+            <SheetTitle>Create supplier</SheetTitle>
+            <SheetDescription>
+              Add a supplier manually or start from a sender seen in the shared inbox.
+            </SheetDescription>
+          </SheetHeader>
+
+          <Separator />
+
+          <CreateSupplierPanel
+            suggestions={suggestions}
+            createName={createName}
+            createEmails={createEmails}
+            createDomains={createDomains}
+            creating={creating}
+            error={createSheetOpen ? error : null}
+            selectedSuggestion={selectedSuggestion}
+            onNameChange={setCreateName}
+            onEmailsChange={setCreateEmails}
+            onDomainsChange={setCreateDomains}
+            onSelectSuggestion={selectSuggestion}
+            onSubmit={() => void createSupplier()}
+            onCancel={closeCreateSheet}
+          />
+        </SheetContent>
+      </Sheet>
 
       <Sheet open={Boolean(editingSupplier)} onOpenChange={(open) => !open && closeEditor()}>
-        <SheetContent className="w-full overflow-y-auto sm:max-w-2xl">
+        <SheetContent className="w-full overflow-y-auto data-[side=right]:sm:max-w-2xl data-[side=right]:lg:max-w-4xl">
           <SheetHeader>
             <SheetTitle>Edit supplier</SheetTitle>
             <SheetDescription>
-              Update contact details, the extraction system prompt, and field mappings for this
-              supplier. Mapping changes are written into the system prompt automatically.
+              Update contact details used to match inbox messages and invoices.
             </SheetDescription>
           </SheetHeader>
 
           {editingSupplier ? (
-            <div className="mt-6 space-y-6 px-4 pb-8">
-              <div className="space-y-2">
+            <div className="mt-6 flex flex-col gap-6 px-4 pb-8">
+              {error && editingSupplier ? (
+                <Alert variant="destructive">
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              ) : null}
+
+              <div className="flex flex-col gap-2">
                 <Label htmlFor="edit-name">Supplier name</Label>
                 <Input
                   id="edit-name"
@@ -313,7 +539,7 @@ export function SuppliersManager({ initialSuppliers }: SuppliersManagerProps) {
                 />
               </div>
 
-              <div className="space-y-2">
+              <div className="flex flex-col gap-2">
                 <Label htmlFor="edit-emails">Email addresses</Label>
                 <Input
                   id="edit-emails"
@@ -323,7 +549,7 @@ export function SuppliersManager({ initialSuppliers }: SuppliersManagerProps) {
                 />
               </div>
 
-              <div className="space-y-2">
+              <div className="flex flex-col gap-2">
                 <Label htmlFor="edit-domains">Email domains</Label>
                 <Input
                   id="edit-domains"
@@ -333,66 +559,36 @@ export function SuppliersManager({ initialSuppliers }: SuppliersManagerProps) {
                 />
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="edit-prompt">Extraction system prompt</Label>
-                <Textarea
-                  id="edit-prompt"
-                  value={editPrompt}
-                  onChange={(event) => setEditPrompt(event.target.value)}
-                  className="min-h-64 font-mono text-xs"
-                />
-              </div>
-
-              <div className="space-y-4">
-                <div>
-                  <h3 className="text-sm font-medium">Field mappings</h3>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Tell the extractor which document source to prefer for each header field.
-                    Saving updates the mappings section in the system prompt.
+              <Collapsible className="group/collapsible">
+                <CollapsibleTrigger
+                  render={
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="flex w-full items-center justify-between px-0"
+                    />
+                  }
+                >
+                  Advanced
+                  <ChevronDownIcon className="transition-transform group-data-open/collapsible:rotate-180" />
+                </CollapsibleTrigger>
+                <CollapsibleContent className="flex flex-col gap-4 pt-4">
+                  <p className="text-sm text-muted-foreground">
+                    When you validate an invoice and choose the correct source for a field, this
+                    supplier&apos;s extraction prompt is updated automatically for future invoices.
+                    Only edit the system prompt below if you need a manual override.
                   </p>
-                </div>
-
-                {VALIDATABLE_FIELDS.map((field) => (
-                  <div key={field} className="space-y-3 rounded-lg border p-4">
-                    <p className="text-sm font-medium">{FIELD_LABELS[field]}</p>
-                    <div className="grid gap-3 sm:grid-cols-3">
-                      <div className="space-y-2">
-                        <Label htmlFor={`${field}-source`}>Preferred source</Label>
-                        <Input
-                          id={`${field}-source`}
-                          value={editMappings[field]?.preferredSource ?? ""}
-                          onChange={(event) =>
-                            updateMappingField(field, "preferredSource", event.target.value)
-                          }
-                          placeholder="issuer, header, summary..."
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor={`${field}-label`}>Label</Label>
-                        <Input
-                          id={`${field}-label`}
-                          value={editMappings[field]?.label ?? ""}
-                          onChange={(event) =>
-                            updateMappingField(field, "label", event.target.value)
-                          }
-                          placeholder='e.g. "Issuer: Acme Transport"'
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor={`${field}-value`}>Example value</Label>
-                        <Input
-                          id={`${field}-value`}
-                          value={editMappings[field]?.preferredValue ?? ""}
-                          onChange={(event) =>
-                            updateMappingField(field, "preferredValue", event.target.value)
-                          }
-                          placeholder="Optional example"
-                        />
-                      </div>
-                    </div>
+                  <div className="flex flex-col gap-2">
+                    <Label htmlFor="edit-prompt">Extraction system prompt</Label>
+                    <Textarea
+                      id="edit-prompt"
+                      value={editPrompt}
+                      onChange={(event) => setEditPrompt(event.target.value)}
+                      className="min-h-64 font-mono text-xs"
+                    />
                   </div>
-                ))}
-              </div>
+                </CollapsibleContent>
+              </Collapsible>
 
               <div className="flex gap-2">
                 <Button type="button" onClick={saveSupplier} disabled={saving || !editName.trim()}>

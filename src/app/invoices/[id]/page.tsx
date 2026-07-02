@@ -1,7 +1,7 @@
 import { and, asc, desc, eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
-import { CreditDraftForm } from "@/components/credit-draft-form";
+import { CreditRequestForm } from "@/components/credit-request-form";
 import { InvoiceActions } from "@/components/invoice-actions";
 import { InvoiceValidationPanel } from "@/components/invoice-validation-panel";
 import { StatusBadge } from "@/components/status-badge";
@@ -44,14 +44,17 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
       assignedTo: { columns: { name: true, email: true } },
       supplier: { columns: { id: true, name: true } },
       validatedBy: { columns: { name: true, email: true } },
+      attachments: true,
       notes: { orderBy: desc(notes.createdAt) },
       auditEvents: {
         with: { user: { columns: { name: true, email: true } } },
         orderBy: desc(auditEvents.createdAt),
       },
-      creditDrafts: {
-        with: { createdBy: { columns: { name: true, email: true } } },
-        orderBy: (drafts, { desc: orderDesc }) => [orderDesc(drafts.createdAt)],
+      creditRequests: {
+        with: {
+          createdBy: { columns: { id: true, name: true, email: true } },
+        },
+        orderBy: (requests, { desc: orderDesc }) => [orderDesc(requests.createdAt)],
       },
     },
   });
@@ -181,21 +184,111 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
 
           <Card>
             <CardHeader>
-              <CardTitle>Source file</CardTitle>
+              <CardTitle>
+                {invoice.sourceType === "EMAIL" ? "Source email" : "Source file"}
+              </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <p className="text-sm text-muted-foreground">{invoice.originalFileName}</p>
+              {invoice.sourceType === "EMAIL" ? (
+                <>
+                  <dl className="grid grid-cols-2 gap-3 text-sm">
+                    <div>
+                      <dt className="text-muted-foreground">Subject</dt>
+                      <dd className="font-medium">{invoice.emailSubject ?? "—"}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">From</dt>
+                      <dd className="font-medium">
+                        {invoice.emailFromName
+                          ? `${invoice.emailFromName} <${invoice.emailFrom ?? ""}>`
+                          : (invoice.emailFrom ?? "—")}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">Received</dt>
+                      <dd className="font-medium">
+                        {formatDate(invoice.emailReceivedAt)}
+                      </dd>
+                    </div>
+                  </dl>
+                  {invoice.emailBodyText ? (
+                    <div className="rounded-md border bg-muted/30 p-3 text-sm whitespace-pre-wrap">
+                      {invoice.emailBodyText}
+                    </div>
+                  ) : invoice.emailBodyHtml ? (
+                    <div
+                      className="prose prose-sm max-w-none rounded-md border bg-muted/30 p-3"
+                      dangerouslySetInnerHTML={{ __html: invoice.emailBodyHtml }}
+                    />
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No email body available.</p>
+                  )}
+                </>
+              ) : (
+                <>
+                  <p className="text-sm text-muted-foreground">
+                    {invoice.originalFileName}
+                  </p>
+                  <a
+                    href={`/api/invoices/${invoice.id}/file`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className={cn(buttonVariants({ variant: "outline" }))}
+                  >
+                    View PDF
+                  </a>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        {invoice.attachments.length > 0 ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>Attachments</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ul className="space-y-2 text-sm">
+                {invoice.attachments.map((attachment) => (
+                  <li
+                    key={attachment.id}
+                    className="flex items-center justify-between gap-4 rounded-md border px-3 py-2"
+                  >
+                    <span>
+                      {attachment.fileName}
+                      {attachment.isPrimary ? " (primary)" : ""}
+                    </span>
+                    <a
+                      href={`/api/invoices/${invoice.id}/attachments/${attachment.id}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+                    >
+                      View
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </CardContent>
+          </Card>
+        ) : invoice.sourceType === "EMAIL" && invoice.filePath ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>Attachments</CardTitle>
+            </CardHeader>
+            <CardContent>
               <a
                 href={`/api/invoices/${invoice.id}/file`}
                 target="_blank"
                 rel="noreferrer"
                 className={cn(buttonVariants({ variant: "outline" }))}
               >
-                View PDF
+                View {invoice.originalFileName ?? "attachment"}
               </a>
             </CardContent>
           </Card>
-        </div>
+        ) : null}
 
         <Card>
           <CardHeader>
@@ -249,9 +342,11 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
           validatedAt={invoice.validatedAt}
         />
 
-        <CreditDraftForm
+        <CreditRequestForm
           invoiceId={invoice.id}
           defaultSubject={`Credit request — ${invoice.vendorName ?? invoice.originalFileName ?? "Invoice"}`}
+          defaultRecipient={invoice.vendorEmail ?? invoice.emailFrom}
+          creditRequests={invoice.creditRequests}
         />
 
         <Card>
@@ -273,26 +368,6 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
           </CardContent>
         </Card>
 
-        {invoice.creditDrafts.length > 0 ? (
-          <Card>
-            <CardHeader>
-              <CardTitle>Credit drafts</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <ul className="space-y-4 text-sm">
-                {invoice.creditDrafts.map((draft) => (
-                  <li key={draft.id} className="rounded-lg border p-4">
-                    <p className="font-medium">{draft.subject}</p>
-                    <p className="mt-2 whitespace-pre-wrap">{draft.message}</p>
-                    <p className="mt-2 text-muted-foreground">
-                      {formatDate(draft.createdAt)} · {draft.createdBy.name ?? draft.createdBy.email}
-                    </p>
-                  </li>
-                ))}
-              </ul>
-            </CardContent>
-          </Card>
-        ) : null}
       </div>
     </AppShell>
   );

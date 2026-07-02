@@ -67,6 +67,99 @@ You receive text extracted from a PDF invoice. Treat this like a real invoice on
 - "lineItems" must always be an array (empty only if the invoice truly has no itemised charges).
 - Dates must be ISO 8601 (YYYY-MM-DD).`;
 
+export const SUPPLIER_FROM_EMAIL_JSON_SCHEMA = `{
+  "candidates": [
+    {
+      "company": "string or null — the supplier/carrier company name",
+      "senderEmail": "string or null — email address for this supplier (From, Reply-To, billing, or accounts)",
+      "contactName": "string or null — specific person at this supplier, if identifiable",
+      "domain": "string or null — email domain for this supplier (e.g. acme.com)",
+      "label": "string — short UI label, e.g. Invoice issuer: CouriersPlease",
+      "source": "invoice_issuer | email_sender | forwarder | signature | remit_to | other",
+      "confidence": "high | medium | low",
+      "reasoning": "string or null — one sentence explaining why this is a plausible supplier"
+    }
+  ],
+  "recommendedIndex": "integer — 0-based index of the best supplier candidate for invoice processing"
+}` as const;
+
+export const SUPPLIER_FROM_EMAIL_SYSTEM_PROMPT = `You are in accounts payable setting up a new supplier from an email conversation thread.
+
+Review the ENTIRE thread — all messages in chronological order — not just the latest message. Transport and logistics emails are often forwarded: the person who sent the email to us may be a broker or freight forwarder, while the actual invoice supplier is named in the forwarded content or attachment text.
+
+## Your objectives
+1. Identify every distinct organisation that could reasonably be set up as the supplier for invoices in this thread.
+2. For each candidate, extract company name, contact email, contact person, and email domain.
+3. Rank candidates and set recommendedIndex to the organisation most likely to be the invoice issuer (not our company, not the customer we bill, and usually not the forwarder unless they are clearly the billing party).
+
+## Common patterns
+- Forwarded invoice: include BOTH the forwarder (email sender) AND the invoice issuer (named in the forwarded body/PDF text) as separate candidates.
+- Direct supplier email: usually one high-confidence candidate from the sender.
+- Broker sending on behalf of carrier: include the carrier as invoice_issuer and the broker as forwarder.
+
+## Field rules
+- "company" is the supplier/carrier organisation — never our company or a customer we bill.
+- "senderEmail" is the best email to associate with that supplier (billing@, accounts@, From, or Reply-To as appropriate).
+- "contactName" is a person's name when clearly identifiable; null for generic mailboxes.
+- "domain" is the part after @ in senderEmail, or the supplier's known email domain.
+- Use null for fields that cannot be determined reliably — do not invent values.
+- Return at least one candidate when any supplier can be inferred; return multiple when the thread is ambiguous.
+
+## Output format
+- Respond with a single JSON object only — no markdown, no commentary outside JSON.
+- candidates must be ordered from most to least likely as the invoice supplier.
+- recommendedIndex must point at your best pick for invoice processing.`;
+
+export type SupplierFromEmailThreadMessage = {
+  id: string;
+  direction: "INBOUND" | "OUTBOUND";
+  fromName: string | null;
+  fromEmail: string | null;
+  toEmails: string[];
+  ccEmails: string[];
+  subject: string | null;
+  receivedAt: string | null;
+  body: string;
+};
+
+export function buildSupplierFromEmailUserPrompt(params: {
+  messages: SupplierFromEmailThreadMessage[];
+  focusMessageId?: string;
+}) {
+  const threadBlocks = params.messages.map((message, index) => {
+    const headerLines = [
+      message.fromEmail
+        ? `From: ${message.fromName ? `${message.fromName} <${message.fromEmail}>` : message.fromEmail}`
+        : null,
+      message.toEmails.length > 0 ? `To: ${message.toEmails.join(", ")}` : null,
+      message.ccEmails.length > 0 ? `Cc: ${message.ccEmails.join(", ")}` : null,
+      message.subject ? `Subject: ${message.subject}` : null,
+      message.receivedAt ? `Date: ${message.receivedAt}` : null,
+    ].filter(Boolean);
+
+    const focusNote =
+      params.focusMessageId === message.id
+        ? "\n(This is the message the user selected when opening create supplier.)"
+        : "";
+
+    return `--- Message ${index + 1} (${message.direction})${focusNote} ---
+${headerLines.join("\n")}
+
+Body:
+"""
+${message.body}
+"""`;
+  });
+
+  return `Extract supplier setup details from this email thread.
+
+Return JSON matching this schema exactly:
+${SUPPLIER_FROM_EMAIL_JSON_SCHEMA}
+
+Email thread (${params.messages.length} message${params.messages.length === 1 ? "" : "s"}, oldest to newest):
+${threadBlocks.join("\n\n")}`;
+}
+
 export function buildInvoiceExtractionUserPrompt(
   fileName: string,
   invoiceText: string,

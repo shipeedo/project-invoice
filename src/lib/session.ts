@@ -2,6 +2,8 @@ import { auth } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import type { UserRole } from "@/lib/db/types";
 
+export { formatCurrency, formatDate } from "@/lib/format";
+
 export async function requireSession() {
   const session = await auth();
   if (!session?.user?.id) {
@@ -16,23 +18,6 @@ export async function requireRole(allowed: UserRole[]) {
     redirect("/");
   }
   return session;
-}
-
-export function formatCurrency(amount: number | null | undefined, currency = "AUD") {
-  if (amount == null) return "—";
-  return new Intl.NumberFormat("en-AU", {
-    style: "currency",
-    currency,
-  }).format(amount);
-}
-
-export function formatDate(value: Date | string | null | undefined) {
-  if (!value) return "—";
-  const date = typeof value === "string" ? new Date(value) : value;
-  return new Intl.DateTimeFormat("en-AU", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(date);
 }
 
 export function statusLabel(status: string) {
