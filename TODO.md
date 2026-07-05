@@ -2,8 +2,8 @@
 
 Track remaining work before production launch.
 
-- [ ] **Users**
-- [ ] **Xero/MYOB links**
+- [x] **Users**
+- [x] **Xero/MYOB links** — Xero DownloadPdf links fetched from email body; MYOB uses PDF attachments
 - [ ] **Automatic invoice ingestion**
 - [ ] **Supplier trading terms**
 - [ ] **Fix navigation**

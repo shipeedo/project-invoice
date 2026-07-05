@@ -12,6 +12,10 @@ import {
 } from "@/lib/db";
 import { htmlToPlainText } from "@/lib/email-body";
 import {
+  emailHasProcessableInvoiceSource,
+  fetchPortalInvoicePdfAttachment,
+} from "@/lib/invoice-portals";
+import {
   extractInvoiceFromEmailBody,
   extractInvoiceFromPdf,
   parseInvoiceDate,
@@ -57,10 +61,54 @@ function extractSenderName(message: GraphMessage) {
 
 function extractEmailBody(message: GraphMessage) {
   const content = message.body?.content ?? "";
-  if (message.body?.contentType?.toLowerCase() === "html") {
-    return { html: content, text: message.bodyPreview ?? null };
+  const contentType = message.body?.contentType?.toLowerCase();
+
+  if (contentType === "html" && content) {
+    return { html: content, text: null };
   }
-  return { html: null, text: content || message.bodyPreview || null };
+
+  if (content) {
+    return { html: null, text: content };
+  }
+
+  return { html: null, text: message.bodyPreview ?? null };
+}
+
+type EmailBodyContent = {
+  html: string | null;
+  text: string | null;
+};
+
+function resolveEmailBodyText(emailBody: EmailBodyContent) {
+  return emailBody.text?.trim() || (emailBody.html ? htmlToPlainText(emailBody.html) : null);
+}
+
+async function appendPortalPdfIfNeeded(params: {
+  savedAttachments: SavedAttachment[];
+  emailBody: EmailBodyContent;
+}) {
+  const hasPdfAttachment = params.savedAttachments.some((attachment) =>
+    isPdfAttachment(attachment.fileName, attachment.mimeType),
+  );
+  if (hasPdfAttachment) {
+    return { portalFetchError: null as string | null, portalSourceUrl: null as string | null };
+  }
+
+  const outcome = await fetchPortalInvoicePdfAttachment({
+    bodyHtml: params.emailBody.html,
+    bodyText: params.emailBody.text,
+  });
+
+  if (!outcome) {
+    return { portalFetchError: null, portalSourceUrl: null };
+  }
+
+  if ("error" in outcome) {
+    return { portalFetchError: outcome.error, portalSourceUrl: outcome.sourceUrl };
+  }
+
+  params.savedAttachments.push(outcome.attachment);
+  return { portalFetchError: null, portalSourceUrl: outcome.attachment.sourceUrl };
 }
 
 async function resolveSupplierFromExtraction(
@@ -86,6 +134,7 @@ export async function processEmailInvoice(params: {
   organizationId: string;
   message: GraphMessage;
   attachments: EmailAttachmentInput[];
+  emailBody?: EmailBodyContent;
 }) {
   const existing = await db.query.processedO365Messages.findFirst({
     where: and(
@@ -98,7 +147,15 @@ export async function processEmailInvoice(params: {
     return { skipped: true as const, reason: "already_processed" as const };
   }
 
-  if (params.attachments.length === 0) {
+  const emailBody = params.emailBody ?? extractEmailBody(params.message);
+
+  if (
+    !emailHasProcessableInvoiceSource({
+      attachmentCount: params.attachments.length,
+      bodyHtml: emailBody.html,
+      bodyText: emailBody.text,
+    })
+  ) {
     await db.insert(processedO365Messages).values({
       organizationId: params.organizationId,
       messageId: params.message.id,
@@ -111,7 +168,7 @@ export async function processEmailInvoice(params: {
 
   const senderEmail = extractSenderEmail(params.message);
   const senderName = extractSenderName(params.message);
-  const emailBody = extractEmailBody(params.message);
+  const bodyText = resolveEmailBodyText(emailBody);
   const receivedAt = params.message.receivedDateTime
     ? new Date(params.message.receivedDateTime)
     : new Date();
@@ -128,7 +185,7 @@ export async function processEmailInvoice(params: {
       emailFromName: senderName,
       emailReceivedAt: receivedAt,
       emailBodyHtml: emailBody.html,
-      emailBodyText: emailBody.text,
+      emailBodyText: emailBody.text ?? bodyText,
       vendorEmail: senderEmail,
     })
     .returning();
@@ -168,13 +225,20 @@ export async function processEmailInvoice(params: {
     });
   }
 
-  const pdfAttachment =
+  const { portalFetchError, portalSourceUrl } = await appendPortalPdfIfNeeded({
+    savedAttachments,
+    emailBody,
+  });
+
+  const resolvedPdfAttachment =
     savedAttachments.find((attachment) =>
       isPdfAttachment(attachment.fileName, attachment.mimeType),
-    ) ?? savedAttachments[0];
+    ) ?? null;
 
-  if (pdfAttachment) {
-    pdfAttachment.isPrimary = true;
+  if (resolvedPdfAttachment) {
+    for (const attachment of savedAttachments) {
+      attachment.isPrimary = attachment === resolvedPdfAttachment;
+    }
   }
 
   if (savedAttachments.length > 0) {
@@ -190,23 +254,23 @@ export async function processEmailInvoice(params: {
     );
   }
 
-  let extraction = pdfAttachment
+  let extraction = resolvedPdfAttachment
     ? await extractInvoiceFromPdf(
-        pdfAttachment.filePath,
-        pdfAttachment.fileName,
+        resolvedPdfAttachment.filePath,
+        resolvedPdfAttachment.fileName,
         undefined,
         {
           subject: params.message.subject,
           fromEmail: senderEmail,
           fromName: senderName,
-          bodyText: emailBody.text ?? (emailBody.html ? htmlToPlainText(emailBody.html) : null),
+          bodyText,
         },
       )
     : {
         data: null,
         raw: null,
         fieldCandidates: null,
-        error: "No processable attachment found",
+        error: portalFetchError ?? "No processable attachment found",
       };
 
   const supplier = extraction.data
@@ -218,23 +282,21 @@ export async function processEmailInvoice(params: {
         vendorEmail: senderEmail ?? undefined,
       });
 
-  if (supplier && pdfAttachment) {
+  if (supplier && resolvedPdfAttachment) {
     const supplierContext = await getSupplierExtractionContext(
       params.organizationId,
       supplier.id,
     );
     if (supplierHasCustomExtraction(supplierContext)) {
       extraction = await extractInvoiceFromPdf(
-        pdfAttachment.filePath,
-        pdfAttachment.fileName,
+        resolvedPdfAttachment.filePath,
+        resolvedPdfAttachment.fileName,
         supplierContext,
         {
           subject: params.message.subject,
           fromEmail: senderEmail,
           fromName: senderName,
-          bodyText: emailBody.text ?? emailBody.html
-            ? htmlToPlainText(emailBody.html ?? "")
-            : null,
+          bodyText,
         },
       );
     }
@@ -257,9 +319,9 @@ export async function processEmailInvoice(params: {
   const [updatedInvoice] = await db
     .update(invoices)
     .set({
-      originalFileName: pdfAttachment?.fileName ?? savedAttachments[0]?.fileName,
-      filePath: pdfAttachment?.filePath ?? savedAttachments[0]?.filePath,
-      fileMimeType: pdfAttachment?.mimeType ?? savedAttachments[0]?.mimeType,
+      originalFileName: resolvedPdfAttachment?.fileName ?? savedAttachments[0]?.fileName,
+      filePath: resolvedPdfAttachment?.filePath ?? savedAttachments[0]?.filePath,
+      fileMimeType: resolvedPdfAttachment?.mimeType ?? savedAttachments[0]?.mimeType,
       vendorName: extraction.data?.vendorName,
       vendorEmail: extraction.data?.vendorEmail ?? senderEmail,
       invoiceNumber: extraction.data?.invoiceNumber,
@@ -273,7 +335,7 @@ export async function processEmailInvoice(params: {
         ? JSON.stringify(fieldCandidates)
         : null,
       extractionRaw: extraction.raw ? JSON.stringify(extraction.raw) : null,
-      parseError: extraction.error ?? null,
+      parseError: extraction.error ?? portalFetchError ?? null,
       supplierId: supplier?.id ?? null,
       status: "DRAFT",
       updatedAt: new Date(),
@@ -286,8 +348,9 @@ export async function processEmailInvoice(params: {
     action: extraction.error ? "invoice.parse_failed" : "invoice.extracted",
     details: {
       sourceType: "EMAIL",
-      parseError: extraction.error,
+      parseError: extraction.error ?? portalFetchError,
       attachmentCount: savedAttachments.length,
+      portalSourceUrl,
     },
   });
 
@@ -337,13 +400,23 @@ async function runInvoiceExtraction(params: {
     bodyText,
   };
 
+  const { portalFetchError, portalSourceUrl } = await appendPortalPdfIfNeeded({
+    savedAttachments: params.savedAttachments,
+    emailBody: {
+      html: params.emailContext.bodyHtml ?? null,
+      text: params.emailContext.bodyText ?? null,
+    },
+  });
+
   const pdfAttachment =
     params.savedAttachments.find((attachment) =>
       isPdfAttachment(attachment.fileName, attachment.mimeType),
     ) ?? null;
 
   if (pdfAttachment) {
-    pdfAttachment.isPrimary = true;
+    for (const attachment of params.savedAttachments) {
+      attachment.isPrimary = attachment === pdfAttachment;
+    }
   } else if (params.savedAttachments[0]) {
     params.savedAttachments[0].isPrimary = true;
   }
@@ -379,7 +452,7 @@ async function runInvoiceExtraction(params: {
           data: null,
           raw: null,
           fieldCandidates: null,
-          error: "No PDF attachment or email body to extract from",
+          error: portalFetchError ?? "No PDF attachment or email body to extract from",
         };
 
   const senderEmail = params.emailContext.fromEmail;
@@ -427,6 +500,8 @@ async function runInvoiceExtraction(params: {
     fieldCandidates,
     primaryAttachment,
     supplier: resolvedSupplier,
+    portalFetchError,
+    portalSourceUrl,
   };
 }
 
@@ -483,8 +558,14 @@ export async function processMailboxMessageInvoice(params: {
     message.bodyText?.trim() ||
     (message.bodyHtml ? htmlToPlainText(message.bodyHtml) : null);
 
-  if (fileAttachments.length === 0 && !bodyText) {
-    return { error: "Message has no body or attachments to extract from" as const };
+  if (
+    !emailHasProcessableInvoiceSource({
+      attachmentCount: fileAttachments.length,
+      bodyHtml: message.bodyHtml,
+      bodyText: message.bodyText ?? bodyText,
+    })
+  ) {
+    return { error: "Message has no body, attachments, or invoice portal link to extract from" as const };
   }
 
   await ensureDefaultRoutingRules(params.organizationId);
@@ -526,7 +607,7 @@ export async function processMailboxMessageInvoice(params: {
     isPrimary: false,
   }));
 
-  const { extraction, lineItems, fieldCandidates, primaryAttachment, supplier } =
+  const { extraction, lineItems, fieldCandidates, primaryAttachment, supplier, portalFetchError, portalSourceUrl } =
     await runInvoiceExtraction({
       organizationId: params.organizationId,
       savedAttachments,
@@ -570,7 +651,7 @@ export async function processMailboxMessageInvoice(params: {
       lineItems: lineItems.length > 0 ? JSON.stringify(lineItems) : null,
       extractionCandidates: fieldCandidates ? JSON.stringify(fieldCandidates) : null,
       extractionRaw: extraction.raw ? JSON.stringify(extraction.raw) : null,
-      parseError: extraction.error ?? null,
+      parseError: extraction.error ?? portalFetchError ?? null,
       supplierId: supplier?.id ?? message.supplierId,
       status: "DRAFT",
       updatedAt: new Date(),
@@ -583,9 +664,10 @@ export async function processMailboxMessageInvoice(params: {
     action: extraction.error ? "invoice.parse_failed" : "invoice.extracted",
     details: {
       sourceType: "EMAIL",
-      parseError: extraction.error,
+      parseError: extraction.error ?? portalFetchError,
       attachmentCount: savedAttachments.length,
       triggeredBy: "manual",
+      portalSourceUrl,
     },
   });
 

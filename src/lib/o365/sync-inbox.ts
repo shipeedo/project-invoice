@@ -12,6 +12,7 @@ import {
   linkSupplierToThreadsAndMessages,
   resolveSupplierIdFromInboundMessage,
 } from "@/lib/email-contacts";
+import { emailHasProcessableInvoiceSource } from "@/lib/invoice-portals";
 import { getValidAccessToken, updateO365Mailbox, resolveGraphMailboxUser } from "@/lib/o365/connection";
 import {
   downloadFileAttachment,
@@ -366,38 +367,52 @@ async function tryProcessInvoiceFromMessage(params: {
   mailbox: string;
   message: GraphMessage;
   dbMessageId: string;
+  bodyHtml?: string | null;
+  bodyText?: string | null;
 }) {
-  if (!params.message.hasAttachments) {
+  if (
+    !emailHasProcessableInvoiceSource({
+      attachmentCount: params.message.hasAttachments ? 1 : 0,
+      bodyHtml: params.bodyHtml,
+      bodyText: params.bodyText,
+    })
+  ) {
     return { skipped: true as const, reason: "no_attachments" as const };
   }
 
-  const attachmentList = await listMessageAttachments({
-    accessToken: params.accessToken,
-    mailbox: params.mailbox,
-    messageId: params.message.id,
-  });
-
   const attachments = [];
-  for (const attachment of attachmentList.value) {
-    if (!attachment.id || !attachment.name) continue;
-    const downloaded = await downloadFileAttachment({
+  if (params.message.hasAttachments) {
+    const attachmentList = await listMessageAttachments({
       accessToken: params.accessToken,
       mailbox: params.mailbox,
       messageId: params.message.id,
-      attachmentId: attachment.id,
     });
-    attachments.push({
-      fileName: downloaded.name,
-      mimeType: downloaded.contentType,
-      size: downloaded.size,
-      buffer: downloaded.buffer,
-    });
+
+    for (const attachment of attachmentList.value) {
+      if (!attachment.id || !attachment.name) continue;
+      const downloaded = await downloadFileAttachment({
+        accessToken: params.accessToken,
+        mailbox: params.mailbox,
+        messageId: params.message.id,
+        attachmentId: attachment.id,
+      });
+      attachments.push({
+        fileName: downloaded.name,
+        mimeType: downloaded.contentType,
+        size: downloaded.size,
+        buffer: downloaded.buffer,
+      });
+    }
   }
 
   const outcome = await processEmailInvoice({
     organizationId: params.organizationId,
     message: params.message,
     attachments,
+    emailBody: {
+      html: params.bodyHtml ?? null,
+      text: params.bodyText ?? null,
+    },
   });
 
   if (!outcome.skipped && outcome.invoice) {
@@ -538,8 +553,12 @@ export async function syncOrganizationInbox(
         if (
           synced.isNew &&
           !isOutboundFromMailbox(summary, connection.selectedMailboxUpn) &&
-          summary.hasAttachments &&
-          synced.thread.supplierId
+          synced.thread.supplierId &&
+          emailHasProcessableInvoiceSource({
+            attachmentCount: summary.hasAttachments ? 1 : 0,
+            bodyHtml: synced.message.bodyHtml,
+            bodyText: synced.message.bodyText,
+          })
         ) {
           const invoiceOutcome = await tryProcessInvoiceFromMessage({
             organizationId: connection.organizationId,
@@ -547,6 +566,8 @@ export async function syncOrganizationInbox(
             mailbox: graphMailbox!,
             message: summary,
             dbMessageId: synced.message.id,
+            bodyHtml: synced.message.bodyHtml,
+            bodyText: synced.message.bodyText,
           });
 
           if (!invoiceOutcome.skipped) {
