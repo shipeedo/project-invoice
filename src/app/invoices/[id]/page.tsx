@@ -10,6 +10,14 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
   auditEvents,
   db,
   invoicePayments,
@@ -466,38 +474,53 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
               ) : null}
 
               {payments.length > 0 ? (
-                <ul className="space-y-3 text-sm">
-                  {payments.map((payment) => (
-                    <li key={payment.id} className="border-b pb-3 last:border-0">
-                      <p className="font-medium">
-                        {formatCurrency(payment.amount, invoice.currency ?? "AUD")} on{" "}
-                        {formatDate(payment.paidAt)}
-                      </p>
-                      <p className="text-muted-foreground">
-                        {payment.recordedBy
-                          ? `Recorded by ${payment.recordedBy.name ?? payment.recordedBy.email}`
-                          : "Recorded"}
-                        {payment.note ? ` · ${payment.note}` : ""}
-                      </p>
-                      {payment.transactionRef ? (
-                        /^https?:\/\//.test(payment.transactionRef) ? (
-                          <a
-                            href={payment.transactionRef}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-primary underline underline-offset-2"
-                          >
-                            View accounting transaction
-                          </a>
-                        ) : (
-                          <p className="text-muted-foreground">
-                            Transaction ref: {payment.transactionRef}
-                          </p>
-                        )
-                      ) : null}
-                    </li>
-                  ))}
-                </ul>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Date</TableHead>
+                      <TableHead className="text-right">Amount</TableHead>
+                      <TableHead>Recorded by</TableHead>
+                      <TableHead>Note</TableHead>
+                      <TableHead>Reference</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {payments.map((payment) => (
+                      <TableRow key={payment.id}>
+                        <TableCell>{formatDate(payment.paidAt)}</TableCell>
+                        <TableCell className="text-right font-medium">
+                          {formatCurrency(payment.amount, invoice.currency ?? "AUD")}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {payment.recordedBy
+                            ? (payment.recordedBy.name ?? payment.recordedBy.email)
+                            : "—"}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {payment.note ?? "—"}
+                        </TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {payment.transactionRef ? (
+                            /^https?:\/\//.test(payment.transactionRef) ? (
+                              <a
+                                href={payment.transactionRef}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-primary underline underline-offset-2"
+                              >
+                                View accounting transaction
+                              </a>
+                            ) : (
+                              payment.transactionRef
+                            )
+                          ) : (
+                            "—"
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               ) : (
                 <p className="text-sm text-muted-foreground">No payments recorded yet.</p>
               )}

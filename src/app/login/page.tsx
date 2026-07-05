@@ -31,7 +31,11 @@ export default async function LoginPage({
         <CardContent className="space-y-4">
           {params.error ? (
             <Alert variant="destructive">
-              <AlertDescription>Sign-in failed. Please try again.</AlertDescription>
+              <AlertDescription>
+                {params.error === "AccessDenied"
+                  ? "Your account doesn't have access to Project Invoice. Ask an administrator to add you in the Users section."
+                  : "Sign-in failed. Please try again."}
+              </AlertDescription>
             </Alert>
           ) : null}
 

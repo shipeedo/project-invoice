@@ -8,6 +8,8 @@ declare module "next-auth" {
       role: UserRole;
       organizationId: string;
     };
+    /** OIDC access token for calling the Shipeedo tenant API. */
+    accessToken?: string;
   }
 
   interface User {
@@ -21,5 +23,6 @@ declare module "next-auth/jwt" {
     userId?: string;
     role?: UserRole;
     organizationId?: string;
+    accessToken?: string;
   }
 }

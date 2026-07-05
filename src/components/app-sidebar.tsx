@@ -6,6 +6,7 @@ import {
   MailIcon,
   RouteIcon,
   TruckIcon,
+  UsersIcon,
 } from "lucide-react";
 import type { UserRole } from "@/lib/db/types";
 import { NavMain } from "@/components/nav-main";
@@ -80,6 +81,12 @@ export function AppSidebar({ user, activePath, ...props }: AppSidebarProps) {
           url: "/admin/o365",
           icon: <MailIcon />,
           isActive: activePath === "/admin/o365",
+        },
+        {
+          name: "Users",
+          url: "/admin/users",
+          icon: <UsersIcon />,
+          isActive: activePath === "/admin/users",
         },
       ]
     : [];

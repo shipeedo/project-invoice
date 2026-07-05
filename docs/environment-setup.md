@@ -53,6 +53,14 @@ Discovery: `{OIDC_ISSUER}/.well-known/openid-configuration`
 
 See [auth.md](auth.md).
 
+### Shipeedo tenant API (Users admin section)
+
+| Variable | Secret? | Notes |
+|----------|---------|-------|
+| `TENANT_API_URL` | No | Base URL of the tenant API for `GET /api/core/user/getusers` — set in development only. In production leave unset: calls go to the app's own origin and the load balancer routes `/api` to the tenant service. |
+
+Requests are authenticated with the signed-in admin's OIDC access token, so the tenant directory is unavailable when using mock login (`AUTH_MOCK=true`) — use "Add by email" instead.
+
 ### Microsoft Graph (Connect Office 365)
 
 Platform-level only — powers the admin "Connect Office 365" flow for all tenancies.

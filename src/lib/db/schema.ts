@@ -35,6 +35,9 @@ export const users = sqliteTable("users", {
   role: text("role", { enum: ["ADMIN", "APPROVER", "USER"] })
     .notNull()
     .default("APPROVER"),
+  // Product access is deny-by-default: the auth server may issue a token,
+  // but only users designated by an admin can use the app.
+  hasAccess: integer("has_access", { mode: "boolean" }).notNull().default(false),
   createdAt: timestamp(),
   updatedAt: updatedAt(),
 });
