@@ -120,7 +120,7 @@ export async function processEmailInvoice(params: {
     .insert(invoices)
     .values({
       organizationId: params.organizationId,
-      status: "PROCESSING",
+      status: "DRAFT",
       sourceType: "EMAIL",
       sourceMessageId: params.message.id,
       emailSubject: params.message.subject ?? null,
@@ -265,6 +265,7 @@ export async function processEmailInvoice(params: {
       invoiceNumber: extraction.data?.invoiceNumber,
       invoiceDate: parseInvoiceDate(extraction.data?.invoiceDate),
       dueDate: parseInvoiceDate(extraction.data?.dueDate),
+      respondByDate: parseInvoiceDate(extraction.data?.respondByDate),
       totalAmount: extraction.data?.totalAmount,
       currency: extraction.data?.currency ?? "AUD",
       lineItems: lineItems.length > 0 ? JSON.stringify(lineItems) : null,
@@ -274,7 +275,7 @@ export async function processEmailInvoice(params: {
       extractionRaw: extraction.raw ? JSON.stringify(extraction.raw) : null,
       parseError: extraction.error ?? null,
       supplierId: supplier?.id ?? null,
-      status: extraction.error ? "NEEDS_REVIEW" : "PENDING_VALIDATION",
+      status: "DRAFT",
       updatedAt: new Date(),
     })
     .where(eq(invoices.id, invoice.id))
@@ -492,7 +493,7 @@ export async function processMailboxMessageInvoice(params: {
     .insert(invoices)
     .values({
       organizationId: params.organizationId,
-      status: "PROCESSING",
+      status: "DRAFT",
       sourceType: "EMAIL",
       sourceMessageId: message.graphMessageId,
       emailSubject: message.subject,
@@ -563,6 +564,7 @@ export async function processMailboxMessageInvoice(params: {
       invoiceNumber: extraction.data?.invoiceNumber,
       invoiceDate: parseInvoiceDate(extraction.data?.invoiceDate),
       dueDate: parseInvoiceDate(extraction.data?.dueDate),
+      respondByDate: parseInvoiceDate(extraction.data?.respondByDate),
       totalAmount: extraction.data?.totalAmount,
       currency: extraction.data?.currency ?? "AUD",
       lineItems: lineItems.length > 0 ? JSON.stringify(lineItems) : null,
@@ -570,7 +572,7 @@ export async function processMailboxMessageInvoice(params: {
       extractionRaw: extraction.raw ? JSON.stringify(extraction.raw) : null,
       parseError: extraction.error ?? null,
       supplierId: supplier?.id ?? message.supplierId,
-      status: extraction.error ? "NEEDS_REVIEW" : "PENDING_VALIDATION",
+      status: "DRAFT",
       updatedAt: new Date(),
     })
     .where(eq(invoices.id, invoice.id))

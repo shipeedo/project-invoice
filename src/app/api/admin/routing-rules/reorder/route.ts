@@ -27,12 +27,13 @@ export async function PUT(request: Request) {
   }
 
   const maxPriority = body.orderedIds.length * 10;
-  await db.transaction(async (tx) => {
+  // better-sqlite3 transactions must stay synchronous.
+  db.transaction((tx) => {
     for (const [index, id] of body.orderedIds.entries()) {
-      await tx
-        .update(routingRules)
+      tx.update(routingRules)
         .set({ priority: maxPriority - index * 10, updatedAt: new Date() })
-        .where(eq(routingRules.id, id));
+        .where(eq(routingRules.id, id))
+        .run();
     }
   });
 

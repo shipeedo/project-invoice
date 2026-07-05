@@ -6,6 +6,7 @@ import {
   parseInvoiceDate,
   type ExtractedLineItem,
 } from "@/lib/extraction";
+import { mergeLineItemAssignments } from "@/lib/line-items";
 import type { ExtractionCandidates, ValidatableField } from "@/lib/extraction-types";
 import { assignApproverForInvoice, ensureDefaultRoutingRules } from "@/lib/routing";
 import {
@@ -54,7 +55,7 @@ export async function processUploadedInvoice(params: {
     .insert(invoices)
     .values({
       organizationId: params.organizationId,
-      status: "PROCESSING",
+      status: "DRAFT",
       sourceType: "UPLOAD",
       originalFileName: params.fileName,
       filePath: params.filePath,
@@ -105,6 +106,7 @@ export async function processUploadedInvoice(params: {
       invoiceNumber: extraction.data?.invoiceNumber,
       invoiceDate: parseInvoiceDate(extraction.data?.invoiceDate),
       dueDate: parseInvoiceDate(extraction.data?.dueDate),
+      respondByDate: parseInvoiceDate(extraction.data?.respondByDate),
       totalAmount: extraction.data?.totalAmount,
       currency: extraction.data?.currency ?? "AUD",
       lineItems: extraction.data?.lineItems
@@ -116,7 +118,7 @@ export async function processUploadedInvoice(params: {
       extractionRaw: extraction.raw ? JSON.stringify(extraction.raw) : null,
       parseError: extraction.error ?? null,
       supplierId: supplier?.id ?? null,
-      status: extraction.error ? "NEEDS_REVIEW" : "PENDING_VALIDATION",
+      status: "DRAFT",
       updatedAt: new Date(),
     })
     .where(eq(invoices.id, invoice.id))
@@ -151,6 +153,7 @@ export type ValidateInvoiceInput = {
     invoiceNumber?: string | null;
     invoiceDate?: string | null;
     dueDate?: string | null;
+    respondByDate?: string | null;
     totalAmount?: number | null;
     currency?: string;
   };
@@ -174,7 +177,7 @@ export async function validateInvoice(input: ValidateInvoiceInput) {
     return { error: "Not found" as const };
   }
 
-  if (!["PENDING_VALIDATION", "NEEDS_REVIEW"].includes(invoice.status)) {
+  if (invoice.status !== "DRAFT") {
     return { error: "Invoice is not awaiting validation" as const };
   }
 
@@ -224,6 +227,7 @@ export async function validateInvoice(input: ValidateInvoiceInput) {
         invoiceNumber: input.fields.invoiceNumber?.trim() || undefined,
         invoiceDate: input.fields.invoiceDate || undefined,
         dueDate: input.fields.dueDate || undefined,
+        respondByDate: input.fields.respondByDate || undefined,
         totalAmount:
           input.fields.totalAmount != null
             ? String(input.fields.totalAmount)
@@ -241,13 +245,20 @@ export async function validateInvoice(input: ValidateInvoiceInput) {
       invoiceNumber: input.fields.invoiceNumber?.trim() || null,
       invoiceDate: parseInvoiceDate(input.fields.invoiceDate),
       dueDate: parseInvoiceDate(input.fields.dueDate),
+      respondByDate: parseInvoiceDate(input.fields.respondByDate),
       totalAmount: input.fields.totalAmount ?? null,
       currency: input.fields.currency?.trim().toUpperCase() || "AUD",
-      lineItems: input.lineItems ? JSON.stringify(input.lineItems) : invoice.lineItems,
+      lineItems: input.lineItems
+        ? JSON.stringify(
+            mergeLineItemAssignments(
+              invoice.lineItems ? (JSON.parse(invoice.lineItems) as ExtractedLineItem[]) : [],
+              input.lineItems,
+            ),
+          )
+        : invoice.lineItems,
       supplierId,
       validatedAt: new Date(),
       validatedById: input.userId,
-      status: "PENDING_APPROVAL",
       updatedAt: new Date(),
     })
     .where(eq(invoices.id, input.invoiceId))
@@ -262,7 +273,8 @@ export async function validateInvoice(input: ValidateInvoiceInput) {
     .update(invoices)
     .set({
       assignedToId: approver?.id ?? null,
-      status: approver ? "PENDING_APPROVAL" : "NEEDS_REVIEW",
+      // An invoice only leaves DRAFT once it has an assignee.
+      status: approver ? "PENDING_APPROVAL" : "DRAFT",
       updatedAt: new Date(),
     })
     .where(eq(invoices.id, input.invoiceId))

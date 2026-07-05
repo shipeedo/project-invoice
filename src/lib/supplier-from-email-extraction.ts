@@ -4,6 +4,11 @@ import {
   type SupplierFromEmailThreadMessage,
 } from "@/lib/extraction-prompts";
 import { callAiChatCompletion } from "@/lib/ai-chat";
+import {
+  isForwardedEmailBody,
+  resolvePlainEmailBody,
+  splitEmailThread,
+} from "@/lib/email-body";
 import { parseJsonContent } from "@/lib/extraction";
 import type { MailboxMessage } from "@/lib/db";
 
@@ -41,31 +46,87 @@ function parseEmailList(value: string | null | undefined): string[] {
   }
 }
 
-function htmlToPlainText(html: string): string {
-  return html
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/p>/gi, "\n")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/\s+\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .replace(/[ \t]+/g, " ")
-    .trim();
+function resolveEmailBody(message: MailboxMessage): string {
+  return resolvePlainEmailBody({
+    bodyHtml: message.bodyHtml,
+    bodyText: message.bodyText,
+  });
 }
 
-function resolveEmailBody(message: MailboxMessage): string {
-  if (message.bodyText?.trim()) {
-    return message.bodyText.trim();
+function expandMessageIntoThreadParts(
+  message: MailboxMessage,
+  body: string,
+): SupplierFromEmailThreadMessage[] {
+  if (!isForwardedEmailBody(body)) {
+    return [
+      {
+        id: message.id,
+        direction: message.direction,
+        fromName: message.fromName,
+        fromEmail: message.fromEmail,
+        toEmails: parseEmailList(message.toEmails),
+        ccEmails: parseEmailList(message.ccEmails),
+        subject: message.subject,
+        receivedAt: message.receivedAt
+          ? new Date(message.receivedAt).toISOString()
+          : null,
+        body: body || "(No message body)",
+      },
+    ];
   }
-  if (message.bodyHtml?.trim()) {
-    return htmlToPlainText(message.bodyHtml);
+
+  const parts = splitEmailThread(body);
+  if (parts.length <= 1) {
+    return [
+      {
+        id: message.id,
+        direction: message.direction,
+        fromName: message.fromName,
+        fromEmail: message.fromEmail,
+        toEmails: parseEmailList(message.toEmails),
+        ccEmails: parseEmailList(message.ccEmails),
+        subject: message.subject,
+        receivedAt: message.receivedAt
+          ? new Date(message.receivedAt).toISOString()
+          : null,
+        body: body || "(No message body)",
+      },
+    ];
   }
-  return "";
+
+  return parts.map((part, index) => ({
+    id: `${message.id}:part-${index}`,
+    direction: message.direction,
+    fromName:
+      part.source === "wrapper" ? message.fromName : part.fromName ?? message.fromName,
+    fromEmail:
+      part.source === "wrapper" ? message.fromEmail : part.fromEmail ?? message.fromEmail,
+    toEmails:
+      part.source === "wrapper"
+        ? parseEmailList(message.toEmails)
+        : part.toEmails.length > 0
+          ? part.toEmails
+          : parseEmailList(message.toEmails),
+    ccEmails:
+      part.source === "wrapper"
+        ? parseEmailList(message.ccEmails)
+        : part.ccEmails.length > 0
+          ? part.ccEmails
+          : parseEmailList(message.ccEmails),
+    subject:
+      part.source === "wrapper"
+        ? message.subject
+        : part.subject ?? message.subject,
+    receivedAt:
+      part.source === "wrapper"
+        ? message.receivedAt
+          ? new Date(message.receivedAt).toISOString()
+          : null
+        : part.date ?? (message.receivedAt
+          ? new Date(message.receivedAt).toISOString()
+          : null),
+    body: part.body || "(No message body)",
+  }));
 }
 
 function normalizeEmail(value: unknown): string | null {
@@ -134,40 +195,36 @@ function buildThreadMessages(
   for (const message of sorted) {
     if (remainingChars <= 0) break;
 
-    const body = resolveEmailBody(message).slice(0, remainingChars);
-    remainingChars -= body.length;
+    const body = resolveEmailBody(message);
+    const expanded = expandMessageIntoThreadParts(message, body);
 
-    threadMessages.push({
-      id: message.id,
-      direction: message.direction,
-      fromName: message.fromName,
-      fromEmail: message.fromEmail,
-      toEmails: parseEmailList(message.toEmails),
-      ccEmails: parseEmailList(message.ccEmails),
-      subject: message.subject,
-      receivedAt: message.receivedAt
-        ? new Date(message.receivedAt).toISOString()
-        : null,
-      body: body || "(No message body)",
-    });
+    for (const part of expanded) {
+      if (remainingChars <= 0) break;
+
+      const partBody = part.body.slice(0, remainingChars);
+      remainingChars -= partBody.length;
+
+      threadMessages.push({
+        ...part,
+        body: partBody || "(No message body)",
+      });
+    }
   }
 
-  if (focusMessageId && !threadMessages.some((message) => message.id === focusMessageId)) {
+  if (focusMessageId && !threadMessages.some((message) => message.id.startsWith(focusMessageId))) {
     const focusMessage = sorted.find((message) => message.id === focusMessageId);
     if (focusMessage) {
-      threadMessages.push({
-        id: focusMessage.id,
-        direction: focusMessage.direction,
-        fromName: focusMessage.fromName,
-        fromEmail: focusMessage.fromEmail,
-        toEmails: parseEmailList(focusMessage.toEmails),
-        ccEmails: parseEmailList(focusMessage.ccEmails),
-        subject: focusMessage.subject,
-        receivedAt: focusMessage.receivedAt
-          ? new Date(focusMessage.receivedAt).toISOString()
-          : null,
-        body: resolveEmailBody(focusMessage).slice(0, MAX_THREAD_CHARS) || "(No message body)",
-      });
+      const expanded = expandMessageIntoThreadParts(
+        focusMessage,
+        resolveEmailBody(focusMessage),
+      );
+
+      for (const part of expanded) {
+        threadMessages.push({
+          ...part,
+          body: part.body.slice(0, MAX_THREAD_CHARS) || "(No message body)",
+        });
+      }
     }
   }
 

@@ -2,25 +2,27 @@ import { ExternalLinkIcon, FileTextIcon } from "lucide-react";
 import { and, asc, desc, eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
-import { CreditRequestForm } from "@/components/credit-request-form";
-import { InvoiceActions } from "@/components/invoice-actions";
+import { InvoiceHeaderActions } from "@/components/invoice-header-actions";
+import { InvoiceLineItemsTable } from "@/components/invoice-line-items-table";
 import { InvoiceValidationPanel } from "@/components/invoice-validation-panel";
 import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { auditEvents, db, invoices, notes, suppliers } from "@/lib/db";
-import { htmlToPlainText } from "@/lib/email-body";
+  auditEvents,
+  db,
+  invoicePayments,
+  invoices,
+  mailboxMessages,
+  notes,
+  suppliers,
+  users,
+} from "@/lib/db";
+import { describeAuditEvent } from "@/lib/audit-log";
 import { parseExtractionCandidates } from "@/lib/extraction-types";
-import type { ExtractedLineItem } from "@/lib/extraction";
+import { isExtractionPending, outstandingAmount } from "@/lib/invoice-status";
+import { parseLineItems, canDecideLineItems } from "@/lib/line-items";
 import { requireSession, formatCurrency, formatDate } from "@/lib/session";
 import { cn } from "@/lib/utils";
 
@@ -73,17 +75,15 @@ function getSourceAttachments(invoice: {
   return [];
 }
 
-const BOILERPLATE_EMAIL_BODY =
-  /^(see attachment\.?|see attached\.?|please see attached\.?|please find attached\.?|find attached\.?|attached\.?|file attached\.?)$/i;
-
-function isBoilerplateEmailBody(
-  bodyText: string | null | undefined,
-  bodyHtml: string | null | undefined,
-) {
-  const text = (bodyText ?? (bodyHtml ? htmlToPlainText(bodyHtml) : "")).trim();
-  if (!text) return true;
-  if (BOILERPLATE_EMAIL_BODY.test(text)) return true;
-  return text.length <= 40 && /\battach(ed|ment)?\b/i.test(text);
+function formatEmailRecipients(raw: string | null | undefined) {
+  if (!raw) return "—";
+  try {
+    const emails = JSON.parse(raw) as string[];
+    if (!Array.isArray(emails) || emails.length === 0) return "—";
+    return emails.join(", ");
+  } catch {
+    return "—";
+  }
 }
 
 function fileExtension(fileName: string) {
@@ -158,12 +158,6 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
         with: { user: { columns: { name: true, email: true } } },
         orderBy: desc(auditEvents.createdAt),
       },
-      creditRequests: {
-        with: {
-          createdBy: { columns: { id: true, name: true, email: true } },
-        },
-        orderBy: (requests, { desc: orderDesc }) => [orderDesc(requests.createdAt)],
-      },
     },
   });
 
@@ -177,19 +171,55 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
     orderBy: asc(suppliers.name),
   });
 
-  const lineItems = invoice.lineItems
-    ? (JSON.parse(invoice.lineItems) as ExtractedLineItem[])
-    : [];
+  const orgUsers = await db.query.users.findMany({
+    where: eq(users.organizationId, session.user.organizationId),
+    columns: { id: true, name: true, email: true },
+    orderBy: asc(users.name),
+  });
+
+  const lineItems = parseLineItems(invoice.lineItems);
 
   const candidates = parseExtractionCandidates(invoice.extractionCandidates);
-  const awaitingValidation = ["PENDING_VALIDATION", "NEEDS_REVIEW"].includes(
-    invoice.status,
-  );
+  const awaitingValidation =
+    invoice.status === "DRAFT" && !isExtractionPending(invoice);
+  const canAssignLineItems =
+    lineItems.length > 0 &&
+    !isExtractionPending(invoice) &&
+    !["PAID", "CANCELLED"].includes(invoice.status);
+  const canDecideLineItemsOnInvoice = canDecideLineItems({
+    status: invoice.status,
+    validatedAt: invoice.validatedAt,
+    lineItemCount: lineItems.length,
+  });
+  const invoiceAssignedToLabel = invoice.assignedTo
+    ? (invoice.assignedTo.name ?? invoice.assignedTo.email)
+    : null;
+
+  const payments = await db.query.invoicePayments.findMany({
+    where: eq(invoicePayments.invoiceId, invoice.id),
+    with: { recordedBy: { columns: { name: true, email: true } } },
+    orderBy: desc(invoicePayments.paidAt),
+  });
+
+  const userLabel = (userId: string | null | undefined) => {
+    if (!userId) return null;
+    const user = orgUsers.find((candidate) => candidate.id === userId);
+    return user ? (user.name ?? user.email) : null;
+  };
+
+  const outstanding = outstandingAmount(invoice.totalAmount, invoice.amountPaid);
+  const showPayments =
+    payments.length > 0 || ["APPROVED", "PART_PAID", "PAID"].includes(invoice.status);
 
   const sourceAttachments = getSourceAttachments(invoice);
-  const showEmailBody =
-    invoice.sourceType === "EMAIL" &&
-    !isBoilerplateEmailBody(invoice.emailBodyText, invoice.emailBodyHtml);
+
+  const sourceMessage =
+    invoice.sourceType === "EMAIL"
+      ? await db.query.mailboxMessages.findFirst({
+          where: eq(mailboxMessages.invoiceId, invoice.id),
+          columns: { toEmails: true },
+        })
+      : null;
 
   const sourceCard = (
     <Card className="flex h-full flex-col">
@@ -199,45 +229,34 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
         </CardTitle>
       </CardHeader>
       <CardContent className="flex flex-1 flex-col gap-5">
+        {invoice.sourceType === "EMAIL" ? (
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+            <div>
+              <dt className="text-muted-foreground">From</dt>
+              <dd className="font-medium">
+                {invoice.emailFromName
+                  ? `${invoice.emailFromName} <${invoice.emailFrom ?? ""}>`
+                  : (invoice.emailFrom ?? "—")}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">To</dt>
+              <dd className="font-medium">{formatEmailRecipients(sourceMessage?.toEmails)}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Received</dt>
+              <dd className="font-medium">{formatDate(invoice.emailReceivedAt)}</dd>
+            </div>
+          </dl>
+        ) : null}
+
         {sourceAttachments.length > 0 ? (
           <SourceAttachmentList attachments={sourceAttachments} />
-        ) : null}
-
-        {invoice.sourceType === "EMAIL" ? (
-          <>
-            <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-              <div>
-                <dt className="text-muted-foreground">Subject</dt>
-                <dd className="font-medium">{invoice.emailSubject ?? "—"}</dd>
-              </div>
-              <div>
-                <dt className="text-muted-foreground">From</dt>
-                <dd className="font-medium">
-                  {invoice.emailFromName
-                    ? `${invoice.emailFromName} <${invoice.emailFrom ?? ""}>`
-                    : (invoice.emailFrom ?? "—")}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-muted-foreground">Received</dt>
-                <dd className="font-medium">{formatDate(invoice.emailReceivedAt)}</dd>
-              </div>
-            </dl>
-
-            {showEmailBody && invoice.emailBodyText ? (
-              <div className="min-h-0 flex-1 overflow-y-auto rounded-lg bg-muted/40 p-3 text-sm whitespace-pre-wrap">
-                {invoice.emailBodyText}
-              </div>
-            ) : showEmailBody && invoice.emailBodyHtml ? (
-              <div
-                className="prose prose-sm min-h-0 max-w-none flex-1 overflow-y-auto rounded-lg bg-muted/40 p-3"
-                dangerouslySetInnerHTML={{ __html: invoice.emailBodyHtml }}
-              />
-            ) : null}
-          </>
-        ) : sourceAttachments.length === 0 ? (
+        ) : invoice.sourceType === "EMAIL" ? (
+          <p className="text-sm text-muted-foreground">No attachments available.</p>
+        ) : (
           <p className="text-sm text-muted-foreground">No source file available.</p>
-        ) : null}
+        )}
       </CardContent>
     </Card>
   );
@@ -272,12 +291,46 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
               </p>
             ) : null}
           </div>
-          <StatusBadge status={invoice.status} />
+          <div className="flex shrink-0 flex-col items-end gap-3">
+            <StatusBadge status={invoice.status} />
+            <InvoiceHeaderActions
+              invoiceId={invoice.id}
+              status={invoice.status}
+              validatedAt={invoice.validatedAt}
+              assignedToId={invoice.assignedToId}
+              currentUserId={session.user.id}
+              currentUserRole={session.user.role}
+              totalAmount={invoice.totalAmount}
+              amountPaid={invoice.amountPaid}
+              currency={invoice.currency ?? "AUD"}
+            />
+          </div>
         </div>
 
         {invoice.parseError ? (
           <Alert variant="destructive">
             <AlertDescription>Extraction issue: {invoice.parseError}</AlertDescription>
+          </Alert>
+        ) : null}
+
+        {invoice.status === "ON_HOLD" ? (
+          <Alert>
+            <AlertDescription>
+              On hold since {formatDate(invoice.onHoldAt)}
+              {userLabel(invoice.onHoldById) ? ` by ${userLabel(invoice.onHoldById)}` : ""}
+              {invoice.onHoldReason ? ` — ${invoice.onHoldReason}` : ""}
+            </AlertDescription>
+          </Alert>
+        ) : null}
+
+        {invoice.status === "CANCELLED" ? (
+          <Alert variant="destructive">
+            <AlertDescription>
+              Cancelled {formatDate(invoice.cancelledAt)}
+              {userLabel(invoice.cancelledById)
+                ? ` by ${userLabel(invoice.cancelledById)}`
+                : ""}
+            </AlertDescription>
           </Alert>
         ) : null}
 
@@ -293,6 +346,7 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
                 invoiceNumber: invoice.invoiceNumber ?? "",
                 invoiceDate: toDateInput(invoice.invoiceDate),
                 dueDate: toDateInput(invoice.dueDate),
+                respondByDate: toDateInput(invoice.respondByDate),
                 totalAmount:
                   invoice.totalAmount != null ? String(invoice.totalAmount) : "",
                 currency: invoice.currency ?? "AUD",
@@ -333,6 +387,10 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
                     <dd className="font-medium">{formatDate(invoice.dueDate)}</dd>
                   </div>
                   <div>
+                    <dt className="text-muted-foreground">Respond by</dt>
+                    <dd className="font-medium">{formatDate(invoice.respondByDate)}</dd>
+                  </div>
+                  <div>
                     <dt className="text-muted-foreground">Total</dt>
                     <dd className="font-medium">
                       {formatCurrency(invoice.totalAmount, invoice.currency ?? "AUD")}
@@ -354,59 +412,98 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
             <CardTitle>Line items</CardTitle>
           </CardHeader>
           <CardContent>
-            {lineItems.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No line items extracted.</p>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-12">#</TableHead>
-                    <TableHead>Description</TableHead>
-                    <TableHead>Service</TableHead>
-                    <TableHead>Qty</TableHead>
-                    <TableHead>Unit</TableHead>
-                    <TableHead>Amount</TableHead>
-                    <TableHead>Reference</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {lineItems.map((item, index) => (
-                    <TableRow key={`${item.lineNumber ?? index}-${item.description}`}>
-                      <TableCell>{item.lineNumber ?? index + 1}</TableCell>
-                      <TableCell>{item.description}</TableCell>
-                      <TableCell>{item.serviceType ?? "—"}</TableCell>
-                      <TableCell>{item.quantity ?? "—"}</TableCell>
-                      <TableCell>
-                        {item.unitPrice != null
-                          ? formatCurrency(item.unitPrice, invoice.currency ?? "AUD")
-                          : "—"}
-                      </TableCell>
-                      <TableCell>
-                        {item.amount != null
-                          ? formatCurrency(item.amount, invoice.currency ?? "AUD")
-                          : "—"}
-                      </TableCell>
-                      <TableCell>{item.reference ?? "—"}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
+            <InvoiceLineItemsTable
+              key={`${invoice.id}-${invoice.updatedAt?.toString() ?? "new"}`}
+              invoiceId={invoice.id}
+              lineItems={lineItems}
+              users={orgUsers}
+              invoiceAssignedToId={invoice.assignedToId}
+              invoiceAssignedToLabel={invoiceAssignedToLabel}
+              currency={invoice.currency ?? "AUD"}
+              actionsEnabled={canAssignLineItems}
+              decisionsEnabled={canDecideLineItemsOnInvoice}
+            />
           </CardContent>
         </Card>
 
-        <InvoiceActions
-          invoiceId={invoice.id}
-          status={invoice.status}
-          validatedAt={invoice.validatedAt}
-        />
+        {showPayments ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>Payments</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <dl className="grid grid-cols-3 gap-3 text-sm">
+                <div>
+                  <dt className="text-muted-foreground">Invoice total</dt>
+                  <dd className="font-medium">
+                    {formatCurrency(invoice.totalAmount, invoice.currency ?? "AUD")}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Paid</dt>
+                  <dd className="font-medium">
+                    {formatCurrency(invoice.amountPaid, invoice.currency ?? "AUD")}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Outstanding</dt>
+                  <dd className="font-medium">
+                    {outstanding != null
+                      ? formatCurrency(outstanding, invoice.currency ?? "AUD")
+                      : "—"}
+                  </dd>
+                </div>
+              </dl>
 
-        <CreditRequestForm
-          invoiceId={invoice.id}
-          defaultSubject={`Credit request — ${invoice.vendorName ?? invoice.originalFileName ?? "Invoice"}`}
-          defaultRecipient={invoice.vendorEmail ?? invoice.emailFrom}
-          creditRequests={invoice.creditRequests}
-        />
+              {invoice.status === "PAID" ? (
+                <p className="text-sm text-muted-foreground">
+                  Marked as paid {formatDate(invoice.paidAt)}
+                  {userLabel(invoice.markedPaidById)
+                    ? ` by ${userLabel(invoice.markedPaidById)}`
+                    : ""}
+                  .
+                </p>
+              ) : null}
+
+              {payments.length > 0 ? (
+                <ul className="space-y-3 text-sm">
+                  {payments.map((payment) => (
+                    <li key={payment.id} className="border-b pb-3 last:border-0">
+                      <p className="font-medium">
+                        {formatCurrency(payment.amount, invoice.currency ?? "AUD")} on{" "}
+                        {formatDate(payment.paidAt)}
+                      </p>
+                      <p className="text-muted-foreground">
+                        {payment.recordedBy
+                          ? `Recorded by ${payment.recordedBy.name ?? payment.recordedBy.email}`
+                          : "Recorded"}
+                        {payment.note ? ` · ${payment.note}` : ""}
+                      </p>
+                      {payment.transactionRef ? (
+                        /^https?:\/\//.test(payment.transactionRef) ? (
+                          <a
+                            href={payment.transactionRef}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-primary underline underline-offset-2"
+                          >
+                            View accounting transaction
+                          </a>
+                        ) : (
+                          <p className="text-muted-foreground">
+                            Transaction ref: {payment.transactionRef}
+                          </p>
+                        )
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-muted-foreground">No payments recorded yet.</p>
+              )}
+            </CardContent>
+          </Card>
+        ) : null}
 
         <Card>
           <CardHeader>
@@ -414,15 +511,25 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
           </CardHeader>
           <CardContent>
             <ul className="space-y-3 text-sm">
-              {invoice.auditEvents.map((event) => (
-                <li key={event.id} className="border-b pb-3 last:border-0">
-                  <p className="font-medium">{event.action}</p>
-                  <p className="text-muted-foreground">
-                    {formatDate(event.createdAt)}
-                    {event.user ? ` · ${event.user.name ?? event.user.email}` : ""}
-                  </p>
-                </li>
-              ))}
+              {invoice.auditEvents.map((event) => {
+                const display = describeAuditEvent(
+                  event.action,
+                  event.details,
+                  invoice.currency ?? "AUD",
+                );
+                return (
+                  <li key={event.id} className="border-b pb-3 last:border-0">
+                    <p className="font-medium">{display.label}</p>
+                    {display.description ? (
+                      <p className="text-muted-foreground">{display.description}</p>
+                    ) : null}
+                    <p className="text-muted-foreground">
+                      {formatDate(event.createdAt)}
+                      {event.user ? ` · ${event.user.name ?? event.user.email}` : ""}
+                    </p>
+                  </li>
+                );
+              })}
             </ul>
           </CardContent>
         </Card>

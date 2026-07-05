@@ -27,7 +27,13 @@ export type ExtractedLineItem = {
   amount?: number;
   reference?: string;
   serviceType?: string;
+  /** Explicit assignee override; falls back to invoice-level assignee when unset. */
+  assignedToId?: string | null;
+  /** Approval state for payment; defaults to pending. */
+  status?: LineItemStatus;
 };
+
+export type LineItemStatus = "PENDING" | "APPROVED" | "REJECTED";
 
 export type ExtractedInvoice = {
   vendorName?: string;
@@ -35,6 +41,7 @@ export type ExtractedInvoice = {
   invoiceNumber?: string;
   invoiceDate?: string;
   dueDate?: string;
+  respondByDate?: string;
   totalAmount?: number;
   subtotal?: number;
   taxAmount?: number;
@@ -266,6 +273,7 @@ function normalizeFieldCandidates(
     "invoiceNumber",
     "invoiceDate",
     "dueDate",
+    "respondByDate",
     "totalAmount",
     "currency",
   ] as const) {
@@ -300,6 +308,7 @@ export function normalizeExtractedInvoice(raw: ExtractedInvoice): ExtractedInvoi
     invoiceNumber: raw.invoiceNumber?.trim() || undefined,
     invoiceDate: raw.invoiceDate ?? undefined,
     dueDate: raw.dueDate ?? undefined,
+    respondByDate: raw.respondByDate ?? undefined,
     totalAmount: toNumber(raw.totalAmount),
     subtotal: toNumber(raw.subtotal),
     taxAmount: toNumber(raw.taxAmount),

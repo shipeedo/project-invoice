@@ -40,3 +40,11 @@ export function formatDate(value: Date | string | number | null | undefined) {
     timeStyle: "short",
   }).format(date);
 }
+
+export function statusLabel(status: string) {
+  return status
+    .toLowerCase()
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}

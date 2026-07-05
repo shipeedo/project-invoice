@@ -4,6 +4,7 @@ export const EXTRACTION_JSON_SCHEMA = `{
   "invoiceNumber": "string or null — invoice / tax invoice number",
   "invoiceDate": "ISO 8601 date string (YYYY-MM-DD) or null",
   "dueDate": "ISO 8601 date string (YYYY-MM-DD) or null",
+  "respondByDate": "ISO 8601 date string (YYYY-MM-DD) or null — deadline to respond, dispute, or query the invoice if stated (e.g. 'disputes must be lodged by', 'respond by', 'query within X days')",
   "totalAmount": "number — invoice total / amount due (numeric only, no currency symbols)",
   "subtotal": "number or null — amount before tax if shown separately",
   "taxAmount": "number or null — GST/VAT/tax total if shown separately",
@@ -25,6 +26,7 @@ export const EXTRACTION_JSON_SCHEMA = `{
     "invoiceNumber": [{ "value": "string", "label": "string", "source": "header | footer | other" }],
     "invoiceDate": [{ "value": "YYYY-MM-DD", "label": "string", "source": "header | footer | other" }],
     "dueDate": [{ "value": "YYYY-MM-DD", "label": "string", "source": "header | footer | payment_terms | other" }],
+    "respondByDate": [{ "value": "YYYY-MM-DD", "label": "string", "source": "payment_terms | footer | other" }],
     "totalAmount": [{ "value": "number as string", "label": "string", "source": "summary | footer | other" }],
     "currency": [{ "value": "AUD", "label": "string", "source": "summary | header | other" }]
   },

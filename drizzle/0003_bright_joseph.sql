@@ -1,0 +1,1 @@
+ALTER TABLE `invoices` ADD `respond_by_date` integer;

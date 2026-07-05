@@ -1,15 +1,15 @@
 import { Badge } from "@/components/ui/badge";
-import { statusLabel } from "@/lib/session";
+import { statusLabel } from "@/lib/format";
 
 const variants: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
-  RECEIVED: "secondary",
-  PROCESSING: "outline",
-  PENDING_VALIDATION: "outline",
+  DRAFT: "secondary",
   PENDING_APPROVAL: "outline",
   APPROVED: "default",
-  READY_FOR_PAYMENT: "default",
   REJECTED: "destructive",
-  NEEDS_REVIEW: "destructive",
+  ON_HOLD: "outline",
+  PART_PAID: "default",
+  PAID: "default",
+  CANCELLED: "secondary",
 };
 
 export function StatusBadge({ status }: { status: string }) {

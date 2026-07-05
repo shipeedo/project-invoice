@@ -1,5 +1,12 @@
 import { and, eq, isNull } from "drizzle-orm";
-import { db, emailContacts, suppliers } from "@/lib/db";
+import { db, emailContacts, emailThreads, mailboxMessages, suppliers } from "@/lib/db";
+import {
+  extractReferencedCompanyFromEmail,
+  getEmbeddedSenderFromForwardedBody,
+  isForwardedEmailBody,
+  resolvePlainEmailBody,
+  splitEmailThread,
+} from "@/lib/email-body";
 import {
   buildNewSupplierValues,
   findMatchingSupplier,
@@ -74,6 +81,147 @@ export async function resolveSupplierIdForEmail(
   await upsertEmailContact({ organizationId, email, displayName });
   const supplier = await findMatchingSupplier(organizationId, displayName, email);
   return supplier?.id ?? null;
+}
+
+export async function resolveSupplierIdFromInboundMessage(params: {
+  organizationId: string;
+  fromEmail?: string | null;
+  fromName?: string | null;
+  subject?: string | null;
+  bodyHtml?: string | null;
+  bodyText?: string | null;
+}) {
+  if (!params.fromEmail) return null;
+
+  await upsertEmailContact({
+    organizationId: params.organizationId,
+    email: params.fromEmail,
+    displayName: params.fromName,
+  });
+
+  const body = resolvePlainEmailBody({
+    bodyHtml: params.bodyHtml,
+    bodyText: params.bodyText,
+  });
+
+  if (isForwardedEmailBody(body)) {
+    const referencedCompany = extractReferencedCompanyFromEmail({
+      subject: params.subject,
+      body,
+    });
+
+    if (referencedCompany) {
+      const supplier = await findMatchingSupplier(
+        params.organizationId,
+        referencedCompany,
+        null,
+      );
+      if (supplier) return supplier.id;
+    }
+
+    const normalizedFrom = normalizeEmail(params.fromEmail);
+    const outerDomain = extractDomain(normalizedFrom);
+    const embeddedSenders = splitEmailThread(body)
+      .filter(
+        (part): part is typeof part & { fromEmail: string } =>
+          part.source !== "wrapper" && Boolean(part.fromEmail),
+      )
+      .map((part) => ({
+        fromEmail: part.fromEmail,
+        fromName: part.fromName,
+        domain: extractDomain(part.fromEmail),
+      }))
+      .filter(
+        (sender) =>
+          sender.fromEmail !== normalizedFrom && sender.domain !== outerDomain,
+      );
+
+    for (const sender of embeddedSenders.reverse()) {
+      await upsertEmailContact({
+        organizationId: params.organizationId,
+        email: sender.fromEmail,
+        displayName: sender.fromName,
+      });
+      const supplier = await findMatchingSupplier(
+        params.organizationId,
+        sender.fromName,
+        sender.fromEmail,
+      );
+      if (supplier) return supplier.id;
+    }
+
+    const embedded = getEmbeddedSenderFromForwardedBody(body);
+    if (embedded.fromEmail && embedded.fromEmail !== normalizedFrom) {
+      await upsertEmailContact({
+        organizationId: params.organizationId,
+        email: embedded.fromEmail,
+        displayName: embedded.fromName,
+      });
+      const supplier = await findMatchingSupplier(
+        params.organizationId,
+        embedded.fromName,
+        embedded.fromEmail,
+      );
+      if (supplier) return supplier.id;
+    }
+
+    return null;
+  }
+
+  const supplier = await findMatchingSupplier(
+    params.organizationId,
+    params.fromName,
+    params.fromEmail,
+  );
+  return supplier?.id ?? null;
+}
+
+export async function applySupplierLinkToMessage(params: {
+  organizationId: string;
+  messageId: string;
+  threadId: string;
+  fromEmail?: string | null;
+  fromName?: string | null;
+  subject?: string | null;
+  bodyHtml?: string | null;
+  bodyText?: string | null;
+  currentSupplierId?: string | null;
+}) {
+  const supplierId = await resolveSupplierIdFromInboundMessage({
+    organizationId: params.organizationId,
+    fromEmail: params.fromEmail,
+    fromName: params.fromName,
+    subject: params.subject,
+    bodyHtml: params.bodyHtml,
+    bodyText: params.bodyText,
+  });
+
+  if (!supplierId || supplierId === params.currentSupplierId) {
+    return supplierId;
+  }
+
+  await db
+    .update(mailboxMessages)
+    .set({ supplierId })
+    .where(
+      and(
+        eq(mailboxMessages.id, params.messageId),
+        eq(mailboxMessages.organizationId, params.organizationId),
+      ),
+    );
+
+  await db
+    .update(emailThreads)
+    .set({ supplierId, updatedAt: new Date() })
+    .where(
+      and(
+        eq(emailThreads.id, params.threadId),
+        eq(emailThreads.organizationId, params.organizationId),
+        isNull(emailThreads.supplierId),
+      ),
+    );
+
+  return supplierId;
 }
 
 export async function getSupplierSuggestions(organizationId: string) {

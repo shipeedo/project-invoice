@@ -22,6 +22,7 @@ export async function POST(request: Request, context: RouteContext) {
       invoiceNumber?: string | null;
       invoiceDate?: string | null;
       dueDate?: string | null;
+      respondByDate?: string | null;
       totalAmount?: number | null;
       currency?: string;
     };

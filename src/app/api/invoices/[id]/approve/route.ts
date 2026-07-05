@@ -3,6 +3,8 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db, invoices, notes } from "@/lib/db";
 import { recordAuditEvent } from "@/lib/audit";
+import { APPROVABLE_STATUSES } from "@/lib/invoice-status";
+import { parseLineItems, setAllLineItemStatuses } from "@/lib/line-items";
 
 type RouteContext = {
   params: Promise<{ id: string }>;
@@ -28,7 +30,7 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  if (!["PENDING_APPROVAL", "NEEDS_REVIEW"].includes(invoice.status)) {
+  if (!APPROVABLE_STATUSES.includes(invoice.status)) {
     return NextResponse.json(
       { error: "Invoice cannot be approved in its current status" },
       { status: 400 },
@@ -42,29 +44,40 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const updated = await db.transaction(async (tx) => {
+  const lineItems = parseLineItems(invoice.lineItems);
+  const updatedLineItems = setAllLineItemStatuses(lineItems, "APPROVED");
+
+  // better-sqlite3 transactions must stay synchronous.
+  const updated = db.transaction((tx) => {
     if (body.note?.trim()) {
-      await tx.insert(notes).values({
-        invoiceId: id,
-        userId: session.user.id,
-        content: body.note.trim(),
-      });
+      tx.insert(notes)
+        .values({
+          invoiceId: id,
+          userId: session.user.id,
+          content: body.note.trim(),
+        })
+        .run();
     }
 
-    const [row] = await tx
+    return tx
       .update(invoices)
-      .set({ status: "APPROVED", updatedAt: new Date() })
+      .set({
+        status: "APPROVED",
+        // Approving an unrouted draft assigns it to the approver.
+        assignedToId: invoice.assignedToId ?? session.user.id,
+        lineItems: JSON.stringify(updatedLineItems),
+        updatedAt: new Date(),
+      })
       .where(eq(invoices.id, id))
-      .returning();
-
-    return row;
+      .returning()
+      .get();
   });
 
   await recordAuditEvent({
     invoiceId: id,
     userId: session.user.id,
     action: "invoice.approved",
-    details: { note: body.note?.trim() },
+    details: { note: body.note?.trim(), lineItemCount: lineItems.length },
   });
 
   return NextResponse.json(updated);

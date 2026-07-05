@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { ChevronDownIcon, PencilIcon, PlusIcon } from "lucide-react";
 import { useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -456,7 +457,17 @@ export function SuppliersManager({
                       {supplier.emailAddresses.join(", ") || "—"}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      {supplier.invoiceCount}
+                      {supplier.invoiceCount > 0 ? (
+                        <Link
+                          href={`/queue?supplier=${supplier.id}`}
+                          className="font-medium text-primary hover:underline"
+                          title={`View ${supplier.name} invoices`}
+                        >
+                          {supplier.invoiceCount}
+                        </Link>
+                      ) : (
+                        supplier.invoiceCount
+                      )}
                     </TableCell>
                     <TableCell>{formatDate(supplier.lastInvoiceAt)}</TableCell>
                     <TableCell>

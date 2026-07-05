@@ -48,18 +48,18 @@ export const invoices = sqliteTable("invoices", {
     .references(() => organizations.id, { onDelete: "cascade" }),
   status: text("status", {
     enum: [
-      "RECEIVED",
-      "PROCESSING",
-      "PENDING_VALIDATION",
+      "DRAFT",
       "PENDING_APPROVAL",
       "APPROVED",
-      "READY_FOR_PAYMENT",
       "REJECTED",
-      "NEEDS_REVIEW",
+      "ON_HOLD",
+      "PART_PAID",
+      "PAID",
+      "CANCELLED",
     ],
   })
     .notNull()
-    .default("RECEIVED"),
+    .default("DRAFT"),
   sourceType: text("source_type", { enum: ["UPLOAD", "EMAIL"] })
     .notNull()
     .default("UPLOAD"),
@@ -78,6 +78,7 @@ export const invoices = sqliteTable("invoices", {
   invoiceNumber: text("invoice_number"),
   invoiceDate: integer("invoice_date", { mode: "timestamp_ms" }),
   dueDate: integer("due_date", { mode: "timestamp_ms" }),
+  respondByDate: integer("respond_by_date", { mode: "timestamp_ms" }),
   totalAmount: real("total_amount"),
   currency: text("currency").default("AUD"),
   lineItems: text("line_items"),
@@ -94,8 +95,45 @@ export const invoices = sqliteTable("invoices", {
   assignedToId: text("assigned_to_id").references(() => users.id, {
     onDelete: "set null",
   }),
+  amountPaid: real("amount_paid").notNull().default(0),
+  paidAt: integer("paid_at", { mode: "timestamp_ms" }),
+  markedPaidById: text("marked_paid_by_id").references(() => users.id, {
+    onDelete: "set null",
+  }),
+  onHoldAt: integer("on_hold_at", { mode: "timestamp_ms" }),
+  onHoldById: text("on_hold_by_id").references(() => users.id, {
+    onDelete: "set null",
+  }),
+  onHoldReason: text("on_hold_reason"),
+  // Status to restore when the hold is released.
+  holdPreviousStatus: text("hold_previous_status"),
+  cancelledAt: integer("cancelled_at", { mode: "timestamp_ms" }),
+  cancelledById: text("cancelled_by_id").references(() => users.id, {
+    onDelete: "set null",
+  }),
   createdAt: timestamp(),
   updatedAt: updatedAt(),
+});
+
+export const invoicePayments = sqliteTable("invoice_payments", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => createId()),
+  organizationId: text("organization_id")
+    .notNull()
+    .references(() => organizations.id, { onDelete: "cascade" }),
+  invoiceId: text("invoice_id")
+    .notNull()
+    .references(() => invoices.id, { onDelete: "cascade" }),
+  amount: real("amount").notNull(),
+  paidAt: integer("paid_at", { mode: "timestamp_ms" }).notNull(),
+  recordedById: text("recorded_by_id").references(() => users.id, {
+    onDelete: "set null",
+  }),
+  // Link or reference to the transaction in the accounting software.
+  transactionRef: text("transaction_ref"),
+  note: text("note"),
+  createdAt: timestamp(),
 });
 
 export const notes = sqliteTable("notes", {
@@ -443,6 +481,22 @@ export const invoicesRelations = relations(invoices, ({ one, many }) => ({
   creditRequests: many(creditRequests),
   attachments: many(invoiceAttachments),
   mailboxMessages: many(mailboxMessages),
+  payments: many(invoicePayments),
+}));
+
+export const invoicePaymentsRelations = relations(invoicePayments, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [invoicePayments.organizationId],
+    references: [organizations.id],
+  }),
+  invoice: one(invoices, {
+    fields: [invoicePayments.invoiceId],
+    references: [invoices.id],
+  }),
+  recordedBy: one(users, {
+    fields: [invoicePayments.recordedById],
+    references: [users.id],
+  }),
 }));
 
 export const o365ConnectionsRelations = relations(o365Connections, ({ one }) => ({
@@ -631,3 +685,4 @@ export type MailboxMessage = typeof mailboxMessages.$inferSelect;
 export type MailboxMessageAttachment = typeof mailboxMessageAttachments.$inferSelect;
 export type EmailContact = typeof emailContacts.$inferSelect;
 export type CreditRequest = typeof creditRequests.$inferSelect;
+export type InvoicePayment = typeof invoicePayments.$inferSelect;

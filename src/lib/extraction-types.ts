@@ -10,6 +10,7 @@ export type ExtractionCandidates = {
   invoiceNumber?: FieldCandidate[];
   invoiceDate?: FieldCandidate[];
   dueDate?: FieldCandidate[];
+  respondByDate?: FieldCandidate[];
   totalAmount?: FieldCandidate[];
   currency?: FieldCandidate[];
 };
@@ -32,6 +33,7 @@ export const VALIDATABLE_FIELDS: ValidatableField[] = [
   "invoiceNumber",
   "invoiceDate",
   "dueDate",
+  "respondByDate",
   "totalAmount",
   "currency",
 ];
@@ -42,6 +44,7 @@ export const FIELD_LABELS: Record<ValidatableField, string> = {
   invoiceNumber: "invoice number",
   invoiceDate: "invoice date",
   dueDate: "due date",
+  respondByDate: "respond by date",
   totalAmount: "invoice total",
   currency: "currency",
 };

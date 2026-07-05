@@ -3,6 +3,8 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db, invoices, notes } from "@/lib/db";
 import { recordAuditEvent } from "@/lib/audit";
+import { REJECTABLE_STATUSES } from "@/lib/invoice-status";
+import { parseLineItems, setAllLineItemStatuses } from "@/lib/line-items";
 
 type RouteContext = {
   params: Promise<{ id: string }>;
@@ -28,36 +30,47 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  if (!["PENDING_APPROVAL", "NEEDS_REVIEW", "APPROVED"].includes(invoice.status)) {
+  if (!REJECTABLE_STATUSES.includes(invoice.status)) {
     return NextResponse.json(
       { error: "Invoice cannot be rejected in its current status" },
       { status: 400 },
     );
   }
 
-  const updated = await db.transaction(async (tx) => {
+  const lineItems = parseLineItems(invoice.lineItems);
+  const updatedLineItems = setAllLineItemStatuses(lineItems, "REJECTED");
+
+  // better-sqlite3 transactions must stay synchronous.
+  const updated = db.transaction((tx) => {
     if (body.note?.trim()) {
-      await tx.insert(notes).values({
-        invoiceId: id,
-        userId: session.user.id,
-        content: body.note.trim(),
-      });
+      tx.insert(notes)
+        .values({
+          invoiceId: id,
+          userId: session.user.id,
+          content: body.note.trim(),
+        })
+        .run();
     }
 
-    const [row] = await tx
+    return tx
       .update(invoices)
-      .set({ status: "REJECTED", updatedAt: new Date() })
+      .set({
+        status: "REJECTED",
+        // Rejecting an unrouted draft assigns it to the rejecting user.
+        assignedToId: invoice.assignedToId ?? session.user.id,
+        lineItems: JSON.stringify(updatedLineItems),
+        updatedAt: new Date(),
+      })
       .where(eq(invoices.id, id))
-      .returning();
-
-    return row;
+      .returning()
+      .get();
   });
 
   await recordAuditEvent({
     invoiceId: id,
     userId: session.user.id,
     action: "invoice.rejected",
-    details: { note: body.note?.trim() },
+    details: { note: body.note?.trim(), lineItemCount: lineItems.length },
   });
 
   return NextResponse.json(updated);

@@ -2,14 +2,14 @@ export const userRoles = ["ADMIN", "APPROVER", "USER"] as const;
 export type UserRole = (typeof userRoles)[number];
 
 export const invoiceStatuses = [
-  "RECEIVED",
-  "PROCESSING",
-  "PENDING_VALIDATION",
+  "DRAFT",
   "PENDING_APPROVAL",
   "APPROVED",
-  "READY_FOR_PAYMENT",
   "REJECTED",
-  "NEEDS_REVIEW",
+  "ON_HOLD",
+  "PART_PAID",
+  "PAID",
+  "CANCELLED",
 ] as const;
 export type InvoiceStatus = (typeof invoiceStatuses)[number];
 

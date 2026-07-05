@@ -46,6 +46,7 @@ type InvoiceValidationPanelProps = {
     invoiceNumber: string;
     invoiceDate: string;
     dueDate: string;
+    respondByDate: string;
     totalAmount: string;
     currency: string;
   };
@@ -67,6 +68,7 @@ const FIELD_CONFIG: FieldConfig[] = [
   { key: "invoiceNumber", label: "Invoice no.", type: "text" },
   { key: "invoiceDate", label: "Invoice date", type: "date" },
   { key: "dueDate", label: "Due date", type: "date" },
+  { key: "respondByDate", label: "Respond by", type: "date" },
   { key: "totalAmount", label: "Total", type: "number" },
   { key: "currency", label: "Currency", type: "text" },
 ];
@@ -112,7 +114,7 @@ function formatDisplayValue(
 ): string {
   if (!value.trim()) return "—";
 
-  if (key === "invoiceDate" || key === "dueDate") {
+  if (key === "invoiceDate" || key === "dueDate" || key === "respondByDate") {
     const date = new Date(value);
     if (!Number.isNaN(date.getTime())) {
       return new Intl.DateTimeFormat("en-AU", { dateStyle: "medium" }).format(date);
@@ -340,7 +342,7 @@ export function InvoiceValidationPanel({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const canValidate = ["PENDING_VALIDATION", "NEEDS_REVIEW"].includes(status);
+  const canValidate = status === "DRAFT";
 
   const fieldOptions = useMemo(() => {
     return FIELD_CONFIG.reduce(
@@ -429,6 +431,7 @@ export function InvoiceValidationPanel({
         invoiceNumber: fields.invoiceNumber || null,
         invoiceDate: fields.invoiceDate || null,
         dueDate: fields.dueDate || null,
+        respondByDate: fields.respondByDate || null,
         totalAmount: fields.totalAmount ? Number(fields.totalAmount) : null,
         currency: fields.currency || "AUD",
       },

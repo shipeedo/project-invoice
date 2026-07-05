@@ -105,6 +105,7 @@ export function InboxThreadList({ threads, activeThreadId }: InboxThreadListProp
                 <li key={thread.id}>
                   <Link
                     href={`/inbox/${thread.id}`}
+                    scroll={false}
                     className={cn(
                       "flex gap-3 border-b px-3 py-3 transition-colors",
                       thread.supplier

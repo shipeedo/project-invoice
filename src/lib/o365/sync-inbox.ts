@@ -1,4 +1,4 @@
-import { and, count, eq } from "drizzle-orm";
+import { and, count, eq, isNull } from "drizzle-orm";
 import { readFile } from "fs/promises";
 import {
   db,
@@ -8,9 +8,9 @@ import {
   mailboxMessages,
 } from "@/lib/db";
 import {
+  applySupplierLinkToMessage,
   linkSupplierToThreadsAndMessages,
-  resolveSupplierIdForEmail,
-  upsertEmailContact,
+  resolveSupplierIdFromInboundMessage,
 } from "@/lib/email-contacts";
 import { getValidAccessToken, updateO365Mailbox, resolveGraphMailboxUser } from "@/lib/o365/connection";
 import {
@@ -235,18 +235,17 @@ export async function syncGraphMessage(params: {
     ? new Date(message.receivedDateTime)
     : new Date();
   const outbound = isOutboundFromMailbox(message, params.mailboxUpn);
+  const body = extractMessageBody(message);
 
   let supplierId: string | null = null;
   if (!outbound && fromEmail) {
-    supplierId = await resolveSupplierIdForEmail(
-      params.connection.organizationId,
+    supplierId = await resolveSupplierIdFromInboundMessage({
+      organizationId: params.connection.organizationId,
       fromEmail,
       fromName,
-    );
-    await upsertEmailContact({
-      organizationId: params.connection.organizationId,
-      email: fromEmail,
-      displayName: fromName,
+      subject: message.subject,
+      bodyHtml: body.html,
+      bodyText: body.text,
     });
   }
 
@@ -278,16 +277,34 @@ export async function syncGraphMessage(params: {
       }
 
       if (message.body?.content) {
-        const body = extractMessageBody(message);
+        const refreshedBody = extractMessageBody(message);
         const [updated] = await db
           .update(mailboxMessages)
           .set({
-            bodyHtml: body.html,
-            bodyText: body.text,
+            bodyHtml: refreshedBody.html,
+            bodyText: refreshedBody.text,
           })
           .where(eq(mailboxMessages.id, existingMessage.id))
           .returning();
         currentMessage = updated;
+      }
+    }
+
+    if (!outbound && currentMessage.fromEmail) {
+      const resolvedSupplierId = await applySupplierLinkToMessage({
+        organizationId: params.connection.organizationId,
+        messageId: currentMessage.id,
+        threadId: thread.id,
+        fromEmail: currentMessage.fromEmail,
+        fromName: currentMessage.fromName,
+        subject: currentMessage.subject,
+        bodyHtml: currentMessage.bodyHtml,
+        bodyText: currentMessage.bodyText,
+        currentSupplierId: currentMessage.supplierId,
+      });
+
+      if (resolvedSupplierId && resolvedSupplierId !== currentMessage.supplierId) {
+        currentMessage = { ...currentMessage, supplierId: resolvedSupplierId };
       }
     }
 
@@ -303,7 +320,6 @@ export async function syncGraphMessage(params: {
     return { message: currentMessage, thread, isNew: false as const };
   }
 
-  const body = extractMessageBody(message);
   const [storedMessage] = await db
     .insert(mailboxMessages)
     .values({
@@ -392,6 +408,33 @@ async function tryProcessInvoiceFromMessage(params: {
   }
 
   return outcome;
+}
+
+async function backfillInboundMessageSuppliers(organizationId: string) {
+  const messages = await db.query.mailboxMessages.findMany({
+    where: and(
+      eq(mailboxMessages.organizationId, organizationId),
+      eq(mailboxMessages.direction, "INBOUND"),
+      isNull(mailboxMessages.supplierId),
+    ),
+  });
+
+  for (const message of messages) {
+    if (!message.bodyHtml && !message.bodyText) continue;
+    if (!message.fromEmail) continue;
+
+    await applySupplierLinkToMessage({
+      organizationId,
+      messageId: message.id,
+      threadId: message.threadId,
+      fromEmail: message.fromEmail,
+      fromName: message.fromName,
+      subject: message.subject,
+      bodyHtml: message.bodyHtml,
+      bodyText: message.bodyText,
+      currentSupplierId: message.supplierId,
+    });
+  }
 }
 
 export async function syncOrganizationInbox(
@@ -519,6 +562,17 @@ export async function syncOrganizationInbox(
   } catch (error) {
     result.errors.push(error instanceof Error ? error.message : "Sync failed");
     result.fatal = true;
+  }
+
+  if (!result.fatal) {
+    try {
+      report?.({ type: "status", message: "Re-evaluating forwarded message suppliers…" });
+      await backfillInboundMessageSuppliers(connection.organizationId);
+    } catch (error) {
+      result.errors.push(
+        error instanceof Error ? error.message : "Supplier backfill failed",
+      );
+    }
   }
 
   return result;
