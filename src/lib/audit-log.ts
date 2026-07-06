@@ -1,4 +1,4 @@
-import { formatCurrency, statusLabel } from "@/lib/format";
+import { formatCurrency, formatDate, statusLabel } from "@/lib/format";
 
 export type AuditDisplay = {
   label: string;
@@ -147,13 +147,50 @@ export function describeAuditEvent(
     }
     case "invoice.extracted":
       return { label: "Invoice data extracted", description: null };
+    case "invoice.reprocessed": {
+      const parseError = asString(details.parseError);
+      const sourceType = asString(details.sourceType);
+      return {
+        label: "Invoice re-processed",
+        description: parseError
+          ? `Extraction failed: ${parseError}`
+          : sourceType === "EMAIL"
+            ? "Extraction re-run on the linked email's attachments"
+            : "Extraction re-run on the uploaded file",
+      };
+    }
     case "invoice.parse_failed":
       return {
         label: "Extraction failed",
         description: asString(details.parseError),
       };
-    case "invoice.validated":
-      return { label: "Invoice validated", description: null };
+    case "invoice.validated": {
+      const rejectedCount = asNumber(details.rejectedLineCount);
+      const parts = [
+        rejectedCount
+          ? `${rejectedCount} line item${rejectedCount === 1 ? "" : "s"} deselected and marked rejected`
+          : null,
+        asString(details.totalsSource) === "LINE_ITEMS"
+          ? "Totals calculated from the selected line items"
+          : null,
+      ].filter(Boolean);
+      return {
+        label: "Invoice validated",
+        description: parts.length > 0 ? parts.join(" · ") : null,
+      };
+    }
+    case "invoice.due_date_overridden": {
+      const days = asNumber(details.tradingTermDays);
+      const original = asString(details.originalDueDate);
+      const parts = [
+        days != null ? `Applied ${days}-day trading terms` : "Applied supplier trading terms",
+        original ? `invoice stated ${formatDate(original)}` : null,
+      ].filter(Boolean);
+      return {
+        label: "Due date overridden",
+        description: parts.length > 0 ? parts.join(" · ") : null,
+      };
+    }
     case "invoice.routed": {
       const assignee = asString(details.assignedToEmail);
       return {
@@ -208,10 +245,68 @@ export function describeAuditEvent(
         description: reason ? `Reason: ${reason}` : null,
       };
     }
+    case "invoice.deleted": {
+      const reason = asString(details.reason);
+      return {
+        label: "Moved to trash",
+        description: reason ? `Reason: ${reason}` : null,
+      };
+    }
+    case "invoice.restored":
+      return { label: "Restored from trash", description: null };
     case "invoice.payment_recorded":
       return describePayment(details, currency, false);
     case "invoice.paid":
       return describePayment(details, currency, true);
+    case "email.invoice_created": {
+      const subject = asString(details.subject);
+      return {
+        label: "Invoice created from email",
+        description: subject ? `Subject: ${subject}` : null,
+      };
+    }
+    case "email.ignored": {
+      const reason = asString(details.ignoreReason);
+      const subject = asString(details.subject);
+      const parts = [reason ? `Reason: ${reason.replace(/_/g, " ")}` : null, subject ? `Subject: ${subject}` : null].filter(
+        Boolean,
+      );
+      return {
+        label: "Email ignored",
+        description: parts.length > 0 ? parts.join(" · ") : null,
+      };
+    }
+    case "credit_request.created": {
+      const count = asNumber(details.lineCount);
+      const total = asNumber(details.requestedTotal);
+      const parts = [
+        count ? `${count} line${count === 1 ? "" : "s"}` : null,
+        total != null ? `requested ${formatCurrency(total, currency)}` : null,
+      ].filter(Boolean);
+      return {
+        label: "Credit request created",
+        description: parts.length > 0 ? parts.join(" · ") : null,
+      };
+    }
+    case "credit_request.sent":
+      return {
+        label: "Credit request sent",
+        description: asString(details.recipientEmail)
+          ? `To ${details.recipientEmail}`
+          : null,
+      };
+    case "credit_request.updated": {
+      const status = asString(details.status);
+      const approved = asNumber(details.approvedAmount);
+      const parts = [
+        status ? `Status: ${statusLabel(status)}` : null,
+        approved != null ? `Approved ${formatCurrency(approved, currency)}` : null,
+      ].filter(Boolean);
+      return {
+        label: "Credit request updated",
+        description: parts.length > 0 ? parts.join(" · ") : null,
+      };
+    }
     default:
       // Fallback: "invoice.some_action" → "Some action".
       return {

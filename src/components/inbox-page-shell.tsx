@@ -5,6 +5,7 @@ import { AppShell } from "@/components/app-shell";
 import { InboxLayout } from "@/components/inbox-layout";
 import type { InboxThreadSummary } from "@/components/inbox-thread-list";
 import type { UserRole } from "@/lib/db/types";
+import type { NavCounts } from "@/lib/nav-counts";
 
 type InboxPageShellProps = {
   user: {
@@ -17,6 +18,7 @@ type InboxPageShellProps = {
     canSync: boolean;
     lastSyncedAt: string | null;
   };
+  navCounts?: NavCounts;
   children: React.ReactNode;
 };
 
@@ -29,6 +31,7 @@ export function InboxPageShell({
   user,
   threads,
   sync,
+  navCounts,
   children,
 }: InboxPageShellProps) {
   const pathname = usePathname();
@@ -48,6 +51,7 @@ export function InboxPageShell({
     <AppShell
       user={user}
       activePath="/inbox"
+      navCounts={navCounts}
       fillViewport
       breadcrumbs={breadcrumbs}
     >

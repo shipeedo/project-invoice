@@ -8,6 +8,7 @@ import {
   type ValidatableField,
 } from "@/lib/extraction-types";
 import { parseSupplierFieldMappings } from "@/lib/extraction-types";
+import { normalizeTradingTermDays } from "@/lib/trading-terms";
 
 export type SupplierExtractionContext = {
   supplier: Supplier | null;
@@ -27,12 +28,14 @@ export function buildNewSupplierValues(params: {
   name: string;
   emailAddresses?: string[];
   emailDomains?: string[];
+  tradingTermDays?: number | null;
 }) {
   return {
     organizationId: params.organizationId,
     name: params.name.trim(),
     emailAddresses: JSON.stringify(params.emailAddresses ?? []),
     emailDomains: JSON.stringify(params.emailDomains ?? []),
+    tradingTermDays: normalizeTradingTermDays(params.tradingTermDays),
     extractionPrompt: getDefaultExtractionPrompt(),
     fieldMappings: "{}",
   };

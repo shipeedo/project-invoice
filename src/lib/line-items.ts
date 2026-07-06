@@ -58,6 +58,7 @@ export function mergeLineItemAssignments(
     if (previous.status && previous.status !== "PENDING") {
       merged.status = previous.status;
     }
+    if (previous.creditRequestId) merged.creditRequestId = previous.creditRequestId;
     return merged;
   });
 }
@@ -221,6 +222,36 @@ export function applyLineDecisionUpdates(
   }
 
   return next;
+}
+
+/**
+ * Validates an untrusted list of line indexes deselected during validation.
+ * Returns sorted, deduplicated indexes; undefined means "none deselected".
+ * Returns null when the payload is structurally invalid (not an array,
+ * non-integer, or negative entries).
+ */
+export function parseRejectedLineIndexes(raw: unknown): number[] | null {
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw)) return null;
+
+  const indexes = new Set<number>();
+  for (const entry of raw) {
+    if (!Number.isInteger(entry) || (entry as number) < 0) return null;
+    indexes.add(entry as number);
+  }
+
+  return [...indexes].sort((a, b) => a - b);
+}
+
+export function applyRejectedLineIndexes(
+  lineItems: ExtractedLineItem[],
+  rejectedIndexes: number[],
+): ExtractedLineItem[] {
+  if (rejectedIndexes.length === 0) return lineItems;
+  return applyLineDecisionUpdates(
+    lineItems,
+    rejectedIndexes.map((lineIndex) => ({ lineIndex, status: "REJECTED" as const })),
+  );
 }
 
 export function setAllLineItemStatuses(

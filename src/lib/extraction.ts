@@ -1,10 +1,15 @@
-import { readFile } from "fs/promises";
-import pdf from "pdf-parse";
+import { classifyAttachment, type InvoiceAttachmentKind } from "@/lib/attachment-types";
 import { callAiChatCompletion } from "@/lib/ai-chat";
-import { getUploadAbsolutePath } from "@/lib/uploads";
+import {
+  extractSpreadsheetMetadata,
+  mergeExtractedInvoiceData,
+  parseSpreadsheetLineItems,
+} from "@/lib/csv-extraction";
+import { extractTextFromDocument } from "@/lib/document-text";
 import {
   buildInvoiceExtractionFromEmailUserPrompt,
   buildInvoiceExtractionUserPrompt,
+  buildSpreadsheetHeaderExtractionUserPrompt,
 } from "@/lib/extraction-prompts";
 import type { ExtractionCandidates, FieldCandidate } from "@/lib/extraction-types";
 import {
@@ -31,11 +36,27 @@ export type ExtractedLineItem = {
   assignedToId?: string | null;
   /** Approval state for payment; defaults to pending. */
   status?: LineItemStatus;
+  /** Credit request that marked this line as credit pending. */
+  creditRequestId?: string | null;
 };
 
-export type LineItemStatus = "PENDING" | "APPROVED" | "REJECTED";
+export type LineItemStatus =
+  | "PENDING"
+  | "APPROVED"
+  | "REJECTED"
+  | "CREDIT_PENDING"
+  | "CREDIT_APPROVED"
+  | "CREDIT_DENIED";
+
+export type ExtractedDocumentType =
+  | "invoice"
+  | "credit_note"
+  | "statement"
+  | "quote"
+  | "other";
 
 export type ExtractedInvoice = {
+  documentType?: ExtractedDocumentType;
   vendorName?: string;
   vendorEmail?: string;
   invoiceNumber?: string;
@@ -53,12 +74,177 @@ export type ExtractedInvoice = {
 };
 
 const MAX_INVOICE_TEXT_CHARS = 24_000;
+const MAX_SPREADSHEET_PREVIEW_CHARS = 8_000;
+
+function isSpreadsheetKind(kind: InvoiceAttachmentKind) {
+  return kind === "csv" || kind === "xlsx" || kind === "xls";
+}
 
 export async function extractTextFromPdf(filePath: string): Promise<string> {
-  const absolutePath = getUploadAbsolutePath(filePath);
-  const buffer = await readFile(absolutePath);
-  const parsed = await pdf(buffer);
-  return parsed.text.trim();
+  const { text } = await extractTextFromDocument(filePath, "invoice.pdf", "application/pdf");
+  return text;
+}
+
+export async function extractInvoiceFromDocument(
+  filePath: string,
+  fileName: string,
+  mimeType: string,
+  supplierContext?: SupplierExtractionContext | null,
+  emailContext?: EmailExtractionContext | null,
+): Promise<{
+  data: ExtractedInvoice | null;
+  raw: unknown;
+  fieldCandidates: ExtractionCandidates | null;
+  error?: string;
+}> {
+  let text: string;
+  try {
+    const extracted = await extractTextFromDocument(filePath, fileName, mimeType);
+    text = extracted.text;
+  } catch (error) {
+    return {
+      data: null,
+      raw: null,
+      fieldCandidates: null,
+      error: error instanceof Error ? error.message : "Failed to read document",
+    };
+  }
+
+  if (!text) {
+    return {
+      data: null,
+      raw: null,
+      fieldCandidates: null,
+      error: "Document contains no extractable text",
+    };
+  }
+
+  const kind = classifyAttachment(fileName, mimeType);
+  if (isSpreadsheetKind(kind)) {
+    return extractInvoiceFromSpreadsheetText(
+      fileName,
+      text,
+      supplierContext,
+      emailContext,
+    );
+  }
+
+  return extractInvoiceFromDocumentText(
+    fileName,
+    text,
+    supplierContext,
+    emailContext,
+  );
+}
+
+export async function extractInvoiceFromSpreadsheetText(
+  fileName: string,
+  text: string,
+  supplierContext?: SupplierExtractionContext | null,
+  emailContext?: EmailExtractionContext | null,
+): Promise<{
+  data: ExtractedInvoice | null;
+  raw: unknown;
+  fieldCandidates: ExtractionCandidates | null;
+  error?: string;
+}> {
+  const parsedLineItems = parseSpreadsheetLineItems(text);
+  const spreadsheetMetadata = extractSpreadsheetMetadata(text);
+
+  if (parsedLineItems.length === 0 && !spreadsheetMetadata.invoiceNumber) {
+    return extractInvoiceFromDocumentText(
+      fileName,
+      text,
+      supplierContext,
+      emailContext,
+    );
+  }
+
+  const systemPrompt = resolveExtractionSystemPrompt(supplierContext);
+  const userPrompt = buildSpreadsheetHeaderExtractionUserPrompt(
+    fileName,
+    text.slice(0, MAX_SPREADSHEET_PREVIEW_CHARS),
+    parsedLineItems.length,
+    emailContext ?? undefined,
+  );
+
+  const aiResult = await callExtractionAI({ systemPrompt, userPrompt });
+  const fallbackInvoice = normalizeExtractedInvoice({
+    ...spreadsheetMetadata,
+    lineItems: parsedLineItems,
+    confidence: parsedLineItems.length > 0 ? "medium" : "low",
+    notes:
+      parsedLineItems.length > 0
+        ? `${parsedLineItems.length} line items parsed directly from the spreadsheet.`
+        : "Spreadsheet header fields were parsed directly; review line items manually.",
+  });
+
+  if (aiResult.error && !aiResult.data) {
+    if (parsedLineItems.length > 0 || spreadsheetMetadata.invoiceNumber) {
+      return {
+        data: fallbackInvoice,
+        raw: aiResult.raw,
+        fieldCandidates: fallbackInvoice.fieldCandidates ?? null,
+      };
+    }
+
+    return aiResult;
+  }
+
+  const merged = normalizeExtractedInvoice(
+    mergeExtractedInvoiceData(aiResult.data, {
+      ...spreadsheetMetadata,
+      lineItems: parsedLineItems,
+    }) ?? fallbackInvoice,
+  );
+
+  if (parsedLineItems.length > 0) {
+    merged.lineItems = parsedLineItems;
+    if (
+      merged.totalAmount === undefined &&
+      spreadsheetMetadata.totalAmount !== undefined
+    ) {
+      merged.totalAmount = spreadsheetMetadata.totalAmount;
+    }
+  }
+
+  return {
+    data: merged,
+    raw: aiResult.raw,
+    fieldCandidates: merged.fieldCandidates ?? aiResult.fieldCandidates,
+    error: aiResult.error,
+  };
+}
+
+export async function extractInvoiceFromDocumentText(
+  fileName: string,
+  text: string,
+  supplierContext?: SupplierExtractionContext | null,
+  emailContext?: EmailExtractionContext | null,
+): Promise<{
+  data: ExtractedInvoice | null;
+  raw: unknown;
+  fieldCandidates: ExtractionCandidates | null;
+  error?: string;
+}> {
+  if (!text.trim()) {
+    return {
+      data: null,
+      raw: null,
+      fieldCandidates: null,
+      error: "Document contains no extractable text",
+    };
+  }
+
+  const systemPrompt = resolveExtractionSystemPrompt(supplierContext);
+
+  const userPrompt = buildInvoiceExtractionUserPrompt(
+    fileName,
+    text.slice(0, MAX_INVOICE_TEXT_CHARS),
+    emailContext ?? undefined,
+  );
+
+  return callExtractionAI({ systemPrompt, userPrompt });
 }
 
 export async function extractInvoiceFromPdf(
@@ -72,36 +258,13 @@ export async function extractInvoiceFromPdf(
   fieldCandidates: ExtractionCandidates | null;
   error?: string;
 }> {
-  let text: string;
-  try {
-    text = await extractTextFromPdf(filePath);
-  } catch (error) {
-    return {
-      data: null,
-      raw: null,
-      fieldCandidates: null,
-      error: error instanceof Error ? error.message : "Failed to read PDF",
-    };
-  }
-
-  if (!text) {
-    return {
-      data: null,
-      raw: null,
-      fieldCandidates: null,
-      error: "PDF contains no extractable text",
-    };
-  }
-
-  const systemPrompt = resolveExtractionSystemPrompt(supplierContext);
-
-  const userPrompt = buildInvoiceExtractionUserPrompt(
+  return extractInvoiceFromDocument(
+    filePath,
     fileName,
-    text.slice(0, MAX_INVOICE_TEXT_CHARS),
-    emailContext ?? undefined,
+    "application/pdf",
+    supplierContext,
+    emailContext,
   );
-
-  return callExtractionAI({ systemPrompt, userPrompt });
 }
 
 export async function extractInvoiceFromEmailBody(
@@ -292,6 +455,22 @@ function normalizeFieldCandidates(
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
+const DOCUMENT_TYPES: ReadonlySet<ExtractedDocumentType> = new Set([
+  "invoice",
+  "credit_note",
+  "statement",
+  "quote",
+  "other",
+]);
+
+function normalizeDocumentType(value: unknown): ExtractedDocumentType | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  return DOCUMENT_TYPES.has(normalized as ExtractedDocumentType)
+    ? (normalized as ExtractedDocumentType)
+    : undefined;
+}
+
 export function normalizeExtractedInvoice(raw: ExtractedInvoice): ExtractedInvoice {
   const lineItemsSource = Array.isArray(raw.lineItems) ? raw.lineItems : [];
 
@@ -303,6 +482,7 @@ export function normalizeExtractedInvoice(raw: ExtractedInvoice): ExtractedInvoi
     .sort((a, b) => (a.lineNumber ?? 0) - (b.lineNumber ?? 0));
 
   return {
+    documentType: normalizeDocumentType(raw.documentType),
     vendorName: raw.vendorName?.trim() || undefined,
     vendorEmail: raw.vendorEmail?.trim() || undefined,
     invoiceNumber: raw.invoiceNumber?.trim() || undefined,

@@ -3,7 +3,26 @@ export function formatCurrency(amount: number | null | undefined, currency = "AU
   return new Intl.NumberFormat("en-AU", {
     style: "currency",
     currency,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   }).format(amount);
+}
+
+export function formatDecimalAmount(value: number | null | undefined) {
+  if (value == null || !Number.isFinite(value)) return "";
+  return value.toFixed(2);
+}
+
+export function roundToTwoDecimals(value: number) {
+  return Math.round(value * 100) / 100;
+}
+
+export function parseDecimalAmount(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed)) return null;
+  return roundToTwoDecimals(parsed);
 }
 
 function parseDate(value: Date | string | number): Date | null {

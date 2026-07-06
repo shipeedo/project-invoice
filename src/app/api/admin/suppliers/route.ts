@@ -53,6 +53,7 @@ export async function POST(request: Request) {
     name: string;
     emailAddresses?: string[];
     emailDomains?: string[];
+    tradingTermDays?: number | null;
   };
 
   if (!body.name?.trim()) {
@@ -67,6 +68,7 @@ export async function POST(request: Request) {
         name: body.name.trim(),
         emailAddresses: body.emailAddresses,
         emailDomains: body.emailDomains,
+        tradingTermDays: body.tradingTermDays,
       }),
     )
     .returning();

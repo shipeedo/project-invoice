@@ -31,6 +31,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { LineItemEditDialog } from "@/components/line-item-edit-dialog";
+import { CreditRequestSheet } from "@/components/credit-request-sheet";
 import {
   LineItemsActionBar,
   type LineItemAction,
@@ -42,6 +43,8 @@ import {
   resolveLineItemStatus,
   type LineItemEditFields,
 } from "@/lib/line-items";
+import { canRequestCreditForLine } from "@/lib/credit-line-utils";
+import type { InvoiceTotals } from "@/lib/invoice-totals";
 import { formatCurrency, statusLabel } from "@/lib/format";
 
 type UserOption = {
@@ -58,7 +61,11 @@ type InvoiceLineItemsTableProps = {
   invoiceAssignedToLabel: string | null;
   currency: string;
   actionsEnabled: boolean;
+  /** Gates assign/edit separately so paid invoices can still request credits. */
+  editsEnabled?: boolean;
   decisionsEnabled?: boolean;
+  /** Invoice-level totals shown under the table; rows with no value are omitted. */
+  totals?: InvoiceTotals;
 };
 
 function userLabel(user: UserOption) {
@@ -72,6 +79,9 @@ const lineStatusVariants: Record<
   PENDING: "outline",
   APPROVED: "default",
   REJECTED: "destructive",
+  CREDIT_PENDING: "secondary",
+  CREDIT_APPROVED: "default",
+  CREDIT_DENIED: "destructive",
 };
 
 function LineStatusBadge({ status }: { status: LineItemStatus }) {
@@ -86,13 +96,16 @@ export function InvoiceLineItemsTable({
   invoiceAssignedToLabel,
   currency,
   actionsEnabled,
+  editsEnabled = true,
   decisionsEnabled = false,
+  totals,
 }: InvoiceLineItemsTableProps) {
   const router = useRouter();
   const [lineItems, setLineItems] = useState(initialLineItems);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [assignDialogOpen, setAssignDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [creditSheetOpen, setCreditSheetOpen] = useState(false);
   const [assigneeId, setAssigneeId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<LineItemAction | null>(null);
@@ -142,6 +155,9 @@ export function InvoiceLineItemsTable({
   const allSelectedRejected =
     selectedItems.length > 0 &&
     selectedItems.every((item) => resolveLineItemStatus(item) === "REJECTED");
+  const creditSelectionBlocked =
+    selectedItems.length > 0 &&
+    selectedItems.some((item) => !canRequestCreditForLine(resolveLineItemStatus(item)));
 
   function toggleAll(checked: boolean) {
     if (checked) {
@@ -282,10 +298,10 @@ export function InvoiceLineItemsTable({
 
     switch (action) {
       case "assign":
-        setAssignDialogOpen(true);
+        if (editsEnabled) setAssignDialogOpen(true);
         break;
       case "edit":
-        setEditDialogOpen(true);
+        if (editsEnabled) setEditDialogOpen(true);
         break;
       case "approve":
         void decideSelected("APPROVED");
@@ -294,6 +310,7 @@ export function InvoiceLineItemsTable({
         void decideSelected("REJECTED");
         break;
       case "credit":
+        setCreditSheetOpen(true);
         break;
     }
   }
@@ -303,15 +320,17 @@ export function InvoiceLineItemsTable({
   }
 
   return (
-    <div className="space-y-4">
+    <div className="min-w-0 space-y-4">
       {actionsEnabled ? (
         <>
           <LineItemsActionBar
             selectedCount={selected.size}
             busyAction={busyAction}
+            editsEnabled={editsEnabled}
             decisionsEnabled={decisionsEnabled}
             approveDisabled={allSelectedApproved}
             rejectDisabled={allSelectedRejected}
+            creditDisabled={creditSelectionBlocked}
             onAction={handleAction}
           />
 
@@ -383,6 +402,15 @@ export function InvoiceLineItemsTable({
               </DialogFooter>
             </DialogContent>
           </Dialog>
+
+          <CreditRequestSheet
+            open={creditSheetOpen}
+            onOpenChange={setCreditSheetOpen}
+            invoiceId={invoiceId}
+            currency={currency}
+            selectedIndexes={selectedIndexes}
+            lineItems={lineItems}
+          />
         </>
       ) : null}
 
@@ -400,7 +428,7 @@ export function InvoiceLineItemsTable({
               </TableHead>
             ) : null}
             <TableHead className="w-12">#</TableHead>
-            <TableHead>Description</TableHead>
+            <TableHead className="min-w-[12rem]">Description</TableHead>
             <TableHead>Service</TableHead>
             <TableHead>Qty</TableHead>
             <TableHead>Unit</TableHead>
@@ -432,7 +460,7 @@ export function InvoiceLineItemsTable({
                 </TableCell>
               ) : null}
               <TableCell>{item.lineNumber ?? index + 1}</TableCell>
-              <TableCell>{item.description}</TableCell>
+              <TableCell className="max-w-md whitespace-normal">{item.description}</TableCell>
               <TableCell>{item.serviceType ?? "—"}</TableCell>
               <TableCell>{item.quantity ?? "—"}</TableCell>
               <TableCell>
@@ -450,6 +478,34 @@ export function InvoiceLineItemsTable({
           ))}
         </TableBody>
       </Table>
+
+      {totals &&
+      (totals.subtotal != null || totals.taxAmount != null || totals.total != null) ? (
+        <dl className="ml-auto w-full max-w-xs space-y-1 border-t pt-3 text-sm">
+          {totals.subtotal != null ? (
+            <div className="flex items-baseline justify-between gap-3">
+              <dt className="text-muted-foreground">Subtotal (excl. GST)</dt>
+              <dd className="font-medium">
+                {formatCurrency(totals.subtotal, currency)}
+              </dd>
+            </div>
+          ) : null}
+          {totals.taxAmount != null ? (
+            <div className="flex items-baseline justify-between gap-3">
+              <dt className="text-muted-foreground">GST</dt>
+              <dd className="font-medium">
+                {formatCurrency(totals.taxAmount, currency)}
+              </dd>
+            </div>
+          ) : null}
+          {totals.total != null ? (
+            <div className="flex items-baseline justify-between gap-3">
+              <dt className="text-muted-foreground">Total (incl. GST)</dt>
+              <dd className="font-semibold">{formatCurrency(totals.total, currency)}</dd>
+            </div>
+          ) : null}
+        </dl>
+      ) : null}
 
       {error ? (
         <Alert variant="destructive">

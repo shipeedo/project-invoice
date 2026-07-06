@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ChevronDownIcon, PencilIcon, PlusIcon } from "lucide-react";
+import { ChevronDownIcon, PlusIcon, TrashIcon } from "lucide-react";
 import { useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -12,13 +12,21 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import {
-  Combobox,
-  ComboboxContent,
-  ComboboxEmpty,
-  ComboboxInput,
-  ComboboxItem,
-  ComboboxList,
-} from "@/components/ui/combobox";
+  Autocomplete,
+  AutocompleteContent,
+  AutocompleteEmpty,
+  AutocompleteInput,
+  AutocompleteItem,
+  AutocompleteList,
+} from "@/components/ui/autocomplete";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
@@ -47,6 +55,7 @@ type Supplier = {
   name: string;
   emailAddresses: string[];
   emailDomains: string[];
+  tradingTermDays: number | null;
   extractionPrompt: string | null;
   fieldMappings: SupplierFieldMappings;
   invoiceCount: number;
@@ -71,17 +80,26 @@ function formatInboxMessageCount(count: number) {
   return `${count} message${count === 1 ? "" : "s"}`;
 }
 
+function parseTradingTerms(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const days = Number.parseInt(trimmed, 10);
+  return Number.isFinite(days) && days > 0 ? days : null;
+}
+
 function CreateSupplierPanel({
   suggestions,
   createName,
   createEmails,
   createDomains,
+  createTradingTerms,
   selectedSuggestion,
   creating,
   error,
   onNameChange,
   onEmailsChange,
   onDomainsChange,
+  onTradingTermsChange,
   onSelectSuggestion,
   onSubmit,
   onCancel,
@@ -90,34 +108,43 @@ function CreateSupplierPanel({
   createName: string;
   createEmails: string;
   createDomains: string;
+  createTradingTerms: string;
   selectedSuggestion: SupplierSuggestion | null;
   creating: boolean;
   error: string | null;
   onNameChange: (value: string) => void;
   onEmailsChange: (value: string) => void;
   onDomainsChange: (value: string) => void;
-  onSelectSuggestion: (suggestion: SupplierSuggestion | null) => void;
+  onTradingTermsChange: (value: string) => void;
+  onSelectSuggestion: (
+    suggestion: SupplierSuggestion | null,
+    source?: "name" | "email",
+  ) => void;
   onSubmit: () => void;
   onCancel: () => void;
 }) {
   const hasSuggestions = suggestions.length > 0;
 
-  function handleNameInputChange(value: string) {
+  function handleNameInputChange(value: string, details: { reason: string }) {
     onNameChange(value);
-    if (selectedSuggestion && value !== selectedSuggestion.suggestedName) {
+    if (
+      details.reason === "input-change" &&
+      selectedSuggestion &&
+      value !== selectedSuggestion.suggestedName
+    ) {
       onSelectSuggestion(null);
     }
   }
 
-  function handleEmailInputChange(value: string) {
+  function handleEmailInputChange(value: string, details: { reason: string }) {
     onEmailsChange(value);
-    if (selectedSuggestion && value !== selectedSuggestion.email) {
+    if (
+      details.reason === "input-change" &&
+      selectedSuggestion &&
+      value !== selectedSuggestion.email
+    ) {
       onSelectSuggestion(null);
     }
-  }
-
-  function handleSuggestionPick(suggestion: SupplierSuggestion) {
-    onSelectSuggestion(suggestion);
   }
 
   return (
@@ -132,39 +159,38 @@ function CreateSupplierPanel({
         <div className="flex flex-col gap-2">
           <Label htmlFor="create-name">Supplier name</Label>
           {hasSuggestions ? (
-            <Combobox
+            <Autocomplete
               items={suggestions}
-              itemToStringLabel={(suggestion: SupplierSuggestion) => suggestion.suggestedName}
               itemToStringValue={(suggestion: SupplierSuggestion) => suggestion.suggestedName}
-              isItemEqualToValue={(a, b) => a.id === b.id}
-              inputValue={createName}
-              onInputValueChange={handleNameInputChange}
-              onValueChange={(suggestion) => {
-                if (suggestion) handleSuggestionPick(suggestion);
-              }}
+              value={createName}
+              onValueChange={handleNameInputChange}
+              openOnInputClick
             >
-              <ComboboxInput
+              <AutocompleteInput
                 id="create-name"
                 className="w-full"
                 placeholder="Acme Transport"
-                showClear={false}
               />
-              <ComboboxContent>
-                <ComboboxEmpty>No matching inbox senders.</ComboboxEmpty>
-                <ComboboxList>
-                  {(suggestion) => (
-                    <ComboboxItem key={suggestion.id} value={suggestion}>
+              <AutocompleteContent>
+                <AutocompleteEmpty>No matching inbox senders.</AutocompleteEmpty>
+                <AutocompleteList>
+                  {(suggestion: SupplierSuggestion) => (
+                    <AutocompleteItem
+                      key={suggestion.id}
+                      value={suggestion}
+                      onClick={() => onSelectSuggestion(suggestion, "name")}
+                    >
                       <div className="flex flex-col gap-0.5">
                         <span>{suggestion.suggestedName}</span>
                         <span className="text-xs text-muted-foreground">
                           {suggestion.email} · {formatInboxMessageCount(suggestion.messageCount)}
                         </span>
                       </div>
-                    </ComboboxItem>
+                    </AutocompleteItem>
                   )}
-                </ComboboxList>
-              </ComboboxContent>
-            </Combobox>
+                </AutocompleteList>
+              </AutocompleteContent>
+            </Autocomplete>
           ) : (
             <Input
               id="create-name"
@@ -179,39 +205,38 @@ function CreateSupplierPanel({
         <div className="flex flex-col gap-2">
           <Label htmlFor="create-emails">Email addresses</Label>
           {hasSuggestions ? (
-            <Combobox
+            <Autocomplete
               items={suggestions}
-              itemToStringLabel={(suggestion: SupplierSuggestion) => suggestion.email}
               itemToStringValue={(suggestion: SupplierSuggestion) => suggestion.email}
-              isItemEqualToValue={(a, b) => a.id === b.id}
-              inputValue={createEmails}
-              onInputValueChange={handleEmailInputChange}
-              onValueChange={(suggestion) => {
-                if (suggestion) handleSuggestionPick(suggestion);
-              }}
+              value={createEmails}
+              onValueChange={handleEmailInputChange}
+              openOnInputClick
             >
-              <ComboboxInput
+              <AutocompleteInput
                 id="create-emails"
                 className="w-full"
                 placeholder="billing@acme.com"
-                showClear={false}
               />
-              <ComboboxContent>
-                <ComboboxEmpty>No matching inbox senders.</ComboboxEmpty>
-                <ComboboxList>
-                  {(suggestion) => (
-                    <ComboboxItem key={suggestion.id} value={suggestion}>
+              <AutocompleteContent>
+                <AutocompleteEmpty>No matching inbox senders.</AutocompleteEmpty>
+                <AutocompleteList>
+                  {(suggestion: SupplierSuggestion) => (
+                    <AutocompleteItem
+                      key={suggestion.id}
+                      value={suggestion}
+                      onClick={() => onSelectSuggestion(suggestion, "email")}
+                    >
                       <div className="flex flex-col gap-0.5">
                         <span>{suggestion.email}</span>
                         <span className="text-xs text-muted-foreground">
                           {suggestion.suggestedName} · {formatInboxMessageCount(suggestion.messageCount)}
                         </span>
                       </div>
-                    </ComboboxItem>
+                    </AutocompleteItem>
                   )}
-                </ComboboxList>
-              </ComboboxContent>
-            </Combobox>
+                </AutocompleteList>
+              </AutocompleteContent>
+            </Autocomplete>
           ) : (
             <Input
               id="create-emails"
@@ -237,6 +262,23 @@ function CreateSupplierPanel({
           />
           <p className="text-sm text-muted-foreground">
             Used to match invoices from any address at this domain.
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="create-trading-terms">Trading terms (days)</Label>
+          <Input
+            id="create-trading-terms"
+            type="number"
+            min={1}
+            inputMode="numeric"
+            placeholder="e.g. 7"
+            value={createTradingTerms}
+            onChange={(event) => onTradingTermsChange(event.target.value)}
+          />
+          <p className="text-sm text-muted-foreground">
+            Optional. Days after the invoice date until it is due. When set, this
+            overrides the due date stated on the invoice.
           </p>
         </div>
       </div>
@@ -265,6 +307,7 @@ export function SuppliersManager({
   const [createName, setCreateName] = useState("");
   const [createEmails, setCreateEmails] = useState("");
   const [createDomains, setCreateDomains] = useState("");
+  const [createTradingTerms, setCreateTradingTerms] = useState("");
   const [creating, setCreating] = useState(false);
   const [selectedSuggestion, setSelectedSuggestion] = useState<SupplierSuggestion | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -272,9 +315,12 @@ export function SuppliersManager({
   const [editName, setEditName] = useState("");
   const [editEmails, setEditEmails] = useState("");
   const [editDomains, setEditDomains] = useState("");
+  const [editTradingTerms, setEditTradingTerms] = useState("");
   const [editPrompt, setEditPrompt] = useState("");
   const [originalPrompt, setOriginalPrompt] = useState("");
   const [saving, setSaving] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   async function refreshSuppliers() {
     const response = await fetch("/api/admin/suppliers");
@@ -296,6 +342,7 @@ export function SuppliersManager({
     setCreateName("");
     setCreateEmails("");
     setCreateDomains("");
+    setCreateTradingTerms("");
     setSelectedSuggestion(null);
   }
 
@@ -304,6 +351,9 @@ export function SuppliersManager({
     setEditName(supplier.name);
     setEditEmails(supplier.emailAddresses.join(", "));
     setEditDomains(supplier.emailDomains.join(", "));
+    setEditTradingTerms(
+      supplier.tradingTermDays != null ? String(supplier.tradingTermDays) : "",
+    );
     const prompt = supplier.extractionPrompt ?? "";
     setEditPrompt(prompt);
     setOriginalPrompt(prompt);
@@ -314,6 +364,32 @@ export function SuppliersManager({
     setEditingSupplier(null);
     setSaving(false);
     setOriginalPrompt("");
+    setConfirmingDelete(false);
+    setDeleting(false);
+  }
+
+  async function deleteSupplier() {
+    if (!editingSupplier) return;
+
+    setDeleting(true);
+    setError(null);
+
+    const response = await fetch(`/api/admin/suppliers/${editingSupplier.id}`, {
+      method: "DELETE",
+    });
+
+    setDeleting(false);
+
+    if (!response.ok) {
+      setConfirmingDelete(false);
+      setError("Failed to delete supplier");
+      return;
+    }
+
+    setSuppliers((current) =>
+      current.filter((supplier) => supplier.id !== editingSupplier.id),
+    );
+    closeEditor();
   }
 
   async function createSupplier() {
@@ -336,6 +412,7 @@ export function SuppliersManager({
         name: createName,
         emailAddresses,
         emailDomains,
+        tradingTermDays: parseTradingTerms(createTradingTerms),
       }),
     });
 
@@ -355,15 +432,26 @@ export function SuppliersManager({
     closeCreateSheet();
   }
 
-  function selectSuggestion(suggestion: SupplierSuggestion | null) {
-    if (suggestion) {
-      setCreateName(suggestion.suggestedName);
-      setCreateEmails(suggestion.email);
-      setCreateDomains(suggestion.domain ?? "");
-      setSelectedSuggestion(suggestion);
+  function selectSuggestion(
+    suggestion: SupplierSuggestion | null,
+    source?: "name" | "email",
+  ) {
+    if (!suggestion) {
+      setSelectedSuggestion(null);
       return;
     }
-    setSelectedSuggestion(null);
+    // Always fill the field the suggestion was picked from; only fill the
+    // others when the user hasn't typed anything there yet.
+    if (source === "name" || !createName.trim()) {
+      setCreateName(suggestion.suggestedName);
+    }
+    if (source === "email" || !createEmails.trim()) {
+      setCreateEmails(suggestion.email);
+    }
+    if (!createDomains.trim() && suggestion.domain) {
+      setCreateDomains(suggestion.domain);
+    }
+    setSelectedSuggestion(suggestion);
   }
 
   async function saveSupplier() {
@@ -388,6 +476,7 @@ export function SuppliersManager({
         name: editName,
         emailAddresses,
         emailDomains,
+        tradingTermDays: parseTradingTerms(editTradingTerms),
         ...(editPrompt !== originalPrompt ? { extractionPrompt: editPrompt } : {}),
       }),
     });
@@ -439,19 +528,22 @@ export function SuppliersManager({
                 <TableHead>Emails</TableHead>
                 <TableHead className="text-right">Invoices</TableHead>
                 <TableHead>Last invoice</TableHead>
-                <TableHead className="w-[100px]" />
               </TableRow>
             </TableHeader>
             <TableBody>
               {suppliers.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-muted-foreground">
+                  <TableCell colSpan={4} className="text-muted-foreground">
                     No suppliers yet. Create one to start linking inbox senders and invoices.
                   </TableCell>
                 </TableRow>
               ) : (
                 suppliers.map((supplier) => (
-                  <TableRow key={supplier.id}>
+                  <TableRow
+                    key={supplier.id}
+                    className="cursor-pointer"
+                    onClick={() => openEditor(supplier)}
+                  >
                     <TableCell className="font-medium">{supplier.name}</TableCell>
                     <TableCell className="max-w-xs truncate">
                       {supplier.emailAddresses.join(", ") || "—"}
@@ -462,6 +554,7 @@ export function SuppliersManager({
                           href={`/queue?supplier=${supplier.id}`}
                           className="font-medium text-primary hover:underline"
                           title={`View ${supplier.name} invoices`}
+                          onClick={(event) => event.stopPropagation()}
                         >
                           {supplier.invoiceCount}
                         </Link>
@@ -470,17 +563,6 @@ export function SuppliersManager({
                       )}
                     </TableCell>
                     <TableCell>{formatDate(supplier.lastInvoiceAt)}</TableCell>
-                    <TableCell>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => openEditor(supplier)}
-                      >
-                        <PencilIcon />
-                        Edit
-                      </Button>
-                    </TableCell>
                   </TableRow>
                 ))
               )}
@@ -511,12 +593,14 @@ export function SuppliersManager({
             createName={createName}
             createEmails={createEmails}
             createDomains={createDomains}
+            createTradingTerms={createTradingTerms}
             creating={creating}
             error={createSheetOpen ? error : null}
             selectedSuggestion={selectedSuggestion}
             onNameChange={setCreateName}
             onEmailsChange={setCreateEmails}
             onDomainsChange={setCreateDomains}
+            onTradingTermsChange={setCreateTradingTerms}
             onSelectSuggestion={selectSuggestion}
             onSubmit={() => void createSupplier()}
             onCancel={closeCreateSheet}
@@ -570,6 +654,24 @@ export function SuppliersManager({
                 />
               </div>
 
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="edit-trading-terms">Trading terms (days)</Label>
+                <Input
+                  id="edit-trading-terms"
+                  type="number"
+                  min={1}
+                  inputMode="numeric"
+                  placeholder="e.g. 7"
+                  value={editTradingTerms}
+                  onChange={(event) => setEditTradingTerms(event.target.value)}
+                />
+                <p className="text-sm text-muted-foreground">
+                  Optional. Days after the invoice date until it is due. When set,
+                  this overrides the due date stated on the invoice. Leave blank to
+                  use the due date from the invoice.
+                </p>
+              </div>
+
               <Collapsible className="group/collapsible">
                 <CollapsibleTrigger
                   render={
@@ -608,11 +710,55 @@ export function SuppliersManager({
                 <Button type="button" variant="outline" onClick={closeEditor}>
                   Cancel
                 </Button>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  className="ml-auto"
+                  onClick={() => setConfirmingDelete(true)}
+                  disabled={saving || deleting}
+                >
+                  <TrashIcon />
+                  Delete supplier
+                </Button>
               </div>
             </div>
           ) : null}
         </SheetContent>
       </Sheet>
+
+      <Dialog
+        open={confirmingDelete}
+        onOpenChange={(open) => !open && !deleting && setConfirmingDelete(false)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete supplier</DialogTitle>
+            <DialogDescription>
+              {editingSupplier
+                ? `This permanently deletes ${editingSupplier.name}. Invoices and emails already linked to this supplier are kept but unlinked, and its extraction prompt is lost.`
+                : null}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setConfirmingDelete(false)}
+              disabled={deleting}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => void deleteSupplier()}
+              disabled={deleting}
+            >
+              {deleting ? "Deleting..." : "Delete supplier"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

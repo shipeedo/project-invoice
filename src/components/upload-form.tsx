@@ -16,7 +16,7 @@ export function UploadForm() {
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!file) {
-      setError("Choose a PDF invoice to upload.");
+      setError("Choose an invoice file to upload.");
       return;
     }
 
@@ -47,17 +47,17 @@ export function UploadForm() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Upload transport invoice (PDF)</CardTitle>
+        <CardTitle>Upload transport invoice</CardTitle>
         <CardDescription>
-          The pilot flow extracts header fields and line items via AI Gateway, then routes the
-          invoice to an approver.
+          Upload a PDF, CSV, Excel, or Word invoice. The system extracts header fields and line
+          items via AI Gateway, then routes the invoice to an approver.
         </CardDescription>
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4">
           <Input
             type="file"
-            accept="application/pdf,.pdf"
+            accept=".pdf,.csv,.xlsx,.xls,.docx,application/pdf,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             onChange={(event) => setFile(event.target.files?.[0] ?? null)}
           />
 

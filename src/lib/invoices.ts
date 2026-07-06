@@ -2,12 +2,22 @@ import { eq } from "drizzle-orm";
 import { db, invoices, suppliers } from "@/lib/db";
 import { recordAuditEvent } from "@/lib/audit";
 import {
-  extractInvoiceFromPdf,
+  extractInvoiceFromDocument,
   parseInvoiceDate,
   type ExtractedLineItem,
 } from "@/lib/extraction";
-import { mergeLineItemAssignments } from "@/lib/line-items";
+import {
+  applyRejectedLineIndexes,
+  mergeLineItemAssignments,
+  parseLineItems,
+  resolveLineItemStatus,
+} from "@/lib/line-items";
+import {
+  computeLineItemTotals,
+  type InvoiceTotalsSource,
+} from "@/lib/invoice-totals";
 import type { ExtractionCandidates, ValidatableField } from "@/lib/extraction-types";
+import { resolveDueDate } from "@/lib/trading-terms";
 import { assignApproverForInvoice, ensureDefaultRoutingRules } from "@/lib/routing";
 import {
   buildNewSupplierValues,
@@ -70,7 +80,11 @@ export async function processUploadedInvoice(params: {
     details: { sourceType: "UPLOAD", fileName: params.fileName },
   });
 
-  let extraction = await extractInvoiceFromPdf(params.filePath, params.fileName);
+  let extraction = await extractInvoiceFromDocument(
+    params.filePath,
+    params.fileName,
+    params.mimeType,
+  );
 
   const supplier = extraction.data
     ? await resolveSupplierFromExtraction(params.organizationId, {
@@ -87,9 +101,10 @@ export async function processUploadedInvoice(params: {
       supplier.id,
     );
     if (supplierHasCustomExtraction(supplierContext)) {
-      extraction = await extractInvoiceFromPdf(
+      extraction = await extractInvoiceFromDocument(
         params.filePath,
         params.fileName,
+        params.mimeType,
         supplierContext,
       );
     }
@@ -98,6 +113,12 @@ export async function processUploadedInvoice(params: {
   const fieldCandidates =
     extraction.fieldCandidates ?? extraction.data?.fieldCandidates ?? null;
 
+  const resolvedDueDate = resolveDueDate({
+    invoiceDate: parseInvoiceDate(extraction.data?.invoiceDate),
+    extractedDueDate: parseInvoiceDate(extraction.data?.dueDate),
+    tradingTermDays: supplier?.tradingTermDays,
+  });
+
   const [updatedInvoice] = await db
     .update(invoices)
     .set({
@@ -105,9 +126,12 @@ export async function processUploadedInvoice(params: {
       vendorEmail: extraction.data?.vendorEmail ?? null,
       invoiceNumber: extraction.data?.invoiceNumber,
       invoiceDate: parseInvoiceDate(extraction.data?.invoiceDate),
-      dueDate: parseInvoiceDate(extraction.data?.dueDate),
+      dueDate: resolvedDueDate.dueDate,
+      originalDueDate: resolvedDueDate.originalDueDate,
       respondByDate: parseInvoiceDate(extraction.data?.respondByDate),
       totalAmount: extraction.data?.totalAmount,
+      subtotalAmount: extraction.data?.subtotal,
+      taxAmount: extraction.data?.taxAmount,
       currency: extraction.data?.currency ?? "AUD",
       lineItems: extraction.data?.lineItems
         ? JSON.stringify(extraction.data.lineItems)
@@ -134,6 +158,20 @@ export async function processUploadedInvoice(params: {
       pendingValidation: !extraction.error,
     },
   });
+
+  if (resolvedDueDate.overridden) {
+    await recordAuditEvent({
+      invoiceId: invoice.id,
+      userId: params.userId,
+      action: "invoice.due_date_overridden",
+      details: {
+        supplierId: supplier?.id,
+        tradingTermDays: resolvedDueDate.tradingTermDays,
+        originalDueDate: resolvedDueDate.originalDueDate?.toISOString() ?? null,
+        dueDate: resolvedDueDate.dueDate?.toISOString() ?? null,
+      },
+    });
+  }
 
   const withSupplier = await db.query.invoices.findFirst({
     where: eq(invoices.id, updatedInvoice.id),
@@ -165,6 +203,10 @@ export type ValidateInvoiceInput = {
     emailDomains?: string[];
   };
   selectedSources?: Partial<Record<ValidatableField, string>>;
+  /** Line indexes deselected during validation; marked REJECTED on confirm. */
+  rejectedLineIndexes?: number[];
+  /** Which totals to save: the extracted document totals (default) or totals computed from the selected line items. */
+  totalsSource?: InvoiceTotalsSource;
 };
 
 export async function validateInvoice(input: ValidateInvoiceInput) {
@@ -183,6 +225,33 @@ export async function validateInvoice(input: ValidateInvoiceInput) {
 
   if (!input.fields.vendorName?.trim()) {
     return { error: "Supplier name is required" as const };
+  }
+
+  const mergedLineItems = input.lineItems
+    ? mergeLineItemAssignments(parseLineItems(invoice.lineItems), input.lineItems)
+    : parseLineItems(invoice.lineItems);
+  const rejectedLineIndexes = [...new Set(input.rejectedLineIndexes ?? [])].filter(
+    (index) => index >= 0 && index < mergedLineItems.length,
+  );
+
+  if (
+    mergedLineItems.length > 0 &&
+    rejectedLineIndexes.length >= mergedLineItems.length
+  ) {
+    return { error: "At least one line item must be selected" as const };
+  }
+
+  const nextLineItems = applyRejectedLineIndexes(mergedLineItems, rejectedLineIndexes);
+
+  const totalsSource = input.totalsSource ?? "DOCUMENT";
+  const lineItemTotals = computeLineItemTotals(
+    nextLineItems.filter((item) => resolveLineItemStatus(item) !== "REJECTED"),
+  );
+
+  if (totalsSource === "LINE_ITEMS" && lineItemTotals.total == null) {
+    return {
+      error: "Selected line items have no amounts to calculate totals from" as const,
+    };
   }
 
   let supplierId = input.supplierId ?? invoice.supplierId;
@@ -237,6 +306,27 @@ export async function validateInvoice(input: ValidateInvoiceInput) {
     });
   }
 
+  const supplierTradingTermDays = supplierId
+    ? invoice.supplier?.id === supplierId
+      ? invoice.supplier.tradingTermDays
+      : ((
+          await db.query.suppliers.findFirst({
+            where: eq(suppliers.id, supplierId),
+            columns: { tradingTermDays: true },
+          })
+        )?.tradingTermDays ?? null)
+    : null;
+
+  // The due date field may already hold a value overridden by trading terms at
+  // extraction time, so prefer the document's stated due date captured then.
+  const statedDueDate =
+    invoice.originalDueDate ?? parseInvoiceDate(input.fields.dueDate);
+  const resolvedDueDate = resolveDueDate({
+    invoiceDate: parseInvoiceDate(input.fields.invoiceDate),
+    extractedDueDate: statedDueDate,
+    tradingTermDays: supplierTradingTermDays,
+  });
+
   const [validatedInvoice] = await db
     .update(invoices)
     .set({
@@ -244,18 +334,24 @@ export async function validateInvoice(input: ValidateInvoiceInput) {
       vendorEmail: input.fields.vendorEmail?.trim() || null,
       invoiceNumber: input.fields.invoiceNumber?.trim() || null,
       invoiceDate: parseInvoiceDate(input.fields.invoiceDate),
-      dueDate: parseInvoiceDate(input.fields.dueDate),
+      dueDate: resolvedDueDate.dueDate,
+      originalDueDate: resolvedDueDate.originalDueDate,
       respondByDate: parseInvoiceDate(input.fields.respondByDate),
-      totalAmount: input.fields.totalAmount ?? null,
+      // DOCUMENT keeps the extracted subtotal/tax on the invoice untouched;
+      // LINE_ITEMS overwrites all three totals with values computed from the
+      // lines still selected.
+      ...(totalsSource === "LINE_ITEMS"
+        ? {
+            totalAmount: lineItemTotals.total,
+            subtotalAmount: lineItemTotals.subtotal,
+            taxAmount: lineItemTotals.taxAmount,
+          }
+        : { totalAmount: input.fields.totalAmount ?? null }),
       currency: input.fields.currency?.trim().toUpperCase() || "AUD",
-      lineItems: input.lineItems
-        ? JSON.stringify(
-            mergeLineItemAssignments(
-              invoice.lineItems ? (JSON.parse(invoice.lineItems) as ExtractedLineItem[]) : [],
-              input.lineItems,
-            ),
-          )
-        : invoice.lineItems,
+      lineItems:
+        input.lineItems || rejectedLineIndexes.length > 0
+          ? JSON.stringify(nextLineItems)
+          : invoice.lineItems,
       supplierId,
       validatedAt: new Date(),
       validatedById: input.userId,
@@ -288,8 +384,36 @@ export async function validateInvoice(input: ValidateInvoiceInput) {
       supplierId,
       selectedSources: input.selectedSources,
       assignedToId: approver?.id,
+      totalsSource,
+      ...(totalsSource === "LINE_ITEMS" ? { totals: lineItemTotals } : {}),
+      ...(rejectedLineIndexes.length > 0
+        ? {
+            rejectedLineIndexes,
+            rejectedLineCount: rejectedLineIndexes.length,
+          }
+        : {}),
     },
   });
+
+  // Only log the override when validation actually changed the due date (e.g. a
+  // newly assigned supplier or edited invoice date), not when it merely
+  // re-confirms an override already applied and logged at extraction time.
+  const dueDateChanged =
+    (resolvedDueDate.dueDate?.getTime() ?? null) !==
+    (invoice.dueDate?.getTime() ?? null);
+  if (resolvedDueDate.overridden && dueDateChanged) {
+    await recordAuditEvent({
+      invoiceId: input.invoiceId,
+      userId: input.userId,
+      action: "invoice.due_date_overridden",
+      details: {
+        supplierId,
+        tradingTermDays: resolvedDueDate.tradingTermDays,
+        originalDueDate: resolvedDueDate.originalDueDate?.toISOString() ?? null,
+        dueDate: resolvedDueDate.dueDate?.toISOString() ?? null,
+      },
+    });
+  }
 
   if (approver) {
     await recordAuditEvent({

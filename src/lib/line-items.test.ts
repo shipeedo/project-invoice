@@ -3,10 +3,12 @@ import {
   applyLineAssignmentUpdates,
   applyLineDecisionUpdates,
   applyLineEditUpdates,
+  applyRejectedLineIndexes,
   deriveInvoiceStatusFromLineItems,
   mergeLineItemAssignments,
   parseLineItemEditUpdates,
   parseLineItems,
+  parseRejectedLineIndexes,
   resolveLineAssigneeId,
   resolveLineItemStatus,
   setAllLineItemStatuses,
@@ -201,6 +203,49 @@ describe("applyLineEditUpdates", () => {
     ]);
 
     expect(updated.map((item) => item.serviceType)).toEqual(["Freight", "Freight"]);
+  });
+});
+
+describe("parseRejectedLineIndexes", () => {
+  it("treats a missing payload as no deselections", () => {
+    expect(parseRejectedLineIndexes(undefined)).toEqual([]);
+  });
+
+  it("sorts and deduplicates valid indexes", () => {
+    expect(parseRejectedLineIndexes([3, 0, 3, 1])).toEqual([0, 1, 3]);
+    expect(parseRejectedLineIndexes([])).toEqual([]);
+  });
+
+  it("rejects non-arrays, non-integers, and negatives", () => {
+    expect(parseRejectedLineIndexes(null)).toBeNull();
+    expect(parseRejectedLineIndexes("0,1")).toBeNull();
+    expect(parseRejectedLineIndexes([0.5])).toBeNull();
+    expect(parseRejectedLineIndexes(["1"])).toBeNull();
+    expect(parseRejectedLineIndexes([-1])).toBeNull();
+  });
+});
+
+describe("applyRejectedLineIndexes", () => {
+  it("marks only the deselected lines rejected", () => {
+    const items: ExtractedLineItem[] = [
+      { description: "A" },
+      { description: "B" },
+      { description: "C" },
+    ];
+
+    const updated = applyRejectedLineIndexes(items, [1]);
+
+    expect(updated.map((item) => item.status)).toEqual([undefined, "REJECTED", undefined]);
+  });
+
+  it("returns the input untouched when nothing is deselected", () => {
+    const items: ExtractedLineItem[] = [{ description: "A" }];
+    expect(applyRejectedLineIndexes(items, [])).toBe(items);
+  });
+
+  it("ignores out-of-range indexes", () => {
+    const items: ExtractedLineItem[] = [{ description: "A" }];
+    expect(applyRejectedLineIndexes(items, [5])[0].status).toBeUndefined();
   });
 });
 

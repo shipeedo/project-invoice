@@ -1,19 +1,24 @@
 import Link from "next/link";
-import { asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 import { InvoiceQueue } from "@/components/invoice-queue";
 import { AppShell } from "@/components/app-shell";
 import { buttonVariants } from "@/components/ui/button";
 import { db, invoices, suppliers, users } from "@/lib/db";
 import { RESPOND_BY_BUSINESS_DAYS } from "@/lib/invoice-deadlines";
+import { invoiceNotDeleted } from "@/lib/invoice-trash";
+import { getNavCounts } from "@/lib/nav-counts";
 import { requireSession } from "@/lib/session";
 import { cn } from "@/lib/utils";
 
 export default async function QueuePage() {
   const session = await requireSession();
 
-  const [rows, supplierRows, userRows] = await Promise.all([
+  const [rows, supplierRows, userRows, navCounts] = await Promise.all([
     db.query.invoices.findMany({
-      where: eq(invoices.organizationId, session.user.organizationId),
+      where: and(
+        eq(invoices.organizationId, session.user.organizationId),
+        invoiceNotDeleted(),
+      ),
       with: {
         assignedTo: { columns: { id: true, name: true, email: true } },
         supplier: { columns: { id: true, name: true } },
@@ -30,6 +35,7 @@ export default async function QueuePage() {
       columns: { id: true, name: true, email: true },
       orderBy: asc(users.name),
     }),
+    getNavCounts(session.user.organizationId),
   ]);
 
   const serializedInvoices = rows.map((invoice) => ({
@@ -56,12 +62,13 @@ export default async function QueuePage() {
     <AppShell
       user={session.user}
       activePath="/queue"
-      breadcrumbs={[{ label: "Invoices", href: "/queue" }, { label: "Queue" }]}
+      navCounts={navCounts}
+      breadcrumbs={[{ label: "Invoices" }]}
     >
       <div className="space-y-6">
         <div className="flex items-end justify-between gap-4">
           <div>
-            <h2 className="text-2xl font-semibold">Approval queue</h2>
+            <h2 className="text-2xl font-semibold">Invoices</h2>
             <p className="mt-1 text-sm text-muted-foreground">
               Search and filter invoices by supplier, assignee, status, and urgency.
               Respond-by is {RESPOND_BY_BUSINESS_DAYS} business days after validation.

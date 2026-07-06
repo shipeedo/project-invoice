@@ -1,4 +1,5 @@
 export const EXTRACTION_JSON_SCHEMA = `{
+  "documentType": "invoice | credit_note | statement | quote | other — what this document actually is. A statement of account (a list of previously issued invoices with balances owing, ageing buckets, or amounts brought forward) is 'statement', NOT 'invoice'",
   "vendorName": "string — supplier/carrier name (the party issuing the invoice, NOT bill-to or ship-to)",
   "vendorEmail": "string or null — supplier email if shown",
   "invoiceNumber": "string or null — invoice / tax invoice number",
@@ -43,6 +44,13 @@ You receive text extracted from a PDF invoice. Treat this like a real invoice on
 2. Extract EVERY billable line item — do not summarise multiple charges into one row.
 3. Return structured JSON that downstream software can store and display without further cleanup.
 4. For each header field, list ALL plausible values you find on the invoice in fieldCandidates so a human can choose the correct one.
+
+## Document type — critical
+- First decide what the document IS and set documentType accordingly.
+- A statement of account / account statement / activity statement lists PREVIOUSLY ISSUED invoices with amounts outstanding, running balances, ageing buckets (Current / 30 / 60 / 90+ days), or a balance brought forward. It is NOT an invoice — set documentType to "statement", extract any header fields you can, and return an empty lineItems array. Do NOT convert the listed invoices into line items.
+- A tax invoice / invoice billing for specific goods or services is "invoice".
+- A credit note / adjustment note is "credit_note"; a quote or estimate is "quote"; anything else (remittance advice, reminder letter, purchase order) is "other".
+- When in doubt between "invoice" and "statement": a document referencing several distinct invoice numbers with their individual balances is a statement.
 
 ## Supplier vs bill-to — critical
 - vendorName is the party ISSUING the invoice (carrier, freight company, supplier). This is often in the letterhead, logo area, or "From" section.
@@ -160,6 +168,52 @@ ${SUPPLIER_FROM_EMAIL_JSON_SCHEMA}
 
 Email thread (${params.messages.length} message${params.messages.length === 1 ? "" : "s"}, oldest to newest):
 ${threadBlocks.join("\n\n")}`;
+}
+
+export function buildSpreadsheetHeaderExtractionUserPrompt(
+  fileName: string,
+  invoiceText: string,
+  parsedLineItemCount: number,
+  emailContext?: {
+    subject?: string | null;
+    fromEmail?: string | null;
+    fromName?: string | null;
+    bodyText?: string | null;
+  },
+) {
+  const emailSection =
+    emailContext?.bodyText?.trim()
+      ? `
+
+Email context (the invoice arrived via email — use this to clarify ambiguous fields):
+Subject: ${emailContext.subject ?? "(none)"}
+From: ${emailContext.fromName ? `${emailContext.fromName} <${emailContext.fromEmail}>` : (emailContext.fromEmail ?? "(unknown)")}
+
+Email body:
+"""
+${emailContext.bodyText.trim()}
+"""`
+      : "";
+
+  return `Review the following transport/supplier invoice spreadsheet and extract header fields for accounts payable.
+
+File name: ${fileName}
+Parsed line item rows: ${parsedLineItemCount}
+
+The spreadsheet rows have already been parsed into line items in our system. Do NOT enumerate spreadsheet rows in lineItems — return "lineItems": [] always.
+
+Return JSON matching this schema exactly:
+${EXTRACTION_JSON_SCHEMA}
+
+Spreadsheet preview (may be truncated):
+"""
+${invoiceText}
+"""${emailSection}
+
+Before responding, mentally verify:
+- lineItems is an empty array
+- totalAmount matches the invoice's stated total when visible, or the sum of charge rows when only line totals are shown
+- fieldCandidates lists alternative values for header fields when the document shows more than one possibility`;
 }
 
 export function buildInvoiceExtractionUserPrompt(

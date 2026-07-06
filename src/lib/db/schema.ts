@@ -81,8 +81,14 @@ export const invoices = sqliteTable("invoices", {
   invoiceNumber: text("invoice_number"),
   invoiceDate: integer("invoice_date", { mode: "timestamp_ms" }),
   dueDate: integer("due_date", { mode: "timestamp_ms" }),
+  // The due date as stated on the invoice document, retained only when the
+  // supplier's trading terms overrode it (invoice date + term days). Null means
+  // the due date was not overridden.
+  originalDueDate: integer("original_due_date", { mode: "timestamp_ms" }),
   respondByDate: integer("respond_by_date", { mode: "timestamp_ms" }),
   totalAmount: real("total_amount"),
+  subtotalAmount: real("subtotal_amount"),
+  taxAmount: real("tax_amount"),
   currency: text("currency").default("AUD"),
   lineItems: text("line_items"),
   extractionCandidates: text("extraction_candidates"),
@@ -112,6 +118,10 @@ export const invoices = sqliteTable("invoices", {
   holdPreviousStatus: text("hold_previous_status"),
   cancelledAt: integer("cancelled_at", { mode: "timestamp_ms" }),
   cancelledById: text("cancelled_by_id").references(() => users.id, {
+    onDelete: "set null",
+  }),
+  deletedAt: integer("deleted_at", { mode: "timestamp_ms" }),
+  deletedById: text("deleted_by_id").references(() => users.id, {
     onDelete: "set null",
   }),
   createdAt: timestamp(),
@@ -183,6 +193,9 @@ export const suppliers = sqliteTable("suppliers", {
   name: text("name").notNull(),
   emailAddresses: text("email_addresses").notNull().default("[]"),
   emailDomains: text("email_domains").notNull().default("[]"),
+  // Optional trading terms: number of days after the invoice date until an
+  // invoice is due. When set, it overrides the due date stated on invoices.
+  tradingTermDays: integer("trading_term_days"),
   extractionPrompt: text("extraction_prompt"),
   fieldMappings: text("field_mappings").notNull().default("{}"),
   createdAt: timestamp(),
@@ -259,6 +272,7 @@ export const processedO365Messages = sqliteTable(
     invoiceId: text("invoice_id").references(() => invoices.id, {
       onDelete: "set null",
     }),
+    ignoreReason: text("ignore_reason"),
     processedAt: timestamp(),
   },
   (table) => [
@@ -417,6 +431,12 @@ export const creditRequests = sqliteTable("credit_requests", {
   rootMessageId: text("root_message_id").references(() => mailboxMessages.id, {
     onDelete: "set null",
   }),
+  lineItems: text("line_items").notNull().default("[]"),
+  requestedTotal: real("requested_total"),
+  fuelAmount: real("fuel_amount"),
+  gstAmount: real("gst_amount"),
+  approvedAmount: real("approved_amount"),
+  notes: text("notes"),
   createdAt: timestamp(),
   updatedAt: updatedAt(),
 });
@@ -476,6 +496,10 @@ export const invoicesRelations = relations(invoices, ({ one, many }) => ({
   }),
   validatedBy: one(users, {
     fields: [invoices.validatedById],
+    references: [users.id],
+  }),
+  deletedBy: one(users, {
+    fields: [invoices.deletedById],
     references: [users.id],
   }),
   notes: many(notes),

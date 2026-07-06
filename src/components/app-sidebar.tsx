@@ -3,12 +3,17 @@
 import {
   FileTextIcon,
   GalleryVerticalEndIcon,
+  InboxIcon,
   MailIcon,
+  ReceiptIcon,
   RouteIcon,
+  Trash2Icon,
   TruckIcon,
+  UploadIcon,
   UsersIcon,
 } from "lucide-react";
 import type { UserRole } from "@/lib/db/types";
+import type { NavCounts } from "@/lib/nav-counts";
 import { NavMain } from "@/components/nav-main";
 import { NavProjects } from "@/components/nav-projects";
 import { NavUser } from "@/components/nav-user";
@@ -28,37 +33,48 @@ type AppSidebarProps = React.ComponentProps<typeof Sidebar> & {
     role: UserRole;
   };
   activePath?: string;
+  navCounts?: NavCounts;
 };
 
-export function AppSidebar({ user, activePath, ...props }: AppSidebarProps) {
+export function AppSidebar({ user, activePath, navCounts, ...props }: AppSidebarProps) {
   const isAdmin = user.role === "ADMIN";
-  const invoiceActive =
-    activePath === "/queue" ||
-    activePath === "/upload" ||
-    activePath?.startsWith("/invoices/");
 
-  const navMain = [
+  const navItems = [
     {
       title: "Invoices",
+      url: "/queue",
       icon: <FileTextIcon />,
-      isActive: invoiceActive,
-      items: [
-        {
-          title: "Queue",
-          url: "/queue",
-          isActive: activePath === "/queue",
-        },
-        {
-          title: "Upload",
-          url: "/upload",
-          isActive: activePath === "/upload",
-        },
-        {
-          title: "Inbox",
-          url: "/inbox",
-          isActive: activePath === "/inbox" || activePath?.startsWith("/inbox/"),
-        },
-      ],
+      isActive:
+        activePath === "/queue" ||
+        activePath?.startsWith("/invoices/"),
+      badge: navCounts?.invoices,
+    },
+    {
+      title: "Upload",
+      url: "/upload",
+      icon: <UploadIcon />,
+      isActive: activePath === "/upload",
+    },
+    {
+      title: "Inbox",
+      url: "/inbox",
+      icon: <InboxIcon />,
+      isActive: activePath === "/inbox" || activePath?.startsWith("/inbox/"),
+      badge: navCounts?.inbox,
+    },
+    {
+      title: "Trash",
+      url: "/trash",
+      icon: <Trash2Icon />,
+      isActive: activePath === "/trash",
+      badge: navCounts?.trash,
+    },
+    {
+      title: "Credits",
+      url: "/credits",
+      icon: <ReceiptIcon />,
+      isActive: activePath === "/credits",
+      badge: navCounts?.credits,
     },
   ];
 
@@ -105,7 +121,7 @@ export function AppSidebar({ user, activePath, ...props }: AppSidebarProps) {
         />
       </SidebarHeader>
       <SidebarContent>
-        <NavMain items={navMain} label="Workspace" />
+        <NavMain items={navItems} label="Workspace" />
         <NavProjects projects={adminProjects} label="Admin" />
       </SidebarContent>
       <SidebarFooter>

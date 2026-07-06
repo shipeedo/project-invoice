@@ -16,9 +16,11 @@ export type LineItemAction = "assign" | "credit" | "edit" | "approve" | "reject"
 type LineItemsActionBarProps = {
   selectedCount: number;
   disabled?: boolean;
+  editsEnabled?: boolean;
   decisionsEnabled?: boolean;
   approveDisabled?: boolean;
   rejectDisabled?: boolean;
+  creditDisabled?: boolean;
   busyAction?: LineItemAction | null;
   onAction: (action: LineItemAction) => void;
   className?: string;
@@ -40,9 +42,11 @@ const ACTIONS: Array<{
 export function LineItemsActionBar({
   selectedCount,
   disabled = false,
+  editsEnabled = true,
   decisionsEnabled = false,
   approveDisabled = false,
   rejectDisabled = false,
+  creditDisabled = false,
   busyAction = null,
   onAction,
   className,
@@ -75,6 +79,8 @@ export function LineItemsActionBar({
           const isDecision = action.id === "approve" || action.id === "reject";
           const isDisabled =
             actionsDisabled ||
+            (action.id === "credit" && creditDisabled) ||
+            ((action.id === "assign" || action.id === "edit") && !editsEnabled) ||
             (isDecision && !decisionsEnabled) ||
             (action.id === "approve" && approveDisabled) ||
             (action.id === "reject" && rejectDisabled);

@@ -1,13 +1,17 @@
-import { ExternalLinkIcon, FileTextIcon } from "lucide-react";
 import { and, asc, desc, eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
+import { InvoiceCreditsSection } from "@/components/invoice-credits-section";
+import { InvoiceSourceAttachments } from "@/components/invoice-source-attachments";
+import { InvoiceSourceEmailSheet } from "@/components/invoice-source-email-sheet";
 import { InvoiceHeaderActions } from "@/components/invoice-header-actions";
+import { InvoiceReprocessButton } from "@/components/invoice-reprocess-button";
+import { InvoiceTrashActions } from "@/components/invoice-trash-actions";
+import { InvoiceDueDate } from "@/components/invoice-due-date";
 import { InvoiceLineItemsTable } from "@/components/invoice-line-items-table";
 import { InvoiceValidationPanel } from "@/components/invoice-validation-panel";
 import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -19,6 +23,7 @@ import {
 } from "@/components/ui/table";
 import {
   auditEvents,
+  creditRequests,
   db,
   invoicePayments,
   invoices,
@@ -29,10 +34,17 @@ import {
 } from "@/lib/db";
 import { describeAuditEvent } from "@/lib/audit-log";
 import { parseExtractionCandidates } from "@/lib/extraction-types";
+import { resolveInvoiceSourceEmail } from "@/lib/invoice-source-email";
 import { isExtractionPending, outstandingAmount } from "@/lib/invoice-status";
+import {
+  TRASH_RETENTION_DAYS,
+  daysUntilTrashExpiry,
+  isInvoiceDeleted,
+  isInvoiceVisibleInTrash,
+} from "@/lib/invoice-trash";
 import { parseLineItems, canDecideLineItems } from "@/lib/line-items";
+import { getNavCounts } from "@/lib/nav-counts";
 import { requireSession, formatCurrency, formatDate } from "@/lib/session";
-import { cn } from "@/lib/utils";
 
 type PageProps = {
   params: Promise<{ id: string }>;
@@ -47,6 +59,7 @@ type SourceAttachment = {
   key: string;
   fileName: string;
   href: string;
+  mimeType?: string | null;
   isPrimary: boolean;
 };
 
@@ -57,6 +70,7 @@ function getSourceAttachments(invoice: {
   attachments: Array<{
     id: string;
     fileName: string;
+    mimeType: string | null;
     isPrimary: boolean | null;
   }>;
 }): SourceAttachment[] {
@@ -65,6 +79,7 @@ function getSourceAttachments(invoice: {
       key: attachment.id,
       fileName: attachment.fileName,
       href: `/api/invoices/${invoice.id}/attachments/${attachment.id}`,
+      mimeType: attachment.mimeType,
       isPrimary: attachment.isPrimary ?? false,
     }));
   }
@@ -75,6 +90,7 @@ function getSourceAttachments(invoice: {
         key: "primary-file",
         fileName: invoice.originalFileName ?? "Attachment",
         href: `/api/invoices/${invoice.id}/file`,
+        mimeType: null,
         isPrimary: true,
       },
     ];
@@ -83,73 +99,10 @@ function getSourceAttachments(invoice: {
   return [];
 }
 
-function formatEmailRecipients(raw: string | null | undefined) {
-  if (!raw) return "—";
-  try {
-    const emails = JSON.parse(raw) as string[];
-    if (!Array.isArray(emails) || emails.length === 0) return "—";
-    return emails.join(", ");
-  } catch {
-    return "—";
-  }
-}
-
-function fileExtension(fileName: string) {
-  const match = fileName.match(/\.([^.]+)$/);
-  return match ? match[1].toUpperCase() : "FILE";
-}
-
-function SourceAttachmentList({ attachments }: { attachments: SourceAttachment[] }) {
-  if (attachments.length === 0) return null;
-
-  return (
-    <ul className="flex flex-col gap-3">
-      {attachments.map((attachment) => (
-        <li key={attachment.key}>
-          <a
-            href={attachment.href}
-            target="_blank"
-            rel="noreferrer"
-            className={cn(
-              "flex items-center gap-4 rounded-xl p-4 transition-colors",
-              attachment.isPrimary
-                ? "bg-primary/10 hover:bg-primary/15"
-                : "bg-muted/50 hover:bg-muted/70",
-            )}
-          >
-            <div
-              className={cn(
-                "flex size-14 shrink-0 items-center justify-center rounded-lg",
-                attachment.isPrimary ? "bg-primary/10" : "bg-background",
-              )}
-            >
-              <FileTextIcon
-                className={cn(
-                  "size-7",
-                  attachment.isPrimary ? "text-primary" : "text-muted-foreground",
-                )}
-              />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <p className="truncate text-base font-semibold">{attachment.fileName}</p>
-                {attachment.isPrimary ? <Badge>Primary</Badge> : null}
-              </div>
-              <p className="mt-0.5 text-sm text-muted-foreground">
-                {fileExtension(attachment.fileName)} · Open in new tab
-              </p>
-            </div>
-            <ExternalLinkIcon className="size-5 shrink-0 text-muted-foreground" />
-          </a>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
 export default async function InvoiceDetailPage({ params }: PageProps) {
   const session = await requireSession();
   const { id } = await params;
+  const navCountsPromise = getNavCounts(session.user.organizationId);
 
   const invoice = await db.query.invoices.findFirst({
     where: and(
@@ -158,8 +111,9 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
     ),
     with: {
       assignedTo: { columns: { name: true, email: true } },
-      supplier: { columns: { id: true, name: true } },
+      supplier: { columns: { id: true, name: true, tradingTermDays: true } },
       validatedBy: { columns: { name: true, email: true } },
+      deletedBy: { columns: { name: true, email: true } },
       attachments: true,
       notes: { orderBy: desc(notes.createdAt) },
       auditEvents: {
@@ -172,6 +126,12 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
   if (!invoice) {
     notFound();
   }
+
+  if (isInvoiceDeleted(invoice) && !isInvoiceVisibleInTrash(invoice.deletedAt)) {
+    notFound();
+  }
+
+  const inTrash = isInvoiceDeleted(invoice);
 
   const supplierOptions = await db.query.suppliers.findMany({
     where: eq(suppliers.organizationId, session.user.organizationId),
@@ -194,6 +154,11 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
     lineItems.length > 0 &&
     !isExtractionPending(invoice) &&
     !["PAID", "CANCELLED"].includes(invoice.status);
+  // Credits stay available after payment so a paid invoice can still be disputed.
+  const canRequestLineCredits =
+    lineItems.length > 0 &&
+    !isExtractionPending(invoice) &&
+    invoice.status !== "CANCELLED";
   const canDecideLineItemsOnInvoice = canDecideLineItems({
     status: invoice.status,
     validatedAt: invoice.validatedAt,
@@ -207,6 +172,11 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
     where: eq(invoicePayments.invoiceId, invoice.id),
     with: { recordedBy: { columns: { name: true, email: true } } },
     orderBy: desc(invoicePayments.paidAt),
+  });
+
+  const invoiceCreditRequests = await db.query.creditRequests.findMany({
+    where: eq(creditRequests.invoiceId, invoice.id),
+    orderBy: desc(creditRequests.createdAt),
   });
 
   const userLabel = (userId: string | null | undefined) => {
@@ -224,10 +194,38 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
   const sourceMessage =
     invoice.sourceType === "EMAIL"
       ? await db.query.mailboxMessages.findFirst({
-          where: eq(mailboxMessages.invoiceId, invoice.id),
-          columns: { toEmails: true },
+          where: and(
+            eq(mailboxMessages.invoiceId, invoice.id),
+            eq(mailboxMessages.organizationId, session.user.organizationId),
+          ),
+          columns: {
+            subject: true,
+            fromEmail: true,
+            fromName: true,
+            toEmails: true,
+            ccEmails: true,
+            receivedAt: true,
+            bodyHtml: true,
+            bodyText: true,
+            threadId: true,
+          },
+          with: {
+            attachments: {
+              columns: {
+                id: true,
+                fileName: true,
+                isInline: true,
+                contentId: true,
+              },
+            },
+          },
         })
       : null;
+
+  const sourceEmail = resolveInvoiceSourceEmail({
+    invoice,
+    message: sourceMessage,
+  });
 
   const sourceCard = (
     <Card className="flex h-full flex-col">
@@ -238,28 +236,39 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
       </CardHeader>
       <CardContent className="flex flex-1 flex-col gap-5">
         {invoice.sourceType === "EMAIL" ? (
-          <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-            <div>
-              <dt className="text-muted-foreground">From</dt>
-              <dd className="font-medium">
-                {invoice.emailFromName
-                  ? `${invoice.emailFromName} <${invoice.emailFrom ?? ""}>`
-                  : (invoice.emailFrom ?? "—")}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">To</dt>
-              <dd className="font-medium">{formatEmailRecipients(sourceMessage?.toEmails)}</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">Received</dt>
-              <dd className="font-medium">{formatDate(invoice.emailReceivedAt)}</dd>
-            </div>
-          </dl>
+          <>
+            <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+              <div>
+                <dt className="text-muted-foreground">From</dt>
+                <dd className="font-medium">
+                  {invoice.emailFromName
+                    ? `${invoice.emailFromName} <${invoice.emailFrom ?? ""}>`
+                    : (invoice.emailFrom ?? "—")}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">To</dt>
+                <dd className="font-medium">
+                  {sourceEmail && sourceEmail.toEmails.length > 0
+                    ? sourceEmail.toEmails.join(", ")
+                    : "—"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">Received</dt>
+                <dd className="font-medium">{formatDate(invoice.emailReceivedAt)}</dd>
+              </div>
+            </dl>
+            {sourceEmail ? (
+              <div>
+                <InvoiceSourceEmailSheet email={sourceEmail} />
+              </div>
+            ) : null}
+          </>
         ) : null}
 
         {sourceAttachments.length > 0 ? (
-          <SourceAttachmentList attachments={sourceAttachments} />
+          <InvoiceSourceAttachments attachments={sourceAttachments} />
         ) : invoice.sourceType === "EMAIL" ? (
           <p className="text-sm text-muted-foreground">No attachments available.</p>
         ) : (
@@ -269,21 +278,28 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
     </Card>
   );
 
+  const navCounts = await navCountsPromise;
+
   return (
     <AppShell
       user={session.user}
       activePath={`/invoices/${invoice.id}`}
+      navCounts={navCounts}
       breadcrumbs={[
         { label: "Invoices", href: "/queue" },
+        ...(inTrash ? [{ label: "Trash", href: "/trash" }] : []),
         { label: invoice.vendorName ?? invoice.originalFileName ?? "Invoice" },
       ]}
     >
-      <div className="space-y-6">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h2 className="text-2xl font-semibold">
-              {invoice.vendorName ?? invoice.originalFileName ?? "Invoice"}
-            </h2>
+      <div className="min-w-0 space-y-6">
+        <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-3">
+              <h2 className="text-2xl font-semibold">
+                {invoice.vendorName ?? invoice.originalFileName ?? "Invoice"}
+              </h2>
+              <StatusBadge status={invoice.status} />
+            </div>
             <p className="mt-1 text-sm text-muted-foreground">
               Received {formatDate(invoice.createdAt)}
               {invoice.validatedAt
@@ -299,19 +315,44 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
               </p>
             ) : null}
           </div>
-          <div className="flex shrink-0 flex-col items-end gap-3">
-            <StatusBadge status={invoice.status} />
-            <InvoiceHeaderActions
-              invoiceId={invoice.id}
-              status={invoice.status}
-              validatedAt={invoice.validatedAt}
-              assignedToId={invoice.assignedToId}
-              currentUserId={session.user.id}
-              currentUserRole={session.user.role}
-              totalAmount={invoice.totalAmount}
-              amountPaid={invoice.amountPaid}
-              currency={invoice.currency ?? "AUD"}
-            />
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {inTrash ? (
+              <InvoiceTrashActions
+                invoiceId={invoice.id}
+                deletedAt={invoice.deletedAt}
+                vendorName={invoice.vendorName ?? invoice.originalFileName}
+              />
+            ) : (
+              <>
+                {invoice.status === "DRAFT" ? (
+                  <InvoiceReprocessButton
+                    invoiceId={invoice.id}
+                    sourceType={invoice.sourceType}
+                    attachments={sourceAttachments.map((attachment) => ({
+                      id: attachment.key,
+                      fileName: attachment.fileName,
+                      mimeType: attachment.mimeType,
+                      isPrimary: attachment.isPrimary,
+                    }))}
+                  />
+                ) : null}
+                <InvoiceHeaderActions
+                  invoiceId={invoice.id}
+                  status={invoice.status}
+                  validatedAt={invoice.validatedAt}
+                  assignedToId={invoice.assignedToId}
+                  currentUserId={session.user.id}
+                  currentUserRole={session.user.role}
+                  totalAmount={invoice.totalAmount}
+                  amountPaid={invoice.amountPaid}
+                  currency={invoice.currency ?? "AUD"}
+                />
+                <InvoiceTrashActions
+                  invoiceId={invoice.id}
+                  vendorName={invoice.vendorName ?? invoice.originalFileName}
+                />
+              </>
+            )}
           </div>
         </div>
 
@@ -331,6 +372,22 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
           </Alert>
         ) : null}
 
+        {inTrash ? (
+          <Alert>
+            <AlertDescription>
+              In trash since {formatDate(invoice.deletedAt)}
+              {invoice.deletedBy
+                ? ` by ${invoice.deletedBy.name ?? invoice.deletedBy.email}`
+                : userLabel(invoice.deletedById)
+                  ? ` by ${userLabel(invoice.deletedById)}`
+                  : ""}
+              . Restorable for {daysUntilTrashExpiry(invoice.deletedAt!)} more day
+              {daysUntilTrashExpiry(invoice.deletedAt!) === 1 ? "" : "s"} (kept for{" "}
+              {TRASH_RETENTION_DAYS} days).
+            </AlertDescription>
+          </Alert>
+        ) : null}
+
         {invoice.status === "CANCELLED" ? (
           <Alert variant="destructive">
             <AlertDescription>
@@ -342,30 +399,32 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
           </Alert>
         ) : null}
 
-        {awaitingValidation ? (
-          <div className="grid gap-6 xl:grid-cols-2 xl:items-start">
-            <InvoiceValidationPanel
-              invoiceId={invoice.id}
-              status={invoice.status}
-              candidates={candidates}
-              initialFields={{
-                vendorName: invoice.vendorName ?? "",
-                vendorEmail: invoice.vendorEmail ?? "",
-                invoiceNumber: invoice.invoiceNumber ?? "",
-                invoiceDate: toDateInput(invoice.invoiceDate),
-                dueDate: toDateInput(invoice.dueDate),
-                respondByDate: toDateInput(invoice.respondByDate),
-                totalAmount:
-                  invoice.totalAmount != null ? String(invoice.totalAmount) : "",
-                currency: invoice.currency ?? "AUD",
-              }}
-              lineItems={lineItems}
-              supplierId={invoice.supplierId}
-              supplierName={invoice.supplier?.name ?? null}
-              suppliers={supplierOptions}
-            />
-            {sourceCard}
-          </div>
+        {awaitingValidation && !inTrash ? (
+          <InvoiceValidationPanel
+            invoiceId={invoice.id}
+            status={invoice.status}
+            candidates={candidates}
+            initialFields={{
+              vendorName: invoice.vendorName ?? "",
+              vendorEmail: invoice.vendorEmail ?? "",
+              invoiceNumber: invoice.invoiceNumber ?? "",
+              invoiceDate: toDateInput(invoice.invoiceDate),
+              dueDate: toDateInput(invoice.dueDate),
+              respondByDate: toDateInput(invoice.respondByDate),
+              totalAmount:
+                invoice.totalAmount != null ? String(invoice.totalAmount) : "",
+              currency: invoice.currency ?? "AUD",
+            }}
+            lineItems={lineItems}
+            supplierId={invoice.supplierId}
+            supplierName={invoice.supplier?.name ?? null}
+            suppliers={supplierOptions}
+            extractedTotals={{
+              subtotal: invoice.subtotalAmount,
+              taxAmount: invoice.taxAmount,
+            }}
+            sourceSlot={sourceCard}
+          />
         ) : (
           <div className="grid gap-6 lg:grid-cols-2">
             <Card>
@@ -392,7 +451,13 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
                   </div>
                   <div>
                     <dt className="text-muted-foreground">Due date</dt>
-                    <dd className="font-medium">{formatDate(invoice.dueDate)}</dd>
+                    <dd>
+                      <InvoiceDueDate
+                        dueDate={invoice.dueDate}
+                        originalDueDate={invoice.originalDueDate}
+                        tradingTermDays={invoice.supplier?.tradingTermDays ?? null}
+                      />
+                    </dd>
                   </div>
                   <div>
                     <dt className="text-muted-foreground">Respond by</dt>
@@ -415,24 +480,47 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
           </div>
         )}
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Line items</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <InvoiceLineItemsTable
-              key={`${invoice.id}-${invoice.updatedAt?.toString() ?? "new"}`}
-              invoiceId={invoice.id}
-              lineItems={lineItems}
-              users={orgUsers}
-              invoiceAssignedToId={invoice.assignedToId}
-              invoiceAssignedToLabel={invoiceAssignedToLabel}
-              currency={invoice.currency ?? "AUD"}
-              actionsEnabled={canAssignLineItems}
-              decisionsEnabled={canDecideLineItemsOnInvoice}
-            />
-          </CardContent>
-        </Card>
+        {/* During validation the panel renders its own line-item selection table. */}
+        {awaitingValidation && !inTrash ? null : (
+          <Card>
+            <CardHeader>
+              <CardTitle>Line items</CardTitle>
+            </CardHeader>
+            <CardContent className="min-w-0">
+              <InvoiceLineItemsTable
+                key={`${invoice.id}-${invoice.updatedAt?.toString() ?? "new"}`}
+                invoiceId={invoice.id}
+                lineItems={lineItems}
+                users={orgUsers}
+                invoiceAssignedToId={invoice.assignedToId}
+                invoiceAssignedToLabel={invoiceAssignedToLabel}
+                currency={invoice.currency ?? "AUD"}
+                actionsEnabled={canRequestLineCredits && !inTrash}
+                editsEnabled={canAssignLineItems && !inTrash}
+                decisionsEnabled={canDecideLineItemsOnInvoice && !inTrash}
+                totals={{
+                  subtotal: invoice.subtotalAmount,
+                  taxAmount: invoice.taxAmount,
+                  total: invoice.totalAmount,
+                }}
+              />
+            </CardContent>
+          </Card>
+        )}
+
+        <InvoiceCreditsSection
+          creditRequests={invoiceCreditRequests.map((request) => ({
+            id: request.id,
+            status: request.status,
+            carrierDecision: request.carrierDecision,
+            subject: request.subject,
+            requestedTotal: request.requestedTotal,
+            approvedAmount: request.approvedAmount,
+            lineItems: request.lineItems,
+            createdAt: request.createdAt.toISOString(),
+          }))}
+          currency={invoice.currency ?? "AUD"}
+        />
 
         {showPayments ? (
           <Card>

@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db, o365Connections } from "@/lib/db";
 import {
   getO365Connection,
@@ -9,13 +9,21 @@ import type { SyncProgressEvent } from "@/lib/o365/sync-events";
 
 export type PollResult = SyncInboxResult & {
   processed: number;
+  pollSkipped?: boolean;
 };
 
-function toPollResult(sync: SyncInboxResult): PollResult {
+function toPollResult(sync: SyncInboxResult, pollSkipped = false): PollResult {
   return {
     ...sync,
     processed: sync.invoicesProcessed,
+    pollSkipped,
   };
+}
+
+let pollInProgress = false;
+
+export function isO365PollInProgress() {
+  return pollInProgress;
 }
 
 async function pollOrganizationConnection(
@@ -63,30 +71,63 @@ async function pollOrganizationConnection(
   return toPollResult(result);
 }
 
-export async function pollAllO365Mailboxes() {
-  const connections = await db.query.o365Connections.findMany({
-    where: eq(o365Connections.status, "CONNECTED"),
-  });
-
-  const activeConnections = connections.filter(
-    (connection) =>
-      connection.selectedMailboxUpn &&
-      connection.accessTokenEncrypted &&
-      connection.refreshTokenEncrypted,
-  );
-
-  const results: PollResult[] = [];
-  for (const connection of activeConnections) {
-    results.push(await pollOrganizationConnection(connection));
+export async function pollAllO365Mailboxes(options?: {
+  onProgress?: (event: SyncProgressEvent) => void;
+  triggeredBy?: "sync" | "manual" | "background" | "cron";
+}) {
+  if (pollInProgress) {
+    return [toPollResult({
+      organizationId: "all",
+      synced: 0,
+      invoicesProcessed: 0,
+      skipped: 0,
+      errors: ["Mailbox sync already in progress"],
+      fatal: false,
+    }, true)];
   }
 
-  return results;
+  pollInProgress = true;
+
+  try {
+    const connections = await db.query.o365Connections.findMany({
+      where: eq(o365Connections.status, "CONNECTED"),
+    });
+
+    const activeConnections = connections.filter(
+      (connection) =>
+        connection.selectedMailboxUpn &&
+        connection.accessTokenEncrypted &&
+        connection.refreshTokenEncrypted,
+    );
+
+    const results: PollResult[] = [];
+    for (const connection of activeConnections) {
+      results.push(await pollOrganizationConnection(connection, options));
+    }
+
+    return results;
+  } finally {
+    pollInProgress = false;
+  }
 }
 
 export async function pollOrganizationMailbox(
   organizationId: string,
   options?: { onProgress?: (event: SyncProgressEvent) => void },
 ) {
+  if (pollInProgress) {
+    return {
+      organizationId,
+      synced: 0,
+      invoicesProcessed: 0,
+      processed: 0,
+      skipped: 0,
+      errors: ["Mailbox sync already in progress"],
+      fatal: false,
+      pollSkipped: true,
+    } satisfies PollResult;
+  }
+
   const connection = await getO365Connection(organizationId);
   if (
     !connection ||
@@ -104,5 +145,11 @@ export async function pollOrganizationMailbox(
     } satisfies PollResult;
   }
 
-  return pollOrganizationConnection(connection, options);
+  pollInProgress = true;
+
+  try {
+    return await pollOrganizationConnection(connection, options);
+  } finally {
+    pollInProgress = false;
+  }
 }

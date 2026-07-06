@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { updateCreditRequestStatus } from "@/lib/credit-requests";
+import { recordCreditRequestOutcome } from "@/lib/credit-lines";
 import { creditRequests, db } from "@/lib/db";
 import type { CarrierDecision, CreditRequestStatus } from "@/lib/db/types";
 
@@ -19,7 +20,15 @@ export async function PATCH(request: Request, context: RouteContext) {
   const body = (await request.json()) as {
     status?: CreditRequestStatus;
     carrierDecision?: CarrierDecision;
-    action?: "contest" | "approve" | "reject" | "carrier_approved" | "carrier_denied";
+    approvedAmount?: number | null;
+    action?:
+      | "contest"
+      | "approve"
+      | "reject"
+      | "carrier_approved"
+      | "carrier_denied"
+      | "record_outcome";
+    outcome?: "approved" | "denied";
   };
 
   const existing = await db.query.creditRequests.findFirst({
@@ -31,6 +40,26 @@ export async function PATCH(request: Request, context: RouteContext) {
 
   if (!existing) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  if (body.action === "record_outcome") {
+    if (body.outcome !== "approved" && body.outcome !== "denied") {
+      return NextResponse.json({ error: "outcome must be approved or denied" }, { status: 400 });
+    }
+
+    const outcome = await recordCreditRequestOutcome({
+      organizationId: session.user.organizationId,
+      userId: session.user.id,
+      creditRequestId: id,
+      outcome: body.outcome,
+      approvedAmount: body.approvedAmount,
+    });
+
+    if ("error" in outcome) {
+      return NextResponse.json({ error: outcome.error }, { status: 400 });
+    }
+
+    return NextResponse.json(outcome.creditRequest);
   }
 
   let status = body.status;

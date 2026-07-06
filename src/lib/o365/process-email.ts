@@ -1,7 +1,15 @@
 import { and, eq } from "drizzle-orm";
 import { readFile } from "fs/promises";
 import { recordAuditEvent } from "@/lib/audit";
-import { mergeLineItems, parseCsvLineItems } from "@/lib/csv-extraction";
+import {
+  isCsvAttachment,
+  isInvoiceLikeAttachment,
+  isPdfAttachment,
+  isSpreadsheetAttachment,
+  pickPrimaryInvoiceAttachment,
+} from "@/lib/attachment-types";
+import { mergeLineItems, parseSpreadsheetLineItems } from "@/lib/csv-extraction";
+import { extractTextFromDocument } from "@/lib/document-text";
 import {
   db,
   invoiceAttachments,
@@ -11,17 +19,21 @@ import {
   suppliers,
 } from "@/lib/db";
 import { htmlToPlainText } from "@/lib/email-body";
+import { recordEmailProcessingOutcome } from "@/lib/o365/email-audit";
+import { findDuplicateSupplierInvoice } from "@/lib/o365/invoice-duplicates";
 import {
   emailHasProcessableInvoiceSource,
   fetchPortalInvoicePdfAttachment,
 } from "@/lib/invoice-portals";
+import { documentLooksLikeAccountStatement, emailLooksLikeAccountStatement } from "@/lib/invoice-portals/detect-account-statement";
 import {
+  extractInvoiceFromDocumentText,
   extractInvoiceFromEmailBody,
-  extractInvoiceFromPdf,
   parseInvoiceDate,
   type ExtractedLineItem,
 } from "@/lib/extraction";
 import { ensureDefaultRoutingRules } from "@/lib/routing";
+import { resolveDueDate } from "@/lib/trading-terms";
 import {
   findMatchingSupplier,
   getSupplierExtractionContext,
@@ -37,29 +49,40 @@ type EmailAttachmentInput = {
   size: number;
 };
 
-function isPdfAttachment(fileName: string, mimeType: string) {
-  return (
-    mimeType.includes("pdf") || fileName.toLowerCase().endsWith(".pdf")
-  );
-}
+type EmailBodyContent = {
+  html: string | null;
+  text: string | null;
+};
 
-function isCsvAttachment(fileName: string, mimeType: string) {
-  return (
-    mimeType.includes("csv") ||
-    mimeType.includes("text/plain") ||
-    fileName.toLowerCase().endsWith(".csv")
-  );
-}
+export type SavedAttachment = {
+  fileName: string;
+  filePath: string;
+  mimeType: string;
+  size: number;
+  isPrimary: boolean;
+};
 
-function extractSenderEmail(message: GraphMessage) {
-  return message.from?.emailAddress?.address?.trim() || null;
-}
+export type EmailContext = {
+  messageId: string;
+  subject?: string | null;
+  fromEmail?: string | null;
+  fromName?: string | null;
+  receivedAt?: Date | null;
+  bodyHtml?: string | null;
+  bodyText?: string | null;
+};
 
-function extractSenderName(message: GraphMessage) {
-  return message.from?.emailAddress?.name?.trim() || null;
-}
+type ProcessEmailOptions = {
+  organizationId: string;
+  email: EmailContext;
+  attachments: EmailAttachmentInput[];
+  emailBody?: EmailBodyContent;
+  supplierHintId?: string | null;
+  triggeredBy?: "sync" | "manual" | "background";
+  mailboxMessageId?: string;
+};
 
-function extractEmailBody(message: GraphMessage) {
+function extractEmailBody(message: GraphMessage): EmailBodyContent {
   const content = message.body?.content ?? "";
   const contentType = message.body?.contentType?.toLowerCase();
 
@@ -73,11 +96,6 @@ function extractEmailBody(message: GraphMessage) {
 
   return { html: null, text: message.bodyPreview ?? null };
 }
-
-type EmailBodyContent = {
-  html: string | null;
-  text: string | null;
-};
 
 function resolveEmailBodyText(emailBody: EmailBodyContent) {
   return emailBody.text?.trim() || (emailBody.html ? htmlToPlainText(emailBody.html) : null);
@@ -130,85 +148,10 @@ async function resolveSupplierFromExtraction(
   return findMatchingSupplier(organizationId, null, data.vendorEmail);
 }
 
-export async function processEmailInvoice(params: {
-  organizationId: string;
-  message: GraphMessage;
-  attachments: EmailAttachmentInput[];
-  emailBody?: EmailBodyContent;
-}) {
-  const existing = await db.query.processedO365Messages.findFirst({
-    where: and(
-      eq(processedO365Messages.organizationId, params.organizationId),
-      eq(processedO365Messages.messageId, params.message.id),
-    ),
-  });
+async function saveAttachmentInputs(attachments: EmailAttachmentInput[]) {
+  const savedAttachments: SavedAttachment[] = [];
 
-  if (existing) {
-    return { skipped: true as const, reason: "already_processed" as const };
-  }
-
-  const emailBody = params.emailBody ?? extractEmailBody(params.message);
-
-  if (
-    !emailHasProcessableInvoiceSource({
-      attachmentCount: params.attachments.length,
-      bodyHtml: emailBody.html,
-      bodyText: emailBody.text,
-    })
-  ) {
-    await db.insert(processedO365Messages).values({
-      organizationId: params.organizationId,
-      messageId: params.message.id,
-      processedAt: new Date(),
-    });
-    return { skipped: true as const, reason: "no_attachments" as const };
-  }
-
-  await ensureDefaultRoutingRules(params.organizationId);
-
-  const senderEmail = extractSenderEmail(params.message);
-  const senderName = extractSenderName(params.message);
-  const bodyText = resolveEmailBodyText(emailBody);
-  const receivedAt = params.message.receivedDateTime
-    ? new Date(params.message.receivedDateTime)
-    : new Date();
-
-  const [invoice] = await db
-    .insert(invoices)
-    .values({
-      organizationId: params.organizationId,
-      status: "DRAFT",
-      sourceType: "EMAIL",
-      sourceMessageId: params.message.id,
-      emailSubject: params.message.subject ?? null,
-      emailFrom: senderEmail,
-      emailFromName: senderName,
-      emailReceivedAt: receivedAt,
-      emailBodyHtml: emailBody.html,
-      emailBodyText: emailBody.text ?? bodyText,
-      vendorEmail: senderEmail,
-    })
-    .returning();
-
-  await recordAuditEvent({
-    invoiceId: invoice.id,
-    action: "invoice.received",
-    details: {
-      sourceType: "EMAIL",
-      messageId: params.message.id,
-      subject: params.message.subject,
-    },
-  });
-
-  const savedAttachments: Array<{
-    fileName: string;
-    filePath: string;
-    mimeType: string;
-    size: number;
-    isPrimary: boolean;
-  }> = [];
-
-  for (const attachment of params.attachments) {
+  for (const attachment of attachments) {
     const saved = await saveBufferToUploads({
       buffer: attachment.buffer,
       fileName: attachment.fileName,
@@ -225,169 +168,24 @@ export async function processEmailInvoice(params: {
     });
   }
 
-  const { portalFetchError, portalSourceUrl } = await appendPortalPdfIfNeeded({
-    savedAttachments,
-    emailBody,
-  });
-
-  const resolvedPdfAttachment =
-    savedAttachments.find((attachment) =>
-      isPdfAttachment(attachment.fileName, attachment.mimeType),
-    ) ?? null;
-
-  if (resolvedPdfAttachment) {
-    for (const attachment of savedAttachments) {
-      attachment.isPrimary = attachment === resolvedPdfAttachment;
-    }
-  }
-
-  if (savedAttachments.length > 0) {
-    await db.insert(invoiceAttachments).values(
-      savedAttachments.map((attachment) => ({
-        invoiceId: invoice.id,
-        fileName: attachment.fileName,
-        filePath: attachment.filePath,
-        mimeType: attachment.mimeType,
-        size: attachment.size,
-        isPrimary: attachment.isPrimary,
-      })),
-    );
-  }
-
-  let extraction = resolvedPdfAttachment
-    ? await extractInvoiceFromPdf(
-        resolvedPdfAttachment.filePath,
-        resolvedPdfAttachment.fileName,
-        undefined,
-        {
-          subject: params.message.subject,
-          fromEmail: senderEmail,
-          fromName: senderName,
-          bodyText,
-        },
-      )
-    : {
-        data: null,
-        raw: null,
-        fieldCandidates: null,
-        error: portalFetchError ?? "No processable attachment found",
-      };
-
-  const supplier = extraction.data
-    ? await resolveSupplierFromExtraction(params.organizationId, {
-        vendorName: extraction.data.vendorName,
-        vendorEmail: extraction.data.vendorEmail ?? senderEmail ?? undefined,
-      })
-    : await resolveSupplierFromExtraction(params.organizationId, {
-        vendorEmail: senderEmail ?? undefined,
-      });
-
-  if (supplier && resolvedPdfAttachment) {
-    const supplierContext = await getSupplierExtractionContext(
-      params.organizationId,
-      supplier.id,
-    );
-    if (supplierHasCustomExtraction(supplierContext)) {
-      extraction = await extractInvoiceFromPdf(
-        resolvedPdfAttachment.filePath,
-        resolvedPdfAttachment.fileName,
-        supplierContext,
-        {
-          subject: params.message.subject,
-          fromEmail: senderEmail,
-          fromName: senderName,
-          bodyText,
-        },
-      );
-    }
-  }
-
-  let lineItems: ExtractedLineItem[] = extraction.data?.lineItems ?? [];
-  const csvAttachment = savedAttachments.find((attachment) =>
-    isCsvAttachment(attachment.fileName, attachment.mimeType),
-  );
-
-  if (csvAttachment) {
-    const csvContent = await readFile(getUploadAbsolutePath(csvAttachment.filePath), "utf8");
-    const csvLineItems = parseCsvLineItems(csvContent);
-    lineItems = mergeLineItems(lineItems, csvLineItems);
-  }
-
-  const fieldCandidates =
-    extraction.fieldCandidates ?? extraction.data?.fieldCandidates ?? null;
-
-  const [updatedInvoice] = await db
-    .update(invoices)
-    .set({
-      originalFileName: resolvedPdfAttachment?.fileName ?? savedAttachments[0]?.fileName,
-      filePath: resolvedPdfAttachment?.filePath ?? savedAttachments[0]?.filePath,
-      fileMimeType: resolvedPdfAttachment?.mimeType ?? savedAttachments[0]?.mimeType,
-      vendorName: extraction.data?.vendorName,
-      vendorEmail: extraction.data?.vendorEmail ?? senderEmail,
-      invoiceNumber: extraction.data?.invoiceNumber,
-      invoiceDate: parseInvoiceDate(extraction.data?.invoiceDate),
-      dueDate: parseInvoiceDate(extraction.data?.dueDate),
-      respondByDate: parseInvoiceDate(extraction.data?.respondByDate),
-      totalAmount: extraction.data?.totalAmount,
-      currency: extraction.data?.currency ?? "AUD",
-      lineItems: lineItems.length > 0 ? JSON.stringify(lineItems) : null,
-      extractionCandidates: fieldCandidates
-        ? JSON.stringify(fieldCandidates)
-        : null,
-      extractionRaw: extraction.raw ? JSON.stringify(extraction.raw) : null,
-      parseError: extraction.error ?? portalFetchError ?? null,
-      supplierId: supplier?.id ?? null,
-      status: "DRAFT",
-      updatedAt: new Date(),
-    })
-    .where(eq(invoices.id, invoice.id))
-    .returning();
-
-  await recordAuditEvent({
-    invoiceId: invoice.id,
-    action: extraction.error ? "invoice.parse_failed" : "invoice.extracted",
-    details: {
-      sourceType: "EMAIL",
-      parseError: extraction.error ?? portalFetchError,
-      attachmentCount: savedAttachments.length,
-      portalSourceUrl,
-    },
-  });
-
-  await db.insert(processedO365Messages).values({
-    organizationId: params.organizationId,
-    messageId: params.message.id,
-    invoiceId: updatedInvoice.id,
-    processedAt: new Date(),
-  });
-
-  const result = await db.query.invoices.findFirst({
-    where: eq(invoices.id, updatedInvoice.id),
-    with: { supplier: true, assignedTo: true, attachments: true },
-  });
-
-  return { skipped: false as const, invoice: result ?? updatedInvoice };
+  return savedAttachments;
 }
 
-type SavedAttachment = {
-  fileName: string;
-  filePath: string;
-  mimeType: string;
-  size: number;
-  isPrimary: boolean;
-};
+function markPrimaryAttachment(
+  savedAttachments: SavedAttachment[],
+  primary: SavedAttachment | null,
+) {
+  for (const attachment of savedAttachments) {
+    attachment.isPrimary = primary != null && attachment === primary;
+  }
+}
 
-async function runInvoiceExtraction(params: {
+export async function runInvoiceExtraction(params: {
   organizationId: string;
   savedAttachments: SavedAttachment[];
-  emailContext: {
-    subject?: string | null;
-    fromEmail?: string | null;
-    fromName?: string | null;
-    bodyText?: string | null;
-    bodyHtml?: string | null;
-  };
+  emailContext: EmailContext;
   supplierId?: string | null;
+  skipStatementDetection?: boolean;
 }) {
   const bodyText =
     params.emailContext.bodyText?.trim() ||
@@ -400,26 +198,19 @@ async function runInvoiceExtraction(params: {
     bodyText,
   };
 
+  const emailBody: EmailBodyContent = {
+    html: params.emailContext.bodyHtml ?? null,
+    text: params.emailContext.bodyText ?? null,
+  };
+
   const { portalFetchError, portalSourceUrl } = await appendPortalPdfIfNeeded({
     savedAttachments: params.savedAttachments,
-    emailBody: {
-      html: params.emailContext.bodyHtml ?? null,
-      text: params.emailContext.bodyText ?? null,
-    },
+    emailBody,
   });
 
-  const pdfAttachment =
-    params.savedAttachments.find((attachment) =>
-      isPdfAttachment(attachment.fileName, attachment.mimeType),
-    ) ?? null;
-
-  if (pdfAttachment) {
-    for (const attachment of params.savedAttachments) {
-      attachment.isPrimary = attachment === pdfAttachment;
-    }
-  } else if (params.savedAttachments[0]) {
-    params.savedAttachments[0].isPrimary = true;
-  }
+  const primarySelection = pickPrimaryInvoiceAttachment(params.savedAttachments);
+  const primaryAttachment = primarySelection?.attachment ?? null;
+  markPrimaryAttachment(params.savedAttachments, primaryAttachment);
 
   const supplierContext = params.supplierId
     ? await getSupplierExtractionContext(params.organizationId, params.supplierId)
@@ -430,40 +221,81 @@ async function runInvoiceExtraction(params: {
       ? supplierContext
       : undefined;
 
-  const extraction = pdfAttachment
-    ? await extractInvoiceFromPdf(
-        pdfAttachment.filePath,
-        pdfAttachment.fileName,
-        customSupplierContext,
-        emailContextForPdf,
-      )
-    : bodyText
-      ? await extractInvoiceFromEmailBody(
-          {
-            subject: params.emailContext.subject,
-            fromEmail: params.emailContext.fromEmail,
-            fromName: params.emailContext.fromName,
-            bodyText,
-            attachmentNames: params.savedAttachments.map((attachment) => attachment.fileName),
-          },
-          customSupplierContext,
-        )
-      : {
+  let accountStatement = false;
+  let accountStatementNote: string | null = null;
+  let extraction: Awaited<ReturnType<typeof extractInvoiceFromDocumentText>> = {
+    data: null,
+    raw: null,
+    fieldCandidates: null,
+    error: portalFetchError ?? "No supported invoice attachment or email body to extract from",
+  };
+
+  if (primaryAttachment) {
+    try {
+      const { text } = await extractTextFromDocument(
+        primaryAttachment.filePath,
+        primaryAttachment.fileName,
+        primaryAttachment.mimeType,
+      );
+
+      if (!params.skipStatementDetection && documentLooksLikeAccountStatement(text)) {
+        accountStatement = true;
+        accountStatementNote = `Attachment "${primaryAttachment.fileName}" is an account statement, not an invoice`;
+        extraction = {
           data: null,
           raw: null,
           fieldCandidates: null,
-          error: portalFetchError ?? "No PDF attachment or email body to extract from",
+          error: "Account statement detected in attachment",
         };
+      } else {
+        extraction = await extractInvoiceFromDocumentText(
+          primaryAttachment.fileName,
+          text,
+          customSupplierContext,
+          emailContextForPdf,
+        );
+      }
+    } catch (error) {
+      extraction = {
+        data: null,
+        raw: null,
+        fieldCandidates: null,
+        error: error instanceof Error ? error.message : "Failed to read attachment",
+      };
+    }
+  } else if (bodyText) {
+    extraction = await extractInvoiceFromEmailBody(
+      {
+        subject: params.emailContext.subject,
+        fromEmail: params.emailContext.fromEmail,
+        fromName: params.emailContext.fromName,
+        bodyText,
+        attachmentNames: params.savedAttachments.map((attachment) => attachment.fileName),
+      },
+      customSupplierContext,
+    );
+  }
+
+  if (
+    !params.skipStatementDetection &&
+    !accountStatement &&
+    extraction.data?.documentType === "statement"
+  ) {
+    accountStatement = true;
+    accountStatementNote = primaryAttachment
+      ? `Extraction classified attachment "${primaryAttachment.fileName}" as an account statement, not an invoice`
+      : "Extraction classified the email content as an account statement, not an invoice";
+  }
 
   const senderEmail = params.emailContext.fromEmail;
 
   let resolvedSupplier = params.supplierId
-    ? (await db.query.suppliers.findFirst({
+    ? ((await db.query.suppliers.findFirst({
         where: and(
           eq(suppliers.id, params.supplierId),
           eq(suppliers.organizationId, params.organizationId),
         ),
-      })) ?? null
+      })) ?? null)
     : null;
 
   if (!resolvedSupplier && extraction.data) {
@@ -480,17 +312,27 @@ async function runInvoiceExtraction(params: {
   }
 
   let lineItems: ExtractedLineItem[] = extraction.data?.lineItems ?? [];
-  const csvAttachment = params.savedAttachments.find((attachment) =>
-    isCsvAttachment(attachment.fileName, attachment.mimeType),
+  const spreadsheetAttachments = params.savedAttachments.filter((attachment) =>
+    isSpreadsheetAttachment(attachment.fileName, attachment.mimeType),
   );
 
-  if (csvAttachment) {
-    const csvContent = await readFile(getUploadAbsolutePath(csvAttachment.filePath), "utf8");
-    const csvLineItems = parseCsvLineItems(csvContent);
-    lineItems = mergeLineItems(lineItems, csvLineItems);
+  for (const spreadsheetAttachment of spreadsheetAttachments) {
+    if (
+      primaryAttachment?.filePath === spreadsheetAttachment.filePath &&
+      lineItems.length > 0
+    ) {
+      continue;
+    }
+
+    const { text } = await extractTextFromDocument(
+      spreadsheetAttachment.filePath,
+      spreadsheetAttachment.fileName,
+      spreadsheetAttachment.mimeType,
+    );
+    const spreadsheetLineItems = parseSpreadsheetLineItems(text);
+    lineItems = mergeLineItems(lineItems, spreadsheetLineItems);
   }
 
-  const primaryAttachment = pdfAttachment ?? params.savedAttachments[0] ?? null;
   const fieldCandidates =
     extraction.fieldCandidates ?? extraction.data?.fieldCandidates ?? null;
 
@@ -502,7 +344,317 @@ async function runInvoiceExtraction(params: {
     supplier: resolvedSupplier,
     portalFetchError,
     portalSourceUrl,
+    accountStatement,
+    accountStatementNote,
   };
+}
+
+async function ignoreInboundEmail(params: {
+  organizationId: string;
+  email: EmailContext;
+  ignoreReason:
+    | "already_processed"
+    | "no_invoice_detected"
+    | "account_statement"
+    | "duplicate_invoice";
+  note?: string | null;
+  duplicateInvoiceId?: string | null;
+  triggeredBy?: "sync" | "manual" | "background";
+}) {
+  await recordEmailProcessingOutcome({
+    organizationId: params.organizationId,
+    messageId: params.email.messageId,
+    subject: params.email.subject,
+    fromEmail: params.email.fromEmail,
+    outcome: "ignored",
+    ignoreReason: params.ignoreReason,
+    note: params.note,
+    duplicateInvoiceId: params.duplicateInvoiceId,
+    triggeredBy: params.triggeredBy,
+  });
+
+  return {
+    skipped: true as const,
+    reason: params.ignoreReason,
+    duplicateInvoiceId: params.duplicateInvoiceId,
+  };
+}
+
+export async function processInboundEmailForInvoice(params: ProcessEmailOptions) {
+  const existing = await db.query.processedO365Messages.findFirst({
+    where: and(
+      eq(processedO365Messages.organizationId, params.organizationId),
+      eq(processedO365Messages.messageId, params.email.messageId),
+    ),
+  });
+
+  if (existing) {
+    return { skipped: true as const, reason: "already_processed" as const };
+  }
+
+  const emailBody =
+    params.emailBody ??
+    ({
+      html: params.email.bodyHtml ?? null,
+      text: params.email.bodyText ?? null,
+    } satisfies EmailBodyContent);
+
+  const bodyText = resolveEmailBodyText(emailBody);
+  const emailContext: EmailContext = {
+    ...params.email,
+    bodyText: params.email.bodyText ?? bodyText,
+    bodyHtml: params.email.bodyHtml ?? emailBody.html,
+  };
+
+  const attachmentFileNames = params.attachments.map((attachment) => attachment.fileName);
+  const isManual = params.triggeredBy === "manual";
+
+  if (
+    !isManual &&
+    emailLooksLikeAccountStatement({
+      subject: emailContext.subject,
+      bodyHtml: emailContext.bodyHtml,
+      bodyText: emailContext.bodyText,
+      attachmentFileNames,
+    })
+  ) {
+    return ignoreInboundEmail({
+      organizationId: params.organizationId,
+      email: emailContext,
+      ignoreReason: "account_statement",
+      note: "Email subject, body, or attachment names indicate an account statement, not an invoice",
+      triggeredBy: params.triggeredBy,
+    });
+  }
+
+  const hasProcessableSource = isManual
+    ? params.attachments.length > 0 ||
+      Boolean(emailContext.bodyText?.trim()) ||
+      Boolean(emailContext.bodyHtml?.trim())
+    : emailHasProcessableInvoiceSource({
+        attachmentCount: params.attachments.filter((attachment) =>
+          isInvoiceLikeAttachment(attachment.fileName, attachment.mimeType),
+        ).length,
+        attachmentFileNames,
+        subject: emailContext.subject,
+        bodyHtml: emailContext.bodyHtml,
+        bodyText: emailContext.bodyText,
+      });
+
+  if (!hasProcessableSource) {
+    return ignoreInboundEmail({
+      organizationId: params.organizationId,
+      email: emailContext,
+      ignoreReason: "no_invoice_detected",
+      triggeredBy: params.triggeredBy,
+    });
+  }
+
+  await ensureDefaultRoutingRules(params.organizationId);
+
+  const savedAttachments = await saveAttachmentInputs(params.attachments);
+
+  const { extraction, lineItems, fieldCandidates, primaryAttachment, supplier, portalFetchError, portalSourceUrl, accountStatement, accountStatementNote } =
+    await runInvoiceExtraction({
+      organizationId: params.organizationId,
+      savedAttachments,
+      emailContext,
+      supplierId: params.supplierHintId,
+      skipStatementDetection: isManual,
+    });
+
+  if (!isManual && accountStatement) {
+    return ignoreInboundEmail({
+      organizationId: params.organizationId,
+      email: emailContext,
+      ignoreReason: "account_statement",
+      note:
+        accountStatementNote ??
+        "Attachment detected as an account statement, not an invoice",
+      triggeredBy: params.triggeredBy,
+    });
+  }
+
+  const invoiceDate = parseInvoiceDate(extraction.data?.invoiceDate);
+  const resolvedSupplierId = supplier?.id ?? params.supplierHintId ?? null;
+  const resolvedDueDate = resolveDueDate({
+    invoiceDate,
+    extractedDueDate: parseInvoiceDate(extraction.data?.dueDate),
+    tradingTermDays: supplier?.tradingTermDays,
+  });
+
+  if (resolvedSupplierId) {
+    const duplicate = await findDuplicateSupplierInvoice({
+      organizationId: params.organizationId,
+      supplierId: resolvedSupplierId,
+      invoiceNumber: extraction.data?.invoiceNumber,
+      invoiceDate,
+      totalAmount: extraction.data?.totalAmount,
+    });
+
+    if (duplicate) {
+      return ignoreInboundEmail({
+        organizationId: params.organizationId,
+        email: emailContext,
+        ignoreReason: "duplicate_invoice",
+        duplicateInvoiceId: duplicate.id,
+        triggeredBy: params.triggeredBy,
+      });
+    }
+  }
+
+  const receivedAt = emailContext.receivedAt ?? new Date();
+
+  const [invoice] = await db
+    .insert(invoices)
+    .values({
+      organizationId: params.organizationId,
+      status: "DRAFT",
+      sourceType: "EMAIL",
+      sourceMessageId: emailContext.messageId,
+      emailSubject: emailContext.subject ?? null,
+      emailFrom: emailContext.fromEmail,
+      emailFromName: emailContext.fromName,
+      emailReceivedAt: receivedAt,
+      emailBodyHtml: emailContext.bodyHtml,
+      emailBodyText: emailContext.bodyText,
+      vendorEmail: emailContext.fromEmail,
+      supplierId: resolvedSupplierId,
+    })
+    .returning();
+
+  await recordAuditEvent({
+    invoiceId: invoice.id,
+    action: "invoice.received",
+    details: {
+      sourceType: "EMAIL",
+      messageId: emailContext.messageId,
+      subject: emailContext.subject,
+      triggeredBy: params.triggeredBy,
+    },
+  });
+
+  if (savedAttachments.length > 0) {
+    await db.insert(invoiceAttachments).values(
+      savedAttachments.map((attachment) => ({
+        invoiceId: invoice.id,
+        fileName: attachment.fileName,
+        filePath: attachment.filePath,
+        mimeType: attachment.mimeType,
+        size: attachment.size,
+        isPrimary: attachment.isPrimary,
+      })),
+    );
+  }
+
+  const [updatedInvoice] = await db
+    .update(invoices)
+    .set({
+      originalFileName: primaryAttachment?.fileName ?? null,
+      filePath: primaryAttachment?.filePath ?? null,
+      fileMimeType: primaryAttachment?.mimeType ?? null,
+      vendorName: extraction.data?.vendorName,
+      vendorEmail: extraction.data?.vendorEmail ?? emailContext.fromEmail,
+      invoiceNumber: extraction.data?.invoiceNumber,
+      invoiceDate,
+      dueDate: resolvedDueDate.dueDate,
+      originalDueDate: resolvedDueDate.originalDueDate,
+      respondByDate: parseInvoiceDate(extraction.data?.respondByDate),
+      totalAmount: extraction.data?.totalAmount,
+      subtotalAmount: extraction.data?.subtotal,
+      taxAmount: extraction.data?.taxAmount,
+      currency: extraction.data?.currency ?? "AUD",
+      lineItems: lineItems.length > 0 ? JSON.stringify(lineItems) : null,
+      extractionCandidates: fieldCandidates ? JSON.stringify(fieldCandidates) : null,
+      extractionRaw: extraction.raw ? JSON.stringify(extraction.raw) : null,
+      parseError: extraction.error ?? portalFetchError ?? null,
+      supplierId: resolvedSupplierId,
+      status: "DRAFT",
+      updatedAt: new Date(),
+    })
+    .where(eq(invoices.id, invoice.id))
+    .returning();
+
+  await recordAuditEvent({
+    invoiceId: invoice.id,
+    action: extraction.error ? "invoice.parse_failed" : "invoice.extracted",
+    details: {
+      sourceType: "EMAIL",
+      parseError: extraction.error ?? portalFetchError,
+      attachmentCount: savedAttachments.length,
+      portalSourceUrl,
+      triggeredBy: params.triggeredBy,
+    },
+  });
+
+  if (resolvedDueDate.overridden) {
+    await recordAuditEvent({
+      invoiceId: invoice.id,
+      action: "invoice.due_date_overridden",
+      details: {
+        supplierId: resolvedSupplierId,
+        tradingTermDays: resolvedDueDate.tradingTermDays,
+        originalDueDate: resolvedDueDate.originalDueDate?.toISOString() ?? null,
+        dueDate: resolvedDueDate.dueDate?.toISOString() ?? null,
+      },
+    });
+  }
+
+  await recordEmailProcessingOutcome({
+    organizationId: params.organizationId,
+    messageId: emailContext.messageId,
+    subject: emailContext.subject,
+    fromEmail: emailContext.fromEmail,
+    outcome: "created",
+    invoiceId: updatedInvoice.id,
+    triggeredBy: params.triggeredBy,
+  });
+
+  if (params.mailboxMessageId) {
+    await db
+      .update(mailboxMessages)
+      .set({ invoiceId: updatedInvoice.id })
+      .where(eq(mailboxMessages.id, params.mailboxMessageId));
+  }
+
+  const result = await db.query.invoices.findFirst({
+    where: eq(invoices.id, updatedInvoice.id),
+    with: { supplier: true, assignedTo: true, attachments: true },
+  });
+
+  return { skipped: false as const, invoice: result ?? updatedInvoice };
+}
+
+export async function processEmailInvoice(params: {
+  organizationId: string;
+  message: GraphMessage;
+  attachments: EmailAttachmentInput[];
+  emailBody?: EmailBodyContent;
+  supplierHintId?: string | null;
+  triggeredBy?: "sync" | "manual" | "background";
+  mailboxMessageId?: string;
+}) {
+  const emailBody = params.emailBody ?? extractEmailBody(params.message);
+
+  return processInboundEmailForInvoice({
+    organizationId: params.organizationId,
+    email: {
+      messageId: params.message.id,
+      subject: params.message.subject,
+      fromEmail: params.message.from?.emailAddress?.address?.trim() || null,
+      fromName: params.message.from?.emailAddress?.name?.trim() || null,
+      receivedAt: params.message.receivedDateTime
+        ? new Date(params.message.receivedDateTime)
+        : new Date(),
+      bodyHtml: emailBody.html,
+      bodyText: emailBody.text,
+    },
+    attachments: params.attachments,
+    emailBody,
+    supplierHintId: params.supplierHintId,
+    triggeredBy: params.triggeredBy,
+    mailboxMessageId: params.mailboxMessageId,
+  });
 }
 
 export async function processMailboxMessageInvoice(params: {
@@ -528,28 +680,10 @@ export async function processMailboxMessageInvoice(params: {
     return { error: "Only inbound messages can be processed as invoices" as const };
   }
 
-  if (!message.supplierId) {
-    return { error: "Link a supplier to this message before creating an invoice" as const };
-  }
-
   if (message.invoiceId) {
     return {
       error: "An invoice has already been created from this message" as const,
       invoiceId: message.invoiceId,
-    };
-  }
-
-  const existingProcessed = await db.query.processedO365Messages.findFirst({
-    where: and(
-      eq(processedO365Messages.organizationId, params.organizationId),
-      eq(processedO365Messages.messageId, message.graphMessageId),
-    ),
-  });
-
-  if (existingProcessed?.invoiceId) {
-    return {
-      error: "An invoice has already been created from this message" as const,
-      invoiceId: existingProcessed.invoiceId,
     };
   }
 
@@ -558,142 +692,46 @@ export async function processMailboxMessageInvoice(params: {
     message.bodyText?.trim() ||
     (message.bodyHtml ? htmlToPlainText(message.bodyHtml) : null);
 
-  if (
-    !emailHasProcessableInvoiceSource({
-      attachmentCount: fileAttachments.length,
-      bodyHtml: message.bodyHtml,
-      bodyText: message.bodyText ?? bodyText,
-    })
-  ) {
-    return { error: "Message has no body, attachments, or invoice portal link to extract from" as const };
-  }
-
-  await ensureDefaultRoutingRules(params.organizationId);
-
-  const [invoice] = await db
-    .insert(invoices)
-    .values({
-      organizationId: params.organizationId,
-      status: "DRAFT",
-      sourceType: "EMAIL",
-      sourceMessageId: message.graphMessageId,
-      emailSubject: message.subject,
-      emailFrom: message.fromEmail,
-      emailFromName: message.fromName,
-      emailReceivedAt: message.receivedAt,
-      emailBodyHtml: message.bodyHtml,
-      emailBodyText: message.bodyText ?? bodyText,
-      vendorEmail: message.fromEmail,
-      supplierId: message.supplierId,
-    })
-    .returning();
-
-  await recordAuditEvent({
-    invoiceId: invoice.id,
-    action: "invoice.received",
-    details: {
-      sourceType: "EMAIL",
+  const outcome = await processInboundEmailForInvoice({
+    organizationId: params.organizationId,
+    email: {
       messageId: message.graphMessageId,
       subject: message.subject,
-      triggeredBy: "manual",
+      fromEmail: message.fromEmail,
+      fromName: message.fromName,
+      receivedAt: message.receivedAt,
+      bodyHtml: message.bodyHtml,
+      bodyText: message.bodyText ?? bodyText,
     },
-  });
-
-  const savedAttachments: SavedAttachment[] = fileAttachments.map((attachment) => ({
-    fileName: attachment.fileName,
-    filePath: attachment.filePath,
-    mimeType: attachment.mimeType ?? "application/octet-stream",
-    size: attachment.size ?? 0,
-    isPrimary: false,
-  }));
-
-  const { extraction, lineItems, fieldCandidates, primaryAttachment, supplier, portalFetchError, portalSourceUrl } =
-    await runInvoiceExtraction({
-      organizationId: params.organizationId,
-      savedAttachments,
-      emailContext: {
-        subject: message.subject,
-        fromEmail: message.fromEmail,
-        fromName: message.fromName,
-        bodyText: message.bodyText,
-        bodyHtml: message.bodyHtml,
-      },
-      supplierId: message.supplierId,
-    });
-
-  if (savedAttachments.length > 0) {
-    await db.insert(invoiceAttachments).values(
-      savedAttachments.map((attachment) => ({
-        invoiceId: invoice.id,
+    attachments: await Promise.all(
+      fileAttachments.map(async (attachment) => ({
         fileName: attachment.fileName,
-        filePath: attachment.filePath,
-        mimeType: attachment.mimeType,
-        size: attachment.size,
-        isPrimary: attachment.isPrimary,
+        mimeType: attachment.mimeType ?? "application/octet-stream",
+        size: attachment.size ?? 0,
+        buffer: await readFile(getUploadAbsolutePath(attachment.filePath)),
       })),
-    );
-  }
-
-  const [updatedInvoice] = await db
-    .update(invoices)
-    .set({
-      originalFileName: primaryAttachment?.fileName ?? null,
-      filePath: primaryAttachment?.filePath ?? null,
-      fileMimeType: primaryAttachment?.mimeType ?? null,
-      vendorName: extraction.data?.vendorName ?? message.supplier?.name,
-      vendorEmail: extraction.data?.vendorEmail ?? message.fromEmail,
-      invoiceNumber: extraction.data?.invoiceNumber,
-      invoiceDate: parseInvoiceDate(extraction.data?.invoiceDate),
-      dueDate: parseInvoiceDate(extraction.data?.dueDate),
-      respondByDate: parseInvoiceDate(extraction.data?.respondByDate),
-      totalAmount: extraction.data?.totalAmount,
-      currency: extraction.data?.currency ?? "AUD",
-      lineItems: lineItems.length > 0 ? JSON.stringify(lineItems) : null,
-      extractionCandidates: fieldCandidates ? JSON.stringify(fieldCandidates) : null,
-      extractionRaw: extraction.raw ? JSON.stringify(extraction.raw) : null,
-      parseError: extraction.error ?? portalFetchError ?? null,
-      supplierId: supplier?.id ?? message.supplierId,
-      status: "DRAFT",
-      updatedAt: new Date(),
-    })
-    .where(eq(invoices.id, invoice.id))
-    .returning();
-
-  await recordAuditEvent({
-    invoiceId: invoice.id,
-    action: extraction.error ? "invoice.parse_failed" : "invoice.extracted",
-    details: {
-      sourceType: "EMAIL",
-      parseError: extraction.error ?? portalFetchError,
-      attachmentCount: savedAttachments.length,
-      triggeredBy: "manual",
-      portalSourceUrl,
-    },
+    ),
+    supplierHintId: message.supplierId,
+    triggeredBy: "manual",
+    mailboxMessageId: message.id,
   });
 
-  await db
-    .update(mailboxMessages)
-    .set({ invoiceId: updatedInvoice.id })
-    .where(eq(mailboxMessages.id, message.id));
+  if (outcome.skipped) {
+    if (outcome.reason === "duplicate_invoice" && outcome.duplicateInvoiceId) {
+      return {
+        error: "An invoice with the same details already exists for this supplier" as const,
+        invoiceId: outcome.duplicateInvoiceId,
+      };
+    }
 
-  if (existingProcessed) {
-    await db
-      .update(processedO365Messages)
-      .set({ invoiceId: updatedInvoice.id, processedAt: new Date() })
-      .where(eq(processedO365Messages.id, existingProcessed.id));
-  } else {
-    await db.insert(processedO365Messages).values({
-      organizationId: params.organizationId,
-      messageId: message.graphMessageId,
-      invoiceId: updatedInvoice.id,
-      processedAt: new Date(),
-    });
+    if (outcome.reason === "no_invoice_detected") {
+      return {
+        error: "No invoice detected in the email body, attachments, or portal links" as const,
+      };
+    }
+
+    return { error: "This message has already been processed" as const };
   }
 
-  const result = await db.query.invoices.findFirst({
-    where: eq(invoices.id, updatedInvoice.id),
-    with: { supplier: true, assignedTo: true, attachments: true },
-  });
-
-  return { invoice: result ?? updatedInvoice };
+  return { invoice: outcome.invoice };
 }

@@ -80,7 +80,6 @@ export function InboxConversationMessage({
   const displayAttachments = message.attachments.filter(isDisplayAttachment);
   const canProcessInvoice =
     message.direction === "INBOUND" &&
-    isLinked &&
     !message.invoice &&
     (displayAttachments.length > 0 || Boolean(message.bodyText || message.bodyHtml));
   const isProcessing = processingInvoiceId === message.id;

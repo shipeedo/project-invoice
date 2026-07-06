@@ -2,6 +2,14 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import {
+  BanIcon,
+  BanknoteIcon,
+  CheckIcon,
+  PauseIcon,
+  PlayIcon,
+  XIcon,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -197,11 +205,13 @@ export function InvoiceHeaderActions({
         <div className="flex flex-wrap justify-end gap-2">
           {canApprove ? (
             <Button type="button" size="sm" onClick={() => openDialog("approve")} disabled={loading !== null}>
+              <CheckIcon />
               Approve invoice
             </Button>
           ) : null}
           {canRecordPayment ? (
             <Button type="button" size="sm" onClick={() => openDialog("payment")} disabled={loading !== null}>
+              <BanknoteIcon />
               Record payment
             </Button>
           ) : null}
@@ -212,6 +222,7 @@ export function InvoiceHeaderActions({
               onClick={() => void submit("resume", "resume", {})}
               disabled={loading !== null}
             >
+              <PlayIcon />
               {loading === "resume" ? "Releasing..." : "Release hold"}
             </Button>
           ) : null}
@@ -223,6 +234,7 @@ export function InvoiceHeaderActions({
               onClick={() => openDialog("hold")}
               disabled={loading !== null}
             >
+              <PauseIcon />
               Place on hold
             </Button>
           ) : null}
@@ -234,6 +246,7 @@ export function InvoiceHeaderActions({
               onClick={() => openDialog("reject")}
               disabled={loading !== null}
             >
+              <XIcon />
               Reject invoice
             </Button>
           ) : null}
@@ -245,6 +258,7 @@ export function InvoiceHeaderActions({
               onClick={() => openDialog("cancel")}
               disabled={loading !== null}
             >
+              <BanIcon />
               Cancel invoice
             </Button>
           ) : null}

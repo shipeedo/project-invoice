@@ -2,12 +2,13 @@ import { desc, eq } from "drizzle-orm";
 import { AppShell } from "@/components/app-shell";
 import { RoutingRulesManager } from "@/components/routing-rules-manager";
 import { db, routingRules, users } from "@/lib/db";
+import { getNavCounts } from "@/lib/nav-counts";
 import { requireRole } from "@/lib/session";
 
 export default async function RoutingRulesPage() {
   const session = await requireRole(["ADMIN"]);
 
-  const [rules, orgUsers] = await Promise.all([
+  const [rules, orgUsers, navCounts] = await Promise.all([
     db.query.routingRules.findMany({
       where: eq(routingRules.organizationId, session.user.organizationId),
       with: {
@@ -20,12 +21,14 @@ export default async function RoutingRulesPage() {
       columns: { id: true, name: true, email: true },
       orderBy: (table, { asc }) => [asc(table.name)],
     }),
+    getNavCounts(session.user.organizationId),
   ]);
 
   return (
     <AppShell
       user={session.user}
       activePath="/admin/routing-rules"
+      navCounts={navCounts}
       breadcrumbs={[
         { label: "Admin" },
         { label: "Routing rules" },

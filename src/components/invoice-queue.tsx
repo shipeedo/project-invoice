@@ -2,7 +2,14 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { AlertTriangleIcon, ChevronDownIcon, SearchIcon } from "lucide-react";
+import {
+  AlertTriangleIcon,
+  ArrowDownIcon,
+  ArrowUpIcon,
+  ChevronDownIcon,
+  ChevronsUpDownIcon,
+  SearchIcon,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -129,6 +136,55 @@ function parseListParam(value: string | null): string[] {
   return value ? value.split(",").filter(Boolean) : [];
 }
 
+const SORT_KEYS = [
+  "supplier",
+  "status",
+  "total",
+  "assignee",
+  "respondBy",
+  "due",
+  "received",
+] as const;
+
+type SortKey = (typeof SORT_KEYS)[number];
+type SortDirection = "asc" | "desc";
+
+const DEFAULT_SORT_KEY: SortKey = "received";
+const DEFAULT_SORT_DIRECTION: SortDirection = "desc";
+
+function SortableHead({
+  label,
+  active,
+  direction,
+  onSort,
+}: {
+  label: string;
+  active: boolean;
+  direction: SortDirection;
+  onSort: () => void;
+}) {
+  return (
+    <TableHead aria-sort={active ? (direction === "asc" ? "ascending" : "descending") : "none"}>
+      <button
+        type="button"
+        onClick={onSort}
+        className="flex items-center gap-1 hover:text-foreground"
+      >
+        {label}
+        {active ? (
+          direction === "asc" ? (
+            <ArrowUpIcon className="size-3.5" />
+          ) : (
+            <ArrowDownIcon className="size-3.5" />
+          )
+        ) : (
+          <ChevronsUpDownIcon className="size-3.5 text-muted-foreground/50" />
+        )}
+      </button>
+    </TableHead>
+  );
+}
+
 type FacetOption = { value: string; label: string };
 
 function MultiSelectFilter({
@@ -205,6 +261,18 @@ export function InvoiceQueue({
     urgencyParam && URGENCY_FILTER_VALUES.includes(urgencyParam)
       ? urgencyParam
       : "all";
+
+  const sortParam = searchParams.get("sort");
+  const sortKey: SortKey = SORT_KEYS.includes(sortParam as SortKey)
+    ? (sortParam as SortKey)
+    : DEFAULT_SORT_KEY;
+  const dirParam = searchParams.get("dir");
+  const sortDirection: SortDirection =
+    dirParam === "asc" || dirParam === "desc"
+      ? dirParam
+      : sortKey === DEFAULT_SORT_KEY
+        ? DEFAULT_SORT_DIRECTION
+        : "asc";
 
   // The search box stays local while typing and syncs to ?q= debounced.
   const [search, setSearch] = useState(urlSearch);

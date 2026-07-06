@@ -14,6 +14,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -26,8 +27,21 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import type { ExtractedLineItem } from "@/lib/extraction";
 import type { ExtractionCandidates, FieldCandidate, ValidatableField } from "@/lib/extraction-types";
+import {
+  computeLineItemTotals,
+  type InvoiceTotals,
+  type InvoiceTotalsSource,
+} from "@/lib/invoice-totals";
 import { formatCurrency } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -54,6 +68,10 @@ type InvoiceValidationPanelProps = {
   supplierId: string | null;
   supplierName: string | null;
   suppliers: SupplierOption[];
+  /** Subtotal and GST extracted from the invoice document; the document total lives in initialFields. */
+  extractedTotals: { subtotal: number | null; taxAmount: number | null };
+  /** Rendered beside the review card so the line items span the full width below. */
+  sourceSlot?: React.ReactNode;
 };
 
 type FieldConfig = {
@@ -319,6 +337,77 @@ function ValidationFieldRow({
   );
 }
 
+function formatTotalsValue(value: number | null, currency: string) {
+  return value != null ? formatCurrency(value, currency || "AUD") : "—";
+}
+
+type TotalsOptionCardProps = {
+  title: string;
+  description: string;
+  totals: InvoiceTotals;
+  currency: string;
+  selected: boolean;
+  disabled?: boolean;
+  onSelect: () => void;
+};
+
+function TotalsOptionCard({
+  title,
+  description,
+  totals,
+  currency,
+  selected,
+  disabled = false,
+  onSelect,
+}: TotalsOptionCardProps) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={selected}
+      disabled={disabled}
+      onClick={onSelect}
+      className={cn(
+        "flex flex-col gap-3 rounded-lg border p-4 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        selected
+          ? "border-primary bg-primary/5 ring-1 ring-primary"
+          : "hover:border-muted-foreground/40",
+        disabled && "cursor-not-allowed opacity-50 hover:border-border",
+      )}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <span className="text-sm font-semibold">{title}</span>
+          <span className="text-xs text-muted-foreground">{description}</span>
+        </div>
+        <span
+          aria-hidden
+          className={cn(
+            "mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border",
+            selected ? "border-primary bg-primary text-primary-foreground" : "border-input",
+          )}
+        >
+          {selected ? <CheckIcon className="size-3" /> : null}
+        </span>
+      </div>
+      <dl className="space-y-1 text-sm">
+        <div className="flex items-baseline justify-between gap-3">
+          <dt className="text-muted-foreground">Subtotal (excl. GST)</dt>
+          <dd className="font-medium">{formatTotalsValue(totals.subtotal, currency)}</dd>
+        </div>
+        <div className="flex items-baseline justify-between gap-3">
+          <dt className="text-muted-foreground">GST</dt>
+          <dd className="font-medium">{formatTotalsValue(totals.taxAmount, currency)}</dd>
+        </div>
+        <div className="flex items-baseline justify-between gap-3 border-t pt-1">
+          <dt className="text-muted-foreground">Total (incl. GST)</dt>
+          <dd className="font-semibold">{formatTotalsValue(totals.total, currency)}</dd>
+        </div>
+      </dl>
+    </button>
+  );
+}
+
 export function InvoiceValidationPanel({
   invoiceId,
   status,
@@ -328,6 +417,8 @@ export function InvoiceValidationPanel({
   supplierId: initialSupplierId,
   supplierName,
   suppliers,
+  extractedTotals,
+  sourceSlot,
 }: InvoiceValidationPanelProps) {
   const router = useRouter();
   const [fields, setFields] = useState(initialFields);
@@ -339,6 +430,11 @@ export function InvoiceValidationPanel({
   >({});
   const [supplierId, setSupplierId] = useState(initialSupplierId ?? "none");
   const [createSupplier, setCreateSupplier] = useState(!initialSupplierId);
+  // Line indexes deselected for routing; empty means every line is included.
+  const [rejectedLines, setRejectedLines] = useState<Set<number>>(new Set());
+  const [totalsSource, setTotalsSource] = useState<InvoiceTotalsSource>(() =>
+    initialFields.totalAmount || lineItems.length === 0 ? "DOCUMENT" : "LINE_ITEMS",
+  );
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -383,6 +479,50 @@ export function InvoiceValidationPanel({
     return null;
   }
 
+  const selectedLineCount = lineItems.length - rejectedLines.size;
+  const allLinesSelected = lineItems.length > 0 && rejectedLines.size === 0;
+  const someLinesSelected =
+    rejectedLines.size > 0 && rejectedLines.size < lineItems.length;
+  const noLinesSelected = lineItems.length > 0 && selectedLineCount === 0;
+
+  const documentTotal = Number(fields.totalAmount);
+  const documentTotals: InvoiceTotals = {
+    subtotal: extractedTotals.subtotal,
+    taxAmount: extractedTotals.taxAmount,
+    total:
+      fields.totalAmount.trim() && Number.isFinite(documentTotal)
+        ? documentTotal
+        : null,
+  };
+  const selectedLineTotals = computeLineItemTotals(
+    lineItems.filter((_, index) => !rejectedLines.has(index)),
+  );
+  // Fall back to the document totals when the selected lines can't produce any.
+  const effectiveTotalsSource: InvoiceTotalsSource =
+    totalsSource === "LINE_ITEMS" && selectedLineTotals.total == null
+      ? "DOCUMENT"
+      : totalsSource;
+
+  function toggleAllLines(checked: boolean) {
+    if (checked) {
+      setRejectedLines(new Set());
+    } else {
+      setRejectedLines(new Set(lineItems.map((_, index) => index)));
+    }
+  }
+
+  function toggleLine(index: number, checked: boolean) {
+    setRejectedLines((current) => {
+      const next = new Set(current);
+      if (checked) {
+        next.delete(index);
+      } else {
+        next.add(index);
+      }
+      return next;
+    });
+  }
+
   function updateField(key: ValidatableField, value: string) {
     setFields((current) => ({ ...current, [key]: value }));
   }
@@ -421,6 +561,12 @@ export function InvoiceValidationPanel({
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
+
+    if (noLinesSelected) {
+      setError("Select at least one line item to route for approval");
+      return;
+    }
+
     setLoading(true);
     setError(null);
 
@@ -437,6 +583,8 @@ export function InvoiceValidationPanel({
       },
       lineItems,
       selectedSources,
+      rejectedLineIndexes: [...rejectedLines].sort((a, b) => a - b),
+      totalsSource: effectiveTotalsSource,
     };
 
     if (createSupplier) {
@@ -466,115 +614,240 @@ export function InvoiceValidationPanel({
   }
 
   return (
-    <Card>
-      <CardHeader className="pb-4">
-        <CardTitle>Review extraction</CardTitle>
-        <CardDescription>
-          Check each field against the source. Edit only what needs correcting.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <form id="invoice-validation-form" onSubmit={handleSubmit} className="flex flex-col gap-4">
-          <div className="grid gap-4 sm:grid-cols-[7rem_minmax(0,1fr)] sm:items-center">
-            <Label htmlFor="linked-supplier" className="text-sm text-muted-foreground">
-              Supplier
-            </Label>
-            <Select
-              items={supplierSelectItems}
-              value={createSupplier ? "create" : supplierId}
-              onValueChange={(value) => {
-                if (!value || value === "create") {
-                  setCreateSupplier(true);
-                  setSupplierId("none");
-                } else {
-                  setCreateSupplier(false);
-                  setSupplierId(value);
-                }
-              }}
-            >
-              <SelectTrigger id="linked-supplier" className="h-10 w-full">
-                <SelectValue placeholder="Select supplier">
-                  <SupplierSelectTriggerLabel
-                    createSupplier={createSupplier}
-                    supplierId={supplierId}
-                    initialSupplierId={initialSupplierId}
-                    supplierName={supplierName}
-                    suppliers={suppliers}
-                  />
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent alignItemWithTrigger={false} className="min-w-[var(--anchor-width)]">
-                <SelectGroup>
-                  <SelectItem value="create" className="py-2.5 pl-2">
-                    <SupplierFeaturedOption
-                      tone="create"
-                      icon={<PlusIcon className="size-5" />}
-                      title="Create from confirmed name"
-                      description="Add a new supplier using the confirmed fields"
-                    />
-                  </SelectItem>
-                  {supplierName && initialSupplierId ? (
-                    <SelectItem value={initialSupplierId} className="py-2.5 pl-2">
-                      <SupplierFeaturedOption
-                        tone="matched"
-                        icon={<Wand2Icon className="size-5" />}
-                        title={`Matched: ${supplierName}`}
-                        description="Use the supplier linked from this email"
+    <>
+      <div className="grid gap-6 xl:grid-cols-2 xl:items-start">
+        <Card>
+          <CardHeader className="pb-4">
+            <CardTitle>Review extraction</CardTitle>
+            <CardDescription>
+              Check each field against the source. Edit only what needs correcting.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form id="invoice-validation-form" onSubmit={handleSubmit} className="flex flex-col gap-4">
+              <div className="grid gap-4 sm:grid-cols-[7rem_minmax(0,1fr)] sm:items-center">
+                <Label htmlFor="linked-supplier" className="text-sm text-muted-foreground">
+                  Supplier
+                </Label>
+                <Select
+                  items={supplierSelectItems}
+                  value={createSupplier ? "create" : supplierId}
+                  onValueChange={(value) => {
+                    if (!value || value === "create") {
+                      setCreateSupplier(true);
+                      setSupplierId("none");
+                    } else {
+                      setCreateSupplier(false);
+                      setSupplierId(value);
+                    }
+                  }}
+                >
+                  <SelectTrigger id="linked-supplier" className="h-10 w-full">
+                    <SelectValue placeholder="Select supplier">
+                      <SupplierSelectTriggerLabel
+                        createSupplier={createSupplier}
+                        supplierId={supplierId}
+                        initialSupplierId={initialSupplierId}
+                        supplierName={supplierName}
+                        suppliers={suppliers}
                       />
-                    </SelectItem>
-                  ) : null}
-                </SelectGroup>
-                {suppliers.some((supplier) => supplier.id !== initialSupplierId) ? (
-                  <>
-                    <SelectSeparator />
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent alignItemWithTrigger={false} className="min-w-[var(--anchor-width)]">
                     <SelectGroup>
-                      {suppliers
-                        .filter((supplier) => supplier.id !== initialSupplierId)
-                        .map((supplier) => (
-                          <SelectItem key={supplier.id} value={supplier.id}>
-                            {supplier.name}
-                          </SelectItem>
-                        ))}
+                      <SelectItem value="create" className="py-2.5 pl-2">
+                        <SupplierFeaturedOption
+                          tone="create"
+                          icon={<PlusIcon className="size-5" />}
+                          title="Create from confirmed name"
+                          description="Add a new supplier using the confirmed fields"
+                        />
+                      </SelectItem>
+                      {supplierName && initialSupplierId ? (
+                        <SelectItem value={initialSupplierId} className="py-2.5 pl-2">
+                          <SupplierFeaturedOption
+                            tone="matched"
+                            icon={<Wand2Icon className="size-5" />}
+                            title={`Matched: ${supplierName}`}
+                            description="Use the supplier linked from this email"
+                          />
+                        </SelectItem>
+                      ) : null}
                     </SelectGroup>
-                  </>
-                ) : null}
-              </SelectContent>
-            </Select>
-          </div>
+                    {suppliers.some((supplier) => supplier.id !== initialSupplierId) ? (
+                      <>
+                        <SelectSeparator />
+                        <SelectGroup>
+                          {suppliers
+                            .filter((supplier) => supplier.id !== initialSupplierId)
+                            .map((supplier) => (
+                              <SelectItem key={supplier.id} value={supplier.id}>
+                                {supplier.name}
+                              </SelectItem>
+                            ))}
+                        </SelectGroup>
+                      </>
+                    ) : null}
+                  </SelectContent>
+                </Select>
+              </div>
 
-          <Separator />
+              <Separator />
 
-          <div className="grid gap-x-10 sm:grid-cols-2">
-            {FIELD_CONFIG.map((config) => (
-              <ValidationFieldRow
-                key={config.key}
-                config={config}
-                value={fields[config.key]}
-                currency={fields.currency}
-                options={fieldOptions[config.key]}
-                selectedSource={selectedSources[config.key]}
-                isEditing={config.key in editingFields}
-                onStartEdit={() => startEditing(config.key)}
-                onCancelEdit={() => cancelEditing(config.key)}
-                onDoneEdit={() => finishEditing(config.key)}
-                onChange={(value) => updateField(config.key, value)}
-                onApplyCandidate={(candidate) => applyCandidate(config.key, candidate)}
-              />
-            ))}
-          </div>
+              <div className="grid gap-x-10 sm:grid-cols-2">
+                {FIELD_CONFIG.map((config) => (
+                  <ValidationFieldRow
+                    key={config.key}
+                    config={config}
+                    value={fields[config.key]}
+                    currency={fields.currency}
+                    options={fieldOptions[config.key]}
+                    selectedSource={selectedSources[config.key]}
+                    isEditing={config.key in editingFields}
+                    onStartEdit={() => startEditing(config.key)}
+                    onCancelEdit={() => cancelEditing(config.key)}
+                    onDoneEdit={() => finishEditing(config.key)}
+                    onChange={(value) => updateField(config.key, value)}
+                    onApplyCandidate={(candidate) => applyCandidate(config.key, candidate)}
+                  />
+                ))}
+              </div>
+            </form>
+          </CardContent>
+        </Card>
+
+        {sourceSlot}
+      </div>
+
+      <Card>
+        <CardHeader className="pb-4">
+          <CardTitle>Line items</CardTitle>
+          <CardDescription>
+            All line items are included by default. Deselect any you don&apos;t want
+            to route for approval — they will be marked rejected.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="min-w-0 space-y-4">
+          {lineItems.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No line items extracted.</p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-10">
+                    <Checkbox
+                      checked={allLinesSelected}
+                      indeterminate={someLinesSelected}
+                      onCheckedChange={(checked) => toggleAllLines(checked === true)}
+                      aria-label="Select all line items"
+                    />
+                  </TableHead>
+                  <TableHead className="w-12">#</TableHead>
+                  <TableHead className="min-w-[12rem]">Description</TableHead>
+                  <TableHead>Service</TableHead>
+                  <TableHead>Qty</TableHead>
+                  <TableHead>Unit</TableHead>
+                  <TableHead>Amount</TableHead>
+                  <TableHead>Reference</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {lineItems.map((item, index) => {
+                  const isSelected = !rejectedLines.has(index);
+                  return (
+                    <TableRow
+                      key={`${item.lineNumber ?? index}-${item.description}`}
+                      data-state={isSelected ? "selected" : undefined}
+                      className={cn(
+                        "cursor-pointer",
+                        !isSelected && "text-muted-foreground line-through",
+                      )}
+                      onClick={() => toggleLine(index, !isSelected)}
+                    >
+                      <TableCell onClick={(event) => event.stopPropagation()}>
+                        <Checkbox
+                          checked={isSelected}
+                          onCheckedChange={(checked) =>
+                            toggleLine(index, checked === true)
+                          }
+                          aria-label={`Select line ${item.lineNumber ?? index + 1}`}
+                        />
+                      </TableCell>
+                      <TableCell>{item.lineNumber ?? index + 1}</TableCell>
+                      <TableCell className="max-w-md whitespace-normal">{item.description}</TableCell>
+                      <TableCell>{item.serviceType ?? "—"}</TableCell>
+                      <TableCell>{item.quantity ?? "—"}</TableCell>
+                      <TableCell>
+                        {item.unitPrice != null
+                          ? formatCurrency(item.unitPrice, fields.currency || "AUD")
+                          : "—"}
+                      </TableCell>
+                      <TableCell>
+                        {item.amount != null
+                          ? formatCurrency(item.amount, fields.currency || "AUD")
+                          : "—"}
+                      </TableCell>
+                      <TableCell>{item.reference ?? "—"}</TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          )}
+
+          {lineItems.length > 0 ? (
+            <div className="space-y-3" role="radiogroup" aria-label="Invoice totals">
+              <div>
+                <h3 className="text-sm font-semibold">Invoice totals</h3>
+                <p className="text-xs text-muted-foreground">
+                  Choose which totals are saved on the invoice.
+                </p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <TotalsOptionCard
+                  title="From invoice document"
+                  description="As extracted from the document; the total matches the Total field above."
+                  totals={documentTotals}
+                  currency={fields.currency}
+                  selected={effectiveTotalsSource === "DOCUMENT"}
+                  onSelect={() => setTotalsSource("DOCUMENT")}
+                />
+                <TotalsOptionCard
+                  title="From selected line items"
+                  description={`Sum of the ${selectedLineCount} selected line item${selectedLineCount === 1 ? "" : "s"} plus 10% GST.`}
+                  totals={selectedLineTotals}
+                  currency={fields.currency}
+                  selected={effectiveTotalsSource === "LINE_ITEMS"}
+                  disabled={selectedLineTotals.total == null}
+                  onSelect={() => setTotalsSource("LINE_ITEMS")}
+                />
+              </div>
+            </div>
+          ) : null}
 
           {error ? (
             <Alert variant="destructive">
               <AlertDescription>{error}</AlertDescription>
             </Alert>
           ) : null}
-        </form>
-      </CardContent>
-      <CardFooter className="border-t">
-        <Button type="submit" form="invoice-validation-form" disabled={loading}>
-          {loading ? "Confirming..." : "Confirm and route for approval"}
-        </Button>
-      </CardFooter>
-    </Card>
+        </CardContent>
+        <CardFooter className="flex-wrap justify-between gap-3 border-t">
+          <p className="text-sm text-muted-foreground">
+            {lineItems.length === 0
+              ? "No line items to include."
+              : noLinesSelected
+                ? "Select at least one line item to route for approval."
+                : `${selectedLineCount} of ${lineItems.length} line item${lineItems.length === 1 ? "" : "s"} will be routed for approval.`}
+          </p>
+          <Button
+            type="submit"
+            form="invoice-validation-form"
+            disabled={loading || noLinesSelected}
+          >
+            {loading ? "Confirming..." : "Confirm and route for approval"}
+          </Button>
+        </CardFooter>
+      </Card>
+    </>
   );
 }

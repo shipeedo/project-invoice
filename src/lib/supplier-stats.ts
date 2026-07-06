@@ -1,5 +1,6 @@
 import { and, count, eq, isNotNull, max, sql } from "drizzle-orm";
 import { db, invoices } from "@/lib/db";
+import { invoiceNotDeleted } from "@/lib/invoice-trash";
 
 export type SupplierInvoiceStats = {
   invoiceCount: number;
@@ -38,6 +39,7 @@ export async function getSupplierInvoiceStats(
       and(
         eq(invoices.organizationId, organizationId),
         isNotNull(invoices.supplierId),
+        invoiceNotDeleted(),
       ),
     )
     .groupBy(invoices.supplierId);

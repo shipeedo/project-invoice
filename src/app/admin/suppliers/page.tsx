@@ -8,25 +8,28 @@ import {
   emptySupplierInvoiceStats,
   getSupplierInvoiceStats,
 } from "@/lib/supplier-stats";
+import { getNavCounts } from "@/lib/nav-counts";
 import { requireRole } from "@/lib/session";
 
 export default async function SuppliersPage() {
   const session = await requireRole(["ADMIN"]);
   const organizationId = session.user.organizationId;
 
-  const [rows, suggestions, stats] = await Promise.all([
+  const [rows, suggestions, stats, navCounts] = await Promise.all([
     db.query.suppliers.findMany({
       where: eq(suppliers.organizationId, organizationId),
       orderBy: asc(suppliers.name),
     }),
     getSupplierSuggestions(organizationId),
     getSupplierInvoiceStats(organizationId),
+    getNavCounts(organizationId),
   ]);
 
   return (
     <AppShell
       user={session.user}
       activePath="/admin/suppliers"
+      navCounts={navCounts}
       breadcrumbs={[{ label: "Admin" }, { label: "Suppliers" }]}
     >
       <div className="space-y-4">
@@ -45,6 +48,7 @@ export default async function SuppliersPage() {
               name: supplier.name,
               emailAddresses: JSON.parse(supplier.emailAddresses) as string[],
               emailDomains: JSON.parse(supplier.emailDomains) as string[],
+              tradingTermDays: supplier.tradingTermDays,
               extractionPrompt: supplier.extractionPrompt,
               fieldMappings: parseSupplierFieldMappings(supplier.fieldMappings),
               invoiceCount: invoiceStats.invoiceCount,

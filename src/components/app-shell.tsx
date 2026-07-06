@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
 import type { UserRole } from "@/lib/db/types";
+import type { NavCounts } from "@/lib/nav-counts";
 
 export type BreadcrumbEntry = {
   label: string;
@@ -30,6 +31,7 @@ type AppShellProps = {
     role: UserRole;
   };
   activePath?: string;
+  navCounts?: NavCounts;
   breadcrumbs?: BreadcrumbEntry[];
   fillViewport?: boolean;
 };
@@ -38,14 +40,18 @@ export function AppShell({
   children,
   user,
   activePath,
+  navCounts,
   breadcrumbs = [],
   fillViewport = false,
 }: AppShellProps) {
   return (
     <SidebarProvider>
-      <AppSidebar user={user} activePath={activePath} />
+      <AppSidebar user={user} activePath={activePath} navCounts={navCounts} />
       <SidebarInset
-        className={cn(fillViewport && "h-svh min-h-0 overflow-hidden")}
+        className={cn(
+          "min-w-0 overflow-x-hidden",
+          fillViewport && "h-svh min-h-0 overflow-hidden",
+        )}
       >
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
@@ -85,7 +91,7 @@ export function AppShell({
         </header>
         <div
           className={cn(
-            "flex flex-1 flex-col gap-4 p-4 pt-0",
+            "flex min-w-0 flex-1 flex-col gap-4 p-4 pt-0",
             fillViewport && "min-h-0 overflow-hidden",
           )}
         >

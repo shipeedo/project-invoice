@@ -58,8 +58,3 @@ npm run build
 ```
 
 There are no automated tests yet.
-
-### Phase scope
-
-- **1a (pilot):** PDF upload, AI extraction, routing, approval, credit drafts — implemented
-- **1b:** O365 mailbox intake — not yet implemented

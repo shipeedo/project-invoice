@@ -5,6 +5,7 @@ import { db, suppliers } from "@/lib/db";
 import type { SupplierFieldMappings } from "@/lib/extraction-types";
 import { parseSupplierFieldMappings } from "@/lib/extraction-types";
 import { updateSupplierExtractionSettings } from "@/lib/supplier-extraction";
+import { normalizeTradingTermDays } from "@/lib/trading-terms";
 
 type RouteContext = {
   params: Promise<{ id: string }>;
@@ -25,6 +26,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     name?: string;
     emailAddresses?: string[];
     emailDomains?: string[];
+    tradingTermDays?: number | null;
     extractionPrompt?: string | null;
     fieldMappings?: SupplierFieldMappings;
   };
@@ -48,6 +50,10 @@ export async function PATCH(request: Request, context: RouteContext) {
         ? JSON.stringify(body.emailAddresses)
         : undefined,
       emailDomains: body.emailDomains ? JSON.stringify(body.emailDomains) : undefined,
+      tradingTermDays:
+        body.tradingTermDays !== undefined
+          ? normalizeTradingTermDays(body.tradingTermDays)
+          : undefined,
       updatedAt: new Date(),
     })
     .where(eq(suppliers.id, id))
