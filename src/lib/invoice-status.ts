@@ -9,8 +9,6 @@ import type { InvoiceStatus } from "@/lib/db/types";
  *   REJECTED         assigned and rejected
  *   ON_HOLD          paused by the assignee or an admin (previous status is
  *                    stored so releasing the hold restores it)
- *   PART_PAID        one or more payments recorded, balance outstanding
- *   PAID             fully paid
  *   CANCELLED        withdrawn — no further action
  */
 
@@ -25,45 +23,12 @@ export const REJECTABLE_STATUSES: InvoiceStatus[] = [
 export const HOLDABLE_STATUSES: InvoiceStatus[] = [
   "PENDING_APPROVAL",
   "APPROVED",
-  "PART_PAID",
 ];
 
-export const PAYABLE_STATUSES: InvoiceStatus[] = ["APPROVED", "PART_PAID"];
-
-export const UNCANCELLABLE_STATUSES: InvoiceStatus[] = ["PAID", "CANCELLED"];
+export const UNCANCELLABLE_STATUSES: InvoiceStatus[] = ["CANCELLED"];
 
 export function canCancelInvoice(status: InvoiceStatus): boolean {
   return !UNCANCELLABLE_STATUSES.includes(status);
-}
-
-// Ignore sub-cent differences from floating point payment sums.
-const PAYMENT_EPSILON = 0.005;
-
-export function outstandingAmount(
-  totalAmount: number | null | undefined,
-  amountPaid: number,
-): number | null {
-  if (totalAmount == null) return null;
-  return Math.max(0, totalAmount - amountPaid);
-}
-
-export function isFullyPaid(
-  totalAmount: number | null | undefined,
-  amountPaid: number,
-): boolean {
-  if (totalAmount == null) return false;
-  return amountPaid >= totalAmount - PAYMENT_EPSILON;
-}
-
-export function resolvePaymentStatus(params: {
-  totalAmount: number | null | undefined;
-  amountPaid: number;
-  markAsPaid?: boolean;
-}): Extract<InvoiceStatus, "PART_PAID" | "PAID"> {
-  if (params.markAsPaid || isFullyPaid(params.totalAmount, params.amountPaid)) {
-    return "PAID";
-  }
-  return "PART_PAID";
 }
 
 export type ExtractionStateInput = {

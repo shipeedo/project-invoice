@@ -112,22 +112,6 @@ function withNote(base: string | null, details: Details): string | null {
   return note ? `${base} · Note: ${note}` : base;
 }
 
-function describePayment(details: Details, currency: string, paidInFull: boolean): AuditDisplay {
-  const amount = asNumber(details.amount);
-  const amountPaid = asNumber(details.amountPaid);
-  const ref = asString(details.transactionRef);
-
-  const parts: string[] = [];
-  if (amount != null) parts.push(`${formatCurrency(amount, currency)} recorded`);
-  if (amountPaid != null) parts.push(`total paid ${formatCurrency(amountPaid, currency)}`);
-  if (ref) parts.push(`ref ${ref}`);
-
-  return {
-    label: paidInFull ? "Invoice paid in full" : "Payment recorded",
-    description: withNote(parts.length > 0 ? parts.join(" · ") : null, details),
-  };
-}
-
 export function describeAuditEvent(
   action: string,
   rawDetails: string | null | undefined,
@@ -254,10 +238,6 @@ export function describeAuditEvent(
     }
     case "invoice.restored":
       return { label: "Restored from trash", description: null };
-    case "invoice.payment_recorded":
-      return describePayment(details, currency, false);
-    case "invoice.paid":
-      return describePayment(details, currency, true);
     case "email.invoice_created": {
       const subject = asString(details.subject);
       return {

@@ -4,7 +4,6 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   BanIcon,
-  BanknoteIcon,
   CheckIcon,
   PauseIcon,
   PlayIcon,
@@ -20,19 +19,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
   APPROVABLE_STATUSES,
   HOLDABLE_STATUSES,
-  PAYABLE_STATUSES,
   REJECTABLE_STATUSES,
   canCancelInvoice,
-  outstandingAmount,
 } from "@/lib/invoice-status";
 import type { InvoiceStatus, UserRole } from "@/lib/db/types";
-import { formatCurrency } from "@/lib/format";
 
 type InvoiceHeaderActionsProps = {
   invoiceId: string;
@@ -41,14 +36,11 @@ type InvoiceHeaderActionsProps = {
   assignedToId?: string | null;
   currentUserId: string;
   currentUserRole: UserRole;
-  totalAmount?: number | null;
-  amountPaid: number;
-  currency: string;
 };
 
 type ConfirmAction = "approve" | "reject";
 type ReasonAction = "hold" | "cancel";
-type PendingAction = ConfirmAction | ReasonAction | "resume" | "payment";
+type PendingAction = ConfirmAction | ReasonAction | "resume";
 
 const CONFIRM_COPY: Record<
   ConfirmAction,
@@ -97,9 +89,6 @@ export function InvoiceHeaderActions({
   assignedToId,
   currentUserId,
   currentUserRole,
-  totalAmount,
-  amountPaid,
-  currency,
 }: InvoiceHeaderActionsProps) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
@@ -107,11 +96,6 @@ export function InvoiceHeaderActions({
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [confirmed, setConfirmed] = useState(false);
   const [reason, setReason] = useState("");
-  const [paymentAmount, setPaymentAmount] = useState("");
-  const [paymentDate, setPaymentDate] = useState("");
-  const [paymentRef, setPaymentRef] = useState("");
-  const [paymentNote, setPaymentNote] = useState("");
-  const [settlesInFull, setSettlesInFull] = useState(false);
 
   const canManageHold =
     currentUserRole === "ADMIN" || (assignedToId != null && assignedToId === currentUserId);
@@ -120,24 +104,16 @@ export function InvoiceHeaderActions({
   const canReject = REJECTABLE_STATUSES.includes(status);
   const canHold = HOLDABLE_STATUSES.includes(status) && canManageHold;
   const canResume = status === "ON_HOLD" && canManageHold;
-  const canRecordPayment = PAYABLE_STATUSES.includes(status);
   const canCancel = canCancelInvoice(status);
 
-  if (!canApprove && !canReject && !canHold && !canResume && !canRecordPayment && !canCancel) {
+  if (!canApprove && !canReject && !canHold && !canResume && !canCancel) {
     return null;
   }
-
-  const outstanding = outstandingAmount(totalAmount, amountPaid);
 
   function openDialog(action: Exclude<PendingAction, "resume">) {
     setPendingAction(action);
     setConfirmed(false);
     setReason("");
-    setPaymentAmount("");
-    setPaymentDate("");
-    setPaymentRef("");
-    setPaymentNote("");
-    setSettlesInFull(false);
     setError(null);
   }
 
@@ -168,28 +144,6 @@ export function InvoiceHeaderActions({
     router.refresh();
   }
 
-  function submitPayment() {
-    const trimmed = paymentAmount.trim();
-    const amount = trimmed ? Number(trimmed) : undefined;
-
-    if (trimmed && (!Number.isFinite(amount) || (amount as number) <= 0)) {
-      setError("Enter a payment amount greater than zero");
-      return;
-    }
-    if (!trimmed && !settlesInFull) {
-      setError("Enter a payment amount or mark the invoice as fully paid");
-      return;
-    }
-
-    void submit("payment", "payments", {
-      amount,
-      paidAt: paymentDate || undefined,
-      transactionRef: paymentRef.trim() || undefined,
-      note: paymentNote.trim() || undefined,
-      markAsPaid: settlesInFull,
-    });
-  }
-
   const confirmCopy =
     pendingAction === "approve" || pendingAction === "reject"
       ? CONFIRM_COPY[pendingAction]
@@ -207,12 +161,6 @@ export function InvoiceHeaderActions({
             <Button type="button" size="sm" onClick={() => openDialog("approve")} disabled={loading !== null}>
               <CheckIcon />
               Approve invoice
-            </Button>
-          ) : null}
-          {canRecordPayment ? (
-            <Button type="button" size="sm" onClick={() => openDialog("payment")} disabled={loading !== null}>
-              <BanknoteIcon />
-              Record payment
             </Button>
           ) : null}
           {canResume ? (
@@ -336,94 +284,6 @@ export function InvoiceHeaderActions({
                   disabled={loading !== null}
                 >
                   {loading === pendingAction ? "Working..." : reasonCopy.confirm}
-                </Button>
-              </DialogFooter>
-            </>
-          ) : null}
-
-          {pendingAction === "payment" ? (
-            <>
-              <DialogHeader>
-                <DialogTitle>Record a payment</DialogTitle>
-                <DialogDescription>
-                  {outstanding != null
-                    ? `Outstanding balance: ${formatCurrency(outstanding, currency)}.`
-                    : "The invoice total is unknown, so payments will not settle it automatically."}{" "}
-                  Optionally link the transaction in your accounting software.
-                </DialogDescription>
-              </DialogHeader>
-
-              <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="payment-amount">Amount</Label>
-                    <Input
-                      id="payment-amount"
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={paymentAmount}
-                      onChange={(event) => setPaymentAmount(event.target.value)}
-                      placeholder={
-                        outstanding != null && settlesInFull ? String(outstanding) : "0.00"
-                      }
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="payment-date">Paid on</Label>
-                    <Input
-                      id="payment-date"
-                      type="date"
-                      value={paymentDate}
-                      onChange={(event) => setPaymentDate(event.target.value)}
-                    />
-                  </div>
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="payment-ref">Accounting transaction link or reference</Label>
-                  <Input
-                    id="payment-ref"
-                    value={paymentRef}
-                    onChange={(event) => setPaymentRef(event.target.value)}
-                    placeholder="https://… or reference (optional)"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="payment-note">Note</Label>
-                  <Textarea
-                    id="payment-note"
-                    value={paymentNote}
-                    onChange={(event) => setPaymentNote(event.target.value)}
-                    placeholder="Optional note for the audit trail"
-                  />
-                </div>
-                <div className="flex items-start gap-3 rounded-lg border bg-muted/20 p-4">
-                  <Checkbox
-                    id="payment-settles"
-                    checked={settlesInFull}
-                    onCheckedChange={(checked) => setSettlesInFull(checked === true)}
-                  />
-                  <Label htmlFor="payment-settles" className="text-sm leading-snug font-normal">
-                    This settles the invoice in full — mark it as paid.
-                    {outstanding != null && !paymentAmount.trim()
-                      ? " Leaving the amount empty records the outstanding balance."
-                      : ""}
-                  </Label>
-                </div>
-              </div>
-
-              {error ? <p className="text-sm text-destructive">{error}</p> : null}
-
-              <DialogFooter>
-                <Button type="button" variant="outline" onClick={closeDialog} disabled={loading !== null}>
-                  Back
-                </Button>
-                <Button type="button" onClick={submitPayment} disabled={loading !== null}>
-                  {loading === "payment"
-                    ? "Recording..."
-                    : settlesInFull
-                      ? "Record & mark paid"
-                      : "Record payment"}
                 </Button>
               </DialogFooter>
             </>

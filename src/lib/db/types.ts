@@ -7,8 +7,6 @@ export const invoiceStatuses = [
   "APPROVED",
   "REJECTED",
   "ON_HOLD",
-  "PART_PAID",
-  "PAID",
   "CANCELLED",
 ] as const;
 export type InvoiceStatus = (typeof invoiceStatuses)[number];

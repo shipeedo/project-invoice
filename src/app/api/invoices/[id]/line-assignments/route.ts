@@ -45,7 +45,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     );
   }
 
-  if (["PAID", "CANCELLED"].includes(invoice.status)) {
+  if (invoice.status === "CANCELLED") {
     return NextResponse.json(
       { error: "Line assignments cannot be changed once the invoice is closed" },
       { status: 400 },

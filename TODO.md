@@ -17,7 +17,7 @@ Track remaining work before production launch.
 - [x] **Supplier trading terms** — optional "trading terms (days)" on suppliers; when set, the invoice due date is computed as invoice date + term days, overriding the stated due date. Overrides are surfaced with an info tooltip on the invoice due date and recorded via an `invoice.due_date_overridden` audit event.
 - [x] **fix create supplier** — name/email/domain fields accept free text (Base UI Autocomplete instead of Combobox); picking an inbox suggestion only fills fields left empty
 - [x] **Delete supplier** — destructive button in the edit sheet with confirm dialog; linked invoices/emails are kept and unlinked (FKs are set-null)
-- [ ] **rip out payments** - 
+- [x] **rip out payments** — removed the payments feature end-to-end: invoice_payments table, amount_paid/paid_at/marked_paid_by columns, PAID/PART_PAID statuses (existing rows migrated to APPROVED), the record-payment API/dialog and Payments card, and the payment audit renderers
 - [ ] **Recharges** - 
 
 

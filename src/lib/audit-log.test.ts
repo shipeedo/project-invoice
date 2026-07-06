@@ -79,28 +79,6 @@ describe("describeAuditEvent", () => {
     );
   });
 
-  it("describes payments with amount, running total, and reference", () => {
-    const result = describeAuditEvent(
-      "invoice.payment_recorded",
-      JSON.stringify({
-        amount: 100,
-        amountPaid: 100,
-        transactionRef: "https://accounting.example/txn/1",
-      }),
-      "AUD",
-    );
-    expect(result.label).toBe("Payment recorded");
-    expect(result.description).toBe(
-      "$100.00 recorded · total paid $100.00 · ref https://accounting.example/txn/1",
-    );
-  });
-
-  it("labels a settling payment as paid in full", () => {
-    expect(describeAuditEvent("invoice.paid", JSON.stringify({ amount: 150 })).label).toBe(
-      "Invoice paid in full",
-    );
-  });
-
   it("shows the hold reason and the restored status", () => {
     expect(
       describeAuditEvent("invoice.held", JSON.stringify({ reason: "Disputed charge" }))

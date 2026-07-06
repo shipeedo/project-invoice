@@ -9,7 +9,7 @@ export const NEARING_BUSINESS_DAYS = 2;
 export const ACTIONABLE_STATUSES = ["DRAFT", "PENDING_APPROVAL"] as const;
 
 // Statuses where the payment due date no longer matters.
-export const TERMINAL_STATUSES = ["REJECTED", "PAID", "CANCELLED"] as const;
+export const TERMINAL_STATUSES = ["REJECTED", "CANCELLED"] as const;
 
 export type DeadlineUrgency =
   | "overdue"

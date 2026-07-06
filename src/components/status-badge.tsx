@@ -7,8 +7,6 @@ const variants: Record<string, "default" | "secondary" | "destructive" | "outlin
   APPROVED: "default",
   REJECTED: "destructive",
   ON_HOLD: "outline",
-  PART_PAID: "default",
-  PAID: "default",
   CANCELLED: "secondary",
 };
 

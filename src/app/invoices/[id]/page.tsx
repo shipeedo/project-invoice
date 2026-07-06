@@ -14,18 +14,9 @@ import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
   auditEvents,
   creditRequests,
   db,
-  invoicePayments,
   invoices,
   mailboxMessages,
   notes,
@@ -35,7 +26,7 @@ import {
 import { describeAuditEvent } from "@/lib/audit-log";
 import { parseExtractionCandidates } from "@/lib/extraction-types";
 import { resolveInvoiceSourceEmail } from "@/lib/invoice-source-email";
-import { isExtractionPending, outstandingAmount } from "@/lib/invoice-status";
+import { isExtractionPending } from "@/lib/invoice-status";
 import {
   TRASH_RETENTION_DAYS,
   daysUntilTrashExpiry,
@@ -153,8 +144,7 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
   const canAssignLineItems =
     lineItems.length > 0 &&
     !isExtractionPending(invoice) &&
-    !["PAID", "CANCELLED"].includes(invoice.status);
-  // Credits stay available after payment so a paid invoice can still be disputed.
+    invoice.status !== "CANCELLED";
   const canRequestLineCredits =
     lineItems.length > 0 &&
     !isExtractionPending(invoice) &&
@@ -168,12 +158,6 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
     ? (invoice.assignedTo.name ?? invoice.assignedTo.email)
     : null;
 
-  const payments = await db.query.invoicePayments.findMany({
-    where: eq(invoicePayments.invoiceId, invoice.id),
-    with: { recordedBy: { columns: { name: true, email: true } } },
-    orderBy: desc(invoicePayments.paidAt),
-  });
-
   const invoiceCreditRequests = await db.query.creditRequests.findMany({
     where: eq(creditRequests.invoiceId, invoice.id),
     orderBy: desc(creditRequests.createdAt),
@@ -184,10 +168,6 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
     const user = orgUsers.find((candidate) => candidate.id === userId);
     return user ? (user.name ?? user.email) : null;
   };
-
-  const outstanding = outstandingAmount(invoice.totalAmount, invoice.amountPaid);
-  const showPayments =
-    payments.length > 0 || ["APPROVED", "PART_PAID", "PAID"].includes(invoice.status);
 
   const sourceAttachments = getSourceAttachments(invoice);
 
@@ -343,9 +323,6 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
                   assignedToId={invoice.assignedToId}
                   currentUserId={session.user.id}
                   currentUserRole={session.user.role}
-                  totalAmount={invoice.totalAmount}
-                  amountPaid={invoice.amountPaid}
-                  currency={invoice.currency ?? "AUD"}
                 />
                 <InvoiceTrashActions
                   invoiceId={invoice.id}
@@ -521,100 +498,6 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
           }))}
           currency={invoice.currency ?? "AUD"}
         />
-
-        {showPayments ? (
-          <Card>
-            <CardHeader>
-              <CardTitle>Payments</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <dl className="grid grid-cols-3 gap-3 text-sm">
-                <div>
-                  <dt className="text-muted-foreground">Invoice total</dt>
-                  <dd className="font-medium">
-                    {formatCurrency(invoice.totalAmount, invoice.currency ?? "AUD")}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">Paid</dt>
-                  <dd className="font-medium">
-                    {formatCurrency(invoice.amountPaid, invoice.currency ?? "AUD")}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">Outstanding</dt>
-                  <dd className="font-medium">
-                    {outstanding != null
-                      ? formatCurrency(outstanding, invoice.currency ?? "AUD")
-                      : "—"}
-                  </dd>
-                </div>
-              </dl>
-
-              {invoice.status === "PAID" ? (
-                <p className="text-sm text-muted-foreground">
-                  Marked as paid {formatDate(invoice.paidAt)}
-                  {userLabel(invoice.markedPaidById)
-                    ? ` by ${userLabel(invoice.markedPaidById)}`
-                    : ""}
-                  .
-                </p>
-              ) : null}
-
-              {payments.length > 0 ? (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Date</TableHead>
-                      <TableHead className="text-right">Amount</TableHead>
-                      <TableHead>Recorded by</TableHead>
-                      <TableHead>Note</TableHead>
-                      <TableHead>Reference</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {payments.map((payment) => (
-                      <TableRow key={payment.id}>
-                        <TableCell>{formatDate(payment.paidAt)}</TableCell>
-                        <TableCell className="text-right font-medium">
-                          {formatCurrency(payment.amount, invoice.currency ?? "AUD")}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground">
-                          {payment.recordedBy
-                            ? (payment.recordedBy.name ?? payment.recordedBy.email)
-                            : "—"}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground">
-                          {payment.note ?? "—"}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground">
-                          {payment.transactionRef ? (
-                            /^https?:\/\//.test(payment.transactionRef) ? (
-                              <a
-                                href={payment.transactionRef}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="text-primary underline underline-offset-2"
-                              >
-                                View accounting transaction
-                              </a>
-                            ) : (
-                              payment.transactionRef
-                            )
-                          ) : (
-                            "—"
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              ) : (
-                <p className="text-sm text-muted-foreground">No payments recorded yet.</p>
-              )}
-            </CardContent>
-          </Card>
-        ) : null}
 
         <Card>
           <CardHeader>

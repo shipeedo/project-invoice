@@ -46,7 +46,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     );
   }
 
-  if (["PAID", "CANCELLED"].includes(invoice.status)) {
+  if (invoice.status === "CANCELLED") {
     return NextResponse.json(
       { error: "Line items cannot be edited once the invoice is closed" },
       { status: 400 },
