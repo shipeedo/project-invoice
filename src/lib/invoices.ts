@@ -97,8 +97,6 @@ export async function processUploadedInvoice(params: {
       subtotalAmount: extraction.data?.subtotal,
       taxAmount: extraction.data?.taxAmount,
       currency: extraction.data?.currency ?? "AUD",
-      lineItems: null,
-      extractionCandidates: null,
       extractionRaw: extraction.raw ? JSON.stringify(extraction.raw) : null,
       parseError: extraction.error ?? null,
       supplierId: supplier?.id ?? null,

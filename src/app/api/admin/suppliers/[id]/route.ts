@@ -2,8 +2,6 @@ import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db, suppliers } from "@/lib/db";
-import type { SupplierFieldMappings } from "@/lib/extraction-types";
-import { parseSupplierFieldMappings } from "@/lib/extraction-types";
 import { updateSupplierExtractionSettings } from "@/lib/supplier-extraction";
 import { normalizeTradingTermDays } from "@/lib/trading-terms";
 
@@ -28,7 +26,6 @@ export async function PATCH(request: Request, context: RouteContext) {
     emailDomains?: string[];
     tradingTermDays?: number | null;
     extractionPrompt?: string | null;
-    fieldMappings?: SupplierFieldMappings;
   };
 
   const existing = await db.query.suppliers.findFirst({
@@ -59,17 +56,14 @@ export async function PATCH(request: Request, context: RouteContext) {
     .where(eq(suppliers.id, id))
     .returning();
 
-  const hasExtractionUpdates =
-    body.extractionPrompt !== undefined || body.fieldMappings !== undefined;
-
-  const updatedSupplier = hasExtractionUpdates
-    ? await updateSupplierExtractionSettings({
-        supplierId: id,
-        organizationId: session.user.organizationId,
-        extractionPrompt: body.extractionPrompt,
-        fieldMappings: body.fieldMappings,
-      })
-    : supplier;
+  const updatedSupplier =
+    body.extractionPrompt !== undefined
+      ? await updateSupplierExtractionSettings({
+          supplierId: id,
+          organizationId: session.user.organizationId,
+          extractionPrompt: body.extractionPrompt,
+        })
+      : supplier;
 
   if (!updatedSupplier) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -79,7 +73,6 @@ export async function PATCH(request: Request, context: RouteContext) {
     ...updatedSupplier,
     emailAddresses: JSON.parse(updatedSupplier.emailAddresses),
     emailDomains: JSON.parse(updatedSupplier.emailDomains),
-    fieldMappings: parseSupplierFieldMappings(updatedSupplier.fieldMappings),
   });
 }
 

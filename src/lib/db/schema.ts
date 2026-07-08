@@ -88,8 +88,6 @@ export const invoices = sqliteTable("invoices", {
   subtotalAmount: real("subtotal_amount"),
   taxAmount: real("tax_amount"),
   currency: text("currency").default("AUD"),
-  lineItems: text("line_items"),
-  extractionCandidates: text("extraction_candidates"),
   extractionRaw: text("extraction_raw"),
   parseError: text("parse_error"),
   supplierId: text("supplier_id").references(() => suppliers.id, {
@@ -169,7 +167,6 @@ export const suppliers = sqliteTable("suppliers", {
   // invoice is due. When set, it overrides the due date stated on invoices.
   tradingTermDays: integer("trading_term_days"),
   extractionPrompt: text("extraction_prompt"),
-  fieldMappings: text("field_mappings").notNull().default("{}"),
   createdAt: timestamp(),
   updatedAt: updatedAt(),
 });
@@ -405,7 +402,6 @@ export const creditRequests = sqliteTable("credit_requests", {
   }),
   lineItems: text("line_items").notNull().default("[]"),
   requestedTotal: real("requested_total"),
-  fuelAmount: real("fuel_amount"),
   gstAmount: real("gst_amount"),
   approvedAmount: real("approved_amount"),
   notes: text("notes"),

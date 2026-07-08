@@ -586,8 +586,6 @@ export async function processInboundEmailForInvoice(params: ProcessEmailOptions)
       subtotalAmount: extraction.data?.subtotal,
       taxAmount: extraction.data?.taxAmount,
       currency: extraction.data?.currency ?? "AUD",
-      lineItems: null,
-      extractionCandidates: null,
       extractionRaw: extraction.raw ? JSON.stringify(extraction.raw) : null,
       parseError: extraction.error ?? portalFetchError ?? null,
       supplierId: resolvedSupplierId,

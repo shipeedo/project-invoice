@@ -242,8 +242,6 @@ export async function reprocessDraftInvoice(params: {
       subtotalAmount: extraction.data.subtotal ?? null,
       taxAmount: extraction.data.taxAmount ?? null,
       currency: extraction.data.currency ?? "AUD",
-      lineItems: null,
-      extractionCandidates: null,
       extractionRaw: extraction.raw ? JSON.stringify(extraction.raw) : null,
       parseError,
       supplierId: supplier?.id ?? invoice.supplierId,

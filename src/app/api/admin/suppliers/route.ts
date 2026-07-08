@@ -3,7 +3,6 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db, suppliers } from "@/lib/db";
 import { buildNewSupplierValues } from "@/lib/supplier-extraction";
-import { parseSupplierFieldMappings } from "@/lib/extraction-types";
 import {
   emptySupplierInvoiceStats,
   getSupplierInvoiceStats,
@@ -31,7 +30,6 @@ export async function GET() {
         ...supplier,
         emailAddresses: JSON.parse(supplier.emailAddresses) as string[],
         emailDomains: JSON.parse(supplier.emailDomains) as string[],
-        fieldMappings: parseSupplierFieldMappings(supplier.fieldMappings),
         invoiceCount: invoiceStats.invoiceCount,
         lastInvoiceAt: invoiceStats.lastInvoiceAt,
       };
@@ -78,7 +76,6 @@ export async function POST(request: Request) {
       ...supplier,
       emailAddresses: body.emailAddresses ?? [],
       emailDomains: body.emailDomains ?? [],
-      fieldMappings: parseSupplierFieldMappings(supplier.fieldMappings),
     },
     { status: 201 },
   );

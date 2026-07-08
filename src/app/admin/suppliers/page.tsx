@@ -2,7 +2,6 @@ import { asc, eq } from "drizzle-orm";
 import { AppShell } from "@/components/app-shell";
 import { SuppliersManager } from "@/components/suppliers-manager";
 import { db, suppliers } from "@/lib/db";
-import { parseSupplierFieldMappings } from "@/lib/extraction-types";
 import { getSupplierSuggestions } from "@/lib/email-contacts";
 import {
   emptySupplierInvoiceStats,
@@ -50,7 +49,6 @@ export default async function SuppliersPage() {
               emailDomains: JSON.parse(supplier.emailDomains) as string[],
               tradingTermDays: supplier.tradingTermDays,
               extractionPrompt: supplier.extractionPrompt,
-              fieldMappings: parseSupplierFieldMappings(supplier.fieldMappings),
               invoiceCount: invoiceStats.invoiceCount,
               lastInvoiceAt: invoiceStats.lastInvoiceAt,
             };

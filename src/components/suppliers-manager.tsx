@@ -47,7 +47,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
-import type { SupplierFieldMappings } from "@/lib/extraction-types";
 import { formatDate } from "@/lib/format";
 
 type Supplier = {
@@ -57,7 +56,6 @@ type Supplier = {
   emailDomains: string[];
   tradingTermDays: number | null;
   extractionPrompt: string | null;
-  fieldMappings: SupplierFieldMappings;
   invoiceCount: number;
   lastInvoiceAt: string | Date | null;
 };
