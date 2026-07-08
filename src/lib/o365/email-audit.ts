@@ -5,6 +5,7 @@ import { db, processedO365Messages } from "@/lib/db";
 export type EmailIgnoreReason =
   | "already_processed"
   | "no_invoice_detected"
+  | "not_an_invoice"
   | "account_statement"
   | "duplicate_invoice"
   | "outbound_message";

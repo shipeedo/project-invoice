@@ -1,15 +1,8 @@
-import { classifyAttachment, type InvoiceAttachmentKind } from "@/lib/attachment-types";
 import { callAiChatCompletion } from "@/lib/ai-chat";
-import {
-  extractSpreadsheetMetadata,
-  mergeExtractedInvoiceData,
-  parseSpreadsheetLineItems,
-} from "@/lib/csv-extraction";
 import { extractTextFromDocument } from "@/lib/document-text";
 import {
   buildInvoiceExtractionFromEmailUserPrompt,
   buildInvoiceExtractionUserPrompt,
-  buildSpreadsheetHeaderExtractionUserPrompt,
 } from "@/lib/extraction-prompts";
 import type { ExtractionCandidates, FieldCandidate } from "@/lib/extraction-types";
 import {
@@ -74,11 +67,11 @@ export type ExtractedInvoice = {
 };
 
 const MAX_INVOICE_TEXT_CHARS = 24_000;
-const MAX_SPREADSHEET_PREVIEW_CHARS = 8_000;
 
-function isSpreadsheetKind(kind: InvoiceAttachmentKind) {
-  return kind === "csv" || kind === "xlsx" || kind === "xls";
-}
+export type ExtractionDocumentText = {
+  fileName: string;
+  text: string;
+};
 
 export async function extractTextFromPdf(filePath: string): Promise<string> {
   const { text } = await extractTextFromDocument(filePath, "invoice.pdf", "application/pdf");
@@ -119,16 +112,6 @@ export async function extractInvoiceFromDocument(
     };
   }
 
-  const kind = classifyAttachment(fileName, mimeType);
-  if (isSpreadsheetKind(kind)) {
-    return extractInvoiceFromSpreadsheetText(
-      fileName,
-      text,
-      supplierContext,
-      emailContext,
-    );
-  }
-
   return extractInvoiceFromDocumentText(
     fileName,
     text,
@@ -137,9 +120,13 @@ export async function extractInvoiceFromDocument(
   );
 }
 
-export async function extractInvoiceFromSpreadsheetText(
-  fileName: string,
-  text: string,
+/**
+ * Extracts one invoice from the combined text of every provided document
+ * (e.g. the invoice PDF plus a CSV breakdown of the same charges) in a single
+ * AI call, so the model returns one deduplicated line item list.
+ */
+export async function extractInvoiceFromDocumentTexts(
+  documents: ExtractionDocumentText[],
   supplierContext?: SupplierExtractionContext | null,
   emailContext?: EmailExtractionContext | null,
 ): Promise<{
@@ -148,72 +135,29 @@ export async function extractInvoiceFromSpreadsheetText(
   fieldCandidates: ExtractionCandidates | null;
   error?: string;
 }> {
-  const parsedLineItems = parseSpreadsheetLineItems(text);
-  const spreadsheetMetadata = extractSpreadsheetMetadata(text);
+  const usableDocuments = documents
+    .map((document) => ({
+      fileName: document.fileName,
+      text: document.text.trim().slice(0, MAX_INVOICE_TEXT_CHARS),
+    }))
+    .filter((document) => document.text);
 
-  if (parsedLineItems.length === 0 && !spreadsheetMetadata.invoiceNumber) {
-    return extractInvoiceFromDocumentText(
-      fileName,
-      text,
-      supplierContext,
-      emailContext,
-    );
+  if (usableDocuments.length === 0) {
+    return {
+      data: null,
+      raw: null,
+      fieldCandidates: null,
+      error: "Document contains no extractable text",
+    };
   }
 
   const systemPrompt = resolveExtractionSystemPrompt(supplierContext);
-  const userPrompt = buildSpreadsheetHeaderExtractionUserPrompt(
-    fileName,
-    text.slice(0, MAX_SPREADSHEET_PREVIEW_CHARS),
-    parsedLineItems.length,
+  const userPrompt = buildInvoiceExtractionUserPrompt(
+    usableDocuments,
     emailContext ?? undefined,
   );
 
-  const aiResult = await callExtractionAI({ systemPrompt, userPrompt });
-  const fallbackInvoice = normalizeExtractedInvoice({
-    ...spreadsheetMetadata,
-    lineItems: parsedLineItems,
-    confidence: parsedLineItems.length > 0 ? "medium" : "low",
-    notes:
-      parsedLineItems.length > 0
-        ? `${parsedLineItems.length} line items parsed directly from the spreadsheet.`
-        : "Spreadsheet header fields were parsed directly; review line items manually.",
-  });
-
-  if (aiResult.error && !aiResult.data) {
-    if (parsedLineItems.length > 0 || spreadsheetMetadata.invoiceNumber) {
-      return {
-        data: fallbackInvoice,
-        raw: aiResult.raw,
-        fieldCandidates: fallbackInvoice.fieldCandidates ?? null,
-      };
-    }
-
-    return aiResult;
-  }
-
-  const merged = normalizeExtractedInvoice(
-    mergeExtractedInvoiceData(aiResult.data, {
-      ...spreadsheetMetadata,
-      lineItems: parsedLineItems,
-    }) ?? fallbackInvoice,
-  );
-
-  if (parsedLineItems.length > 0) {
-    merged.lineItems = parsedLineItems;
-    if (
-      merged.totalAmount === undefined &&
-      spreadsheetMetadata.totalAmount !== undefined
-    ) {
-      merged.totalAmount = spreadsheetMetadata.totalAmount;
-    }
-  }
-
-  return {
-    data: merged,
-    raw: aiResult.raw,
-    fieldCandidates: merged.fieldCandidates ?? aiResult.fieldCandidates,
-    error: aiResult.error,
-  };
+  return callExtractionAI({ systemPrompt, userPrompt });
 }
 
 export async function extractInvoiceFromDocumentText(
@@ -227,24 +171,11 @@ export async function extractInvoiceFromDocumentText(
   fieldCandidates: ExtractionCandidates | null;
   error?: string;
 }> {
-  if (!text.trim()) {
-    return {
-      data: null,
-      raw: null,
-      fieldCandidates: null,
-      error: "Document contains no extractable text",
-    };
-  }
-
-  const systemPrompt = resolveExtractionSystemPrompt(supplierContext);
-
-  const userPrompt = buildInvoiceExtractionUserPrompt(
-    fileName,
-    text.slice(0, MAX_INVOICE_TEXT_CHARS),
-    emailContext ?? undefined,
+  return extractInvoiceFromDocumentTexts(
+    [{ fileName, text }],
+    supplierContext,
+    emailContext,
   );
-
-  return callExtractionAI({ systemPrompt, userPrompt });
 }
 
 export async function extractInvoiceFromPdf(

@@ -2,13 +2,11 @@ import { and, eq } from "drizzle-orm";
 import { readFile } from "fs/promises";
 import { recordAuditEvent } from "@/lib/audit";
 import {
-  isCsvAttachment,
   isInvoiceLikeAttachment,
   isPdfAttachment,
   isSpreadsheetAttachment,
   pickPrimaryInvoiceAttachment,
 } from "@/lib/attachment-types";
-import { mergeLineItems, parseSpreadsheetLineItems } from "@/lib/csv-extraction";
 import { extractTextFromDocument } from "@/lib/document-text";
 import {
   db,
@@ -19,6 +17,10 @@ import {
   suppliers,
 } from "@/lib/db";
 import { htmlToPlainText } from "@/lib/email-body";
+import {
+  classificationAllowsInvoiceProcessing,
+  classifyInboundEmail,
+} from "@/lib/email-classification";
 import { recordEmailProcessingOutcome } from "@/lib/o365/email-audit";
 import { findDuplicateSupplierInvoice } from "@/lib/o365/invoice-duplicates";
 import {
@@ -27,10 +29,11 @@ import {
 } from "@/lib/invoice-portals";
 import { documentLooksLikeAccountStatement, emailLooksLikeAccountStatement } from "@/lib/invoice-portals/detect-account-statement";
 import {
-  extractInvoiceFromDocumentText,
+  extractInvoiceFromDocumentTexts,
   extractInvoiceFromEmailBody,
   parseInvoiceDate,
   type ExtractedLineItem,
+  type ExtractionDocumentText,
 } from "@/lib/extraction";
 import { ensureDefaultRoutingRules } from "@/lib/routing";
 import { resolveDueDate } from "@/lib/trading-terms";
@@ -223,7 +226,7 @@ export async function runInvoiceExtraction(params: {
 
   let accountStatement = false;
   let accountStatementNote: string | null = null;
-  let extraction: Awaited<ReturnType<typeof extractInvoiceFromDocumentText>> = {
+  let extraction: Awaited<ReturnType<typeof extractInvoiceFromDocumentTexts>> = {
     data: null,
     raw: null,
     fieldCandidates: null,
@@ -248,9 +251,32 @@ export async function runInvoiceExtraction(params: {
           error: "Account statement detected in attachment",
         };
       } else {
-        extraction = await extractInvoiceFromDocumentText(
-          primaryAttachment.fileName,
-          text,
+        // Spreadsheet attachments usually itemise the same invoice's charges,
+        // so they go to the AI alongside the primary document in a single call
+        // and the model returns one deduplicated line item list.
+        const documents: ExtractionDocumentText[] = [
+          { fileName: primaryAttachment.fileName, text },
+        ];
+        for (const attachment of params.savedAttachments) {
+          if (attachment.filePath === primaryAttachment.filePath) continue;
+          if (!isSpreadsheetAttachment(attachment.fileName, attachment.mimeType)) {
+            continue;
+          }
+          try {
+            const extra = await extractTextFromDocument(
+              attachment.filePath,
+              attachment.fileName,
+              attachment.mimeType,
+            );
+            documents.push({ fileName: attachment.fileName, text: extra.text });
+          } catch {
+            // An unreadable side document must not block extraction from the
+            // primary attachment.
+          }
+        }
+
+        extraction = await extractInvoiceFromDocumentTexts(
+          documents,
           customSupplierContext,
           emailContextForPdf,
         );
@@ -311,27 +337,7 @@ export async function runInvoiceExtraction(params: {
     });
   }
 
-  let lineItems: ExtractedLineItem[] = extraction.data?.lineItems ?? [];
-  const spreadsheetAttachments = params.savedAttachments.filter((attachment) =>
-    isSpreadsheetAttachment(attachment.fileName, attachment.mimeType),
-  );
-
-  for (const spreadsheetAttachment of spreadsheetAttachments) {
-    if (
-      primaryAttachment?.filePath === spreadsheetAttachment.filePath &&
-      lineItems.length > 0
-    ) {
-      continue;
-    }
-
-    const { text } = await extractTextFromDocument(
-      spreadsheetAttachment.filePath,
-      spreadsheetAttachment.fileName,
-      spreadsheetAttachment.mimeType,
-    );
-    const spreadsheetLineItems = parseSpreadsheetLineItems(text);
-    lineItems = mergeLineItems(lineItems, spreadsheetLineItems);
-  }
+  const lineItems: ExtractedLineItem[] = extraction.data?.lineItems ?? [];
 
   const fieldCandidates =
     extraction.fieldCandidates ?? extraction.data?.fieldCandidates ?? null;
@@ -355,6 +361,7 @@ async function ignoreInboundEmail(params: {
   ignoreReason:
     | "already_processed"
     | "no_invoice_detected"
+    | "not_an_invoice"
     | "account_statement"
     | "duplicate_invoice";
   note?: string | null;
@@ -448,6 +455,32 @@ export async function processInboundEmailForInvoice(params: ProcessEmailOptions)
       ignoreReason: "no_invoice_detected",
       triggeredBy: params.triggeredBy,
     });
+  }
+
+  if (!isManual) {
+    const classification = await classifyInboundEmail({
+      subject: emailContext.subject,
+      fromEmail: emailContext.fromEmail,
+      fromName: emailContext.fromName,
+      bodyText: emailContext.bodyText,
+      bodyHtml: emailContext.bodyHtml,
+      attachmentNames: attachmentFileNames,
+    });
+
+    if (!classificationAllowsInvoiceProcessing(classification)) {
+      return ignoreInboundEmail({
+        organizationId: params.organizationId,
+        email: emailContext,
+        ignoreReason: "not_an_invoice",
+        note: [
+          `Email classified as ${classification?.category.replace(/_/g, " ")}, not an invoice`,
+          classification?.reason,
+        ]
+          .filter(Boolean)
+          .join(": "),
+        triggeredBy: params.triggeredBy,
+      });
+    }
   }
 
   await ensureDefaultRoutingRules(params.organizationId);

@@ -37,7 +37,7 @@ export const EXTRACTION_JSON_SCHEMA = `{
 
 export const INVOICE_EXTRACTION_SYSTEM_PROMPT = `You are an experienced accounts payable clerk at a transport and logistics company. Your job is to review supplier invoices before they are approved for payment.
 
-You receive text extracted from a PDF invoice. Treat this like a real invoice on your desk: read it carefully, identify the supplier, dates, totals, and every individual charge line.
+You receive text extracted from one or more documents that together represent a SINGLE supplier invoice — typically a PDF invoice, sometimes accompanied by a CSV/spreadsheet breakdown of the same charges. Treat this like a real invoice on your desk: read every document carefully, identify the supplier, dates, totals, and every individual charge line.
 
 ## Your objectives
 1. Extract header fields accurately (vendor, invoice number, dates, totals, currency).
@@ -65,6 +65,7 @@ You receive text extracted from a PDF invoice. Treat this like a real invoice on
 - If the invoice has both summary lines and a detailed breakdown, prefer the detailed breakdown rows.
 - Transport invoices often include consignment / con note / job / tracking / reference numbers — capture these in "reference".
 - Amounts must be numbers only (no $, commas, or currency codes). Use negative numbers for credits or reversals if shown.
+- When multiple documents are provided they describe the SAME invoice. Return ONE combined, deduplicated list: each distinct charge appears exactly once, even if it shows up in more than one document. Match rows across documents by reference, date, and amount. When the same charge appears in several documents, keep the most detailed version (usually the spreadsheet row with reference, quantity, and amount).
 
 ## Accounts payable review behaviour
 - Compare line amounts to the stated total when possible. If they do not reconcile, explain the discrepancy in "notes".
@@ -170,55 +171,13 @@ Email thread (${params.messages.length} message${params.messages.length === 1 ? 
 ${threadBlocks.join("\n\n")}`;
 }
 
-export function buildSpreadsheetHeaderExtractionUserPrompt(
-  fileName: string,
-  invoiceText: string,
-  parsedLineItemCount: number,
-  emailContext?: {
-    subject?: string | null;
-    fromEmail?: string | null;
-    fromName?: string | null;
-    bodyText?: string | null;
-  },
-) {
-  const emailSection =
-    emailContext?.bodyText?.trim()
-      ? `
-
-Email context (the invoice arrived via email — use this to clarify ambiguous fields):
-Subject: ${emailContext.subject ?? "(none)"}
-From: ${emailContext.fromName ? `${emailContext.fromName} <${emailContext.fromEmail}>` : (emailContext.fromEmail ?? "(unknown)")}
-
-Email body:
-"""
-${emailContext.bodyText.trim()}
-"""`
-      : "";
-
-  return `Review the following transport/supplier invoice spreadsheet and extract header fields for accounts payable.
-
-File name: ${fileName}
-Parsed line item rows: ${parsedLineItemCount}
-
-The spreadsheet rows have already been parsed into line items in our system. Do NOT enumerate spreadsheet rows in lineItems — return "lineItems": [] always.
-
-Return JSON matching this schema exactly:
-${EXTRACTION_JSON_SCHEMA}
-
-Spreadsheet preview (may be truncated):
-"""
-${invoiceText}
-"""${emailSection}
-
-Before responding, mentally verify:
-- lineItems is an empty array
-- totalAmount matches the invoice's stated total when visible, or the sum of charge rows when only line totals are shown
-- fieldCandidates lists alternative values for header fields when the document shows more than one possibility`;
-}
+export type ExtractionPromptDocument = {
+  fileName: string;
+  text: string;
+};
 
 export function buildInvoiceExtractionUserPrompt(
-  fileName: string,
-  invoiceText: string,
+  documents: ExtractionPromptDocument[],
   emailContext?: {
     subject?: string | null;
     fromEmail?: string | null;
@@ -230,7 +189,7 @@ export function buildInvoiceExtractionUserPrompt(
     emailContext?.bodyText?.trim()
       ? `
 
-Email context (the invoice arrived via email — use this to clarify ambiguous fields, but prefer attachment/PDF content for line items):
+Email context (the invoice arrived via email — use this to clarify ambiguous fields, but prefer attachment content for line items):
 Subject: ${emailContext.subject ?? "(none)"}
 From: ${emailContext.fromName ? `${emailContext.fromName} <${emailContext.fromEmail}>` : (emailContext.fromEmail ?? "(unknown)")}
 
@@ -240,20 +199,36 @@ ${emailContext.bodyText.trim()}
 """`
       : "";
 
-  return `Review the following transport/supplier invoice and extract structured data for accounts payable.
+  const multiDocument = documents.length > 1;
 
-File name: ${fileName}
+  const documentBlocks = documents
+    .map(
+      (document, index) => `--- Document ${index + 1} of ${documents.length}: ${document.fileName} ---
+"""
+${document.text}
+"""`,
+    )
+    .join("\n\n");
+
+  const multiDocumentSection = multiDocument
+    ? `
+
+The documents above all belong to the SAME invoice (e.g. a PDF invoice plus a CSV/spreadsheet breakdown of its charges). Combine them into a single extraction:
+- Return ONE deduplicated lineItems list covering every distinct charge exactly once.
+- When the same charge appears in more than one document, keep the most detailed version (reference, quantity, unit price, amount).
+- Prefer the document with the clearest itemised breakdown (often the spreadsheet) for line items, and the invoice document for header fields.
+- Never include header/label rows or summary/total rows as line items.`
+    : "";
+
+  return `Review the following transport/supplier invoice ${multiDocument ? `documents (${documents.length} files for one invoice)` : "document"} and extract structured data for accounts payable.
 
 Return JSON matching this schema exactly:
 ${EXTRACTION_JSON_SCHEMA}
 
-Invoice text (extracted from PDF):
-"""
-${invoiceText}
-"""${emailSection}
+${documentBlocks}${multiDocumentSection}${emailSection}
 
 Before responding, mentally verify:
-- Every charge row from the invoice is represented in lineItems
+- Every charge row from the invoice is represented in lineItems${multiDocument ? " exactly once (deduplicated across documents)" : ""}
 - lineNumber reflects document order when rows are numbered or sequenced
 - totalAmount matches the invoice's stated total (or explain in notes if not)
 - fieldCandidates lists alternative values for header fields when the document shows more than one possibility`;
