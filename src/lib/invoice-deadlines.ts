@@ -8,8 +8,9 @@ export const NEARING_BUSINESS_DAYS = 2;
 // deadline applies. ON_HOLD is deliberately paused and excluded.
 export const ACTIONABLE_STATUSES = ["DRAFT", "PENDING_APPROVAL"] as const;
 
-// Statuses where the payment due date no longer matters.
-export const TERMINAL_STATUSES = ["REJECTED", "CANCELLED"] as const;
+// Statuses where the invoice has been handled, so deadline alerts no longer
+// apply. Approval is the end of the road here — payments are not tracked.
+export const TERMINAL_STATUSES = ["APPROVED", "REJECTED", "CANCELLED"] as const;
 
 export type DeadlineUrgency =
   | "overdue"

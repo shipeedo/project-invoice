@@ -98,6 +98,27 @@ describe("urgency helpers", () => {
     expect(needsMyUrgentAttention(invoice, "user-1", now)).toBe(true);
     expect(needsMyUrgentAttention(invoice, "user-2", now)).toBe(false);
   });
+
+  it("stops flagging handled invoices even with an overdue due date", () => {
+    const handled = {
+      id: "inv-2",
+      createdAt: new Date(2026, 5, 20),
+      validatedAt: new Date(2026, 5, 20),
+      assignedToId: "user-1",
+      dueDate: new Date(2026, 6, 1),
+    };
+
+    for (const status of ["APPROVED", "REJECTED", "CANCELLED"] as const) {
+      const invoice = { ...handled, status };
+      expect(getInvoiceDeadlineSignals(invoice, now)).toEqual([]);
+      expect(isUrgentInvoice(invoice, now)).toBe(false);
+      expect(needsMyUrgentAttention(invoice, "user-1", now)).toBe(false);
+    }
+
+    // The same overdue due date on an unhandled invoice still alerts.
+    const pending = { ...handled, status: "PENDING_APPROVAL" as const };
+    expect(isUrgentInvoice(pending, now)).toBe(true);
+  });
 });
 
 describe("matchesInvoiceSearch", () => {
