@@ -446,8 +446,9 @@ export async function processInboundEmailForInvoice(params: ProcessEmailOptions)
     });
   }
 
+  let classification: Awaited<ReturnType<typeof classifyInboundEmail>> = null;
   if (!isManual) {
-    const classification = await classifyInboundEmail({
+    classification = await classifyInboundEmail({
       subject: emailContext.subject,
       fromEmail: emailContext.fromEmail,
       fromName: emailContext.fromName,
@@ -553,6 +554,15 @@ export async function processInboundEmailForInvoice(params: ProcessEmailOptions)
       messageId: emailContext.messageId,
       subject: emailContext.subject,
       triggeredBy: params.triggeredBy,
+      ...(classification
+        ? {
+            classification: {
+              category: classification.category,
+              confidence: classification.confidence,
+              reason: classification.reason,
+            },
+          }
+        : {}),
     },
   });
 
