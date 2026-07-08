@@ -6,6 +6,7 @@ import {
   isInvoiceLikeAttachment,
   isPdfAttachment,
   pickPrimaryInvoiceAttachment,
+  resolveAttachmentContentType,
 } from "@/lib/attachment-types";
 
 describe("classifyAttachment", () => {
@@ -66,5 +67,23 @@ describe("invoice-like helpers", () => {
   it("detects pdf by extension even with generic mime type", () => {
     expect(isPdfAttachment("invoice.pdf", "application/octet-stream")).toBe(true);
     expect(isInvoiceLikeAttachment("invoice.xlsx", "application/octet-stream")).toBe(true);
+  });
+});
+
+describe("resolveAttachmentContentType", () => {
+  it("serves the canonical type for known kinds over a generic stored mime", () => {
+    expect(resolveAttachmentContentType("invoice.pdf", "application/octet-stream")).toBe(
+      "application/pdf",
+    );
+    expect(resolveAttachmentContentType("charges.csv", "application/octet")).toBe(
+      "text/csv",
+    );
+  });
+
+  it("falls back to the stored mime for unknown kinds", () => {
+    expect(resolveAttachmentContentType("photo.png", "image/png")).toBe("image/png");
+    expect(resolveAttachmentContentType("mystery.bin", null)).toBe(
+      "application/octet-stream",
+    );
   });
 });

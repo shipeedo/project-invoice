@@ -58,6 +58,28 @@ export function classifyAttachment(
   return "unknown";
 }
 
+const KIND_CONTENT_TYPE: Partial<Record<InvoiceAttachmentKind, string>> = {
+  pdf: "application/pdf",
+  csv: "text/csv",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  xls: "application/vnd.ms-excel",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  doc: "application/msword",
+};
+
+/**
+ * Content type to serve an attachment with. Email ingestion often stores
+ * generic octet-stream mime types, which make browsers download instead of
+ * rendering inline, so the classified kind wins over the stored mime.
+ */
+export function resolveAttachmentContentType(
+  fileName: string,
+  mimeType?: string | null,
+) {
+  const kind = classifyAttachment(fileName, mimeType);
+  return KIND_CONTENT_TYPE[kind] ?? mimeType ?? "application/octet-stream";
+}
+
 export function isInvoiceLikeAttachment(fileName: string, mimeType?: string | null) {
   return classifyAttachment(fileName, mimeType) !== "unknown";
 }

@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { readFile } from "fs/promises";
 import { auth } from "@/lib/auth";
+import { resolveAttachmentContentType } from "@/lib/attachment-types";
 import { db, invoiceAttachments, invoices } from "@/lib/db";
 import { getUploadAbsolutePath } from "@/lib/uploads";
 
@@ -44,7 +45,10 @@ export async function GET(_request: Request, context: RouteContext) {
 
   return new NextResponse(buffer, {
     headers: {
-      "Content-Type": attachment.mimeType ?? "application/octet-stream",
+      "Content-Type": resolveAttachmentContentType(
+        attachment.fileName,
+        attachment.mimeType,
+      ),
       "Content-Disposition": `inline; filename="${attachment.fileName}"`,
     },
   });
