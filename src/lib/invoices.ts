@@ -1,29 +1,13 @@
 import { eq } from "drizzle-orm";
 import { db, invoices, suppliers } from "@/lib/db";
 import { recordAuditEvent } from "@/lib/audit";
-import {
-  extractInvoiceFromDocument,
-  parseInvoiceDate,
-  type ExtractedLineItem,
-} from "@/lib/extraction";
-import {
-  applyRejectedLineIndexes,
-  mergeLineItemAssignments,
-  parseLineItems,
-  resolveLineItemStatus,
-} from "@/lib/line-items";
-import {
-  computeLineItemTotals,
-  type InvoiceTotalsSource,
-} from "@/lib/invoice-totals";
-import type { ExtractionCandidates, ValidatableField } from "@/lib/extraction-types";
+import { extractInvoiceFromDocument, parseInvoiceDate } from "@/lib/extraction";
 import { resolveDueDate } from "@/lib/trading-terms";
 import { assignApproverForInvoice, ensureDefaultRoutingRules } from "@/lib/routing";
 import {
   buildNewSupplierValues,
   findMatchingSupplier,
   getSupplierExtractionContext,
-  learnSupplierMappings,
   supplierHasCustomExtraction,
 } from "@/lib/supplier-extraction";
 
@@ -169,20 +153,16 @@ export type ValidateInvoiceInput = {
     dueDate?: string | null;
     respondByDate?: string | null;
     totalAmount?: number | null;
+    subtotalAmount?: number | null;
+    taxAmount?: number | null;
     currency?: string;
   };
-  lineItems?: ExtractedLineItem[];
   supplierId?: string | null;
   createSupplier?: {
     name: string;
     emailAddresses?: string[];
     emailDomains?: string[];
   };
-  selectedSources?: Partial<Record<ValidatableField, string>>;
-  /** Line indexes deselected during validation; marked REJECTED on confirm. */
-  rejectedLineIndexes?: number[];
-  /** Which totals to save: the extracted document totals (default) or totals computed from the selected line items. */
-  totalsSource?: InvoiceTotalsSource;
 };
 
 export async function validateInvoice(input: ValidateInvoiceInput) {
@@ -201,33 +181,6 @@ export async function validateInvoice(input: ValidateInvoiceInput) {
 
   if (!input.fields.vendorName?.trim()) {
     return { error: "Supplier name is required" as const };
-  }
-
-  const mergedLineItems = input.lineItems
-    ? mergeLineItemAssignments(parseLineItems(invoice.lineItems), input.lineItems)
-    : parseLineItems(invoice.lineItems);
-  const rejectedLineIndexes = [...new Set(input.rejectedLineIndexes ?? [])].filter(
-    (index) => index >= 0 && index < mergedLineItems.length,
-  );
-
-  if (
-    mergedLineItems.length > 0 &&
-    rejectedLineIndexes.length >= mergedLineItems.length
-  ) {
-    return { error: "At least one line item must be selected" as const };
-  }
-
-  const nextLineItems = applyRejectedLineIndexes(mergedLineItems, rejectedLineIndexes);
-
-  const totalsSource = input.totalsSource ?? "DOCUMENT";
-  const lineItemTotals = computeLineItemTotals(
-    nextLineItems.filter((item) => resolveLineItemStatus(item) !== "REJECTED"),
-  );
-
-  if (totalsSource === "LINE_ITEMS" && lineItemTotals.total == null) {
-    return {
-      error: "Selected line items have no amounts to calculate totals from" as const,
-    };
   }
 
   let supplierId = input.supplierId ?? invoice.supplierId;
@@ -254,32 +207,6 @@ export async function validateInvoice(input: ValidateInvoiceInput) {
       input.fields.vendorEmail,
     );
     supplierId = matched?.id ?? null;
-  }
-
-  const candidates = invoice.extractionCandidates
-    ? (JSON.parse(invoice.extractionCandidates) as ExtractionCandidates)
-    : null;
-
-  if (supplierId && input.selectedSources) {
-    await learnSupplierMappings({
-      supplierId,
-      organizationId: input.organizationId,
-      candidates,
-      selectedSources: input.selectedSources,
-      confirmedFields: {
-        vendorName: input.fields.vendorName.trim(),
-        vendorEmail: input.fields.vendorEmail?.trim() || undefined,
-        invoiceNumber: input.fields.invoiceNumber?.trim() || undefined,
-        invoiceDate: input.fields.invoiceDate || undefined,
-        dueDate: input.fields.dueDate || undefined,
-        respondByDate: input.fields.respondByDate || undefined,
-        totalAmount:
-          input.fields.totalAmount != null
-            ? String(input.fields.totalAmount)
-            : undefined,
-        currency: input.fields.currency?.trim() || undefined,
-      },
-    });
   }
 
   const supplierTradingTermDays = supplierId
@@ -313,21 +240,10 @@ export async function validateInvoice(input: ValidateInvoiceInput) {
       dueDate: resolvedDueDate.dueDate,
       originalDueDate: resolvedDueDate.originalDueDate,
       respondByDate: parseInvoiceDate(input.fields.respondByDate),
-      // DOCUMENT keeps the extracted subtotal/tax on the invoice untouched;
-      // LINE_ITEMS overwrites all three totals with values computed from the
-      // lines still selected.
-      ...(totalsSource === "LINE_ITEMS"
-        ? {
-            totalAmount: lineItemTotals.total,
-            subtotalAmount: lineItemTotals.subtotal,
-            taxAmount: lineItemTotals.taxAmount,
-          }
-        : { totalAmount: input.fields.totalAmount ?? null }),
+      totalAmount: input.fields.totalAmount ?? null,
+      subtotalAmount: input.fields.subtotalAmount ?? null,
+      taxAmount: input.fields.taxAmount ?? null,
       currency: input.fields.currency?.trim().toUpperCase() || "AUD",
-      lineItems:
-        input.lineItems || rejectedLineIndexes.length > 0
-          ? JSON.stringify(nextLineItems)
-          : invoice.lineItems,
       supplierId,
       validatedAt: new Date(),
       validatedById: input.userId,
@@ -358,16 +274,7 @@ export async function validateInvoice(input: ValidateInvoiceInput) {
     action: "invoice.validated",
     details: {
       supplierId,
-      selectedSources: input.selectedSources,
       assignedToId: approver?.id,
-      totalsSource,
-      ...(totalsSource === "LINE_ITEMS" ? { totals: lineItemTotals } : {}),
-      ...(rejectedLineIndexes.length > 0
-        ? {
-            rejectedLineIndexes,
-            rejectedLineCount: rejectedLineIndexes.length,
-          }
-        : {}),
     },
   });
 

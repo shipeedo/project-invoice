@@ -4,7 +4,6 @@ import { auth } from "@/lib/auth";
 import { db, invoices, notes } from "@/lib/db";
 import { recordAuditEvent } from "@/lib/audit";
 import { REJECTABLE_STATUSES } from "@/lib/invoice-status";
-import { parseLineItems, setAllLineItemStatuses } from "@/lib/line-items";
 
 type RouteContext = {
   params: Promise<{ id: string }>;
@@ -37,9 +36,6 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const lineItems = parseLineItems(invoice.lineItems);
-  const updatedLineItems = setAllLineItemStatuses(lineItems, "REJECTED");
-
   // better-sqlite3 transactions must stay synchronous.
   const updated = db.transaction((tx) => {
     if (body.note?.trim()) {
@@ -58,7 +54,6 @@ export async function POST(request: Request, context: RouteContext) {
         status: "REJECTED",
         // Rejecting an unrouted draft assigns it to the rejecting user.
         assignedToId: invoice.assignedToId ?? session.user.id,
-        lineItems: JSON.stringify(updatedLineItems),
         updatedAt: new Date(),
       })
       .where(eq(invoices.id, id))
@@ -70,7 +65,7 @@ export async function POST(request: Request, context: RouteContext) {
     invoiceId: id,
     userId: session.user.id,
     action: "invoice.rejected",
-    details: { note: body.note?.trim(), lineItemCount: lineItems.length },
+    details: { note: body.note?.trim() },
   });
 
   return NextResponse.json(updated);

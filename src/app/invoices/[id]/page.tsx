@@ -9,7 +9,6 @@ import { InvoiceHeaderActions } from "@/components/invoice-header-actions";
 import { InvoiceReprocessButton } from "@/components/invoice-reprocess-button";
 import { InvoiceTrashActions } from "@/components/invoice-trash-actions";
 import { InvoiceDueDate } from "@/components/invoice-due-date";
-import { InvoiceLineItemsTable } from "@/components/invoice-line-items-table";
 import { InvoiceValidationPanel } from "@/components/invoice-validation-panel";
 import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -25,7 +24,6 @@ import {
   users,
 } from "@/lib/db";
 import { describeAuditEvent } from "@/lib/audit-log";
-import { parseExtractionCandidates } from "@/lib/extraction-types";
 import { resolveInvoiceSourceEmail } from "@/lib/invoice-source-email";
 import { isExtractionPending } from "@/lib/invoice-status";
 import {
@@ -34,7 +32,6 @@ import {
   isInvoiceDeleted,
   isInvoiceVisibleInTrash,
 } from "@/lib/invoice-trash";
-import { parseLineItems, canDecideLineItems } from "@/lib/line-items";
 import { getNavCounts } from "@/lib/nav-counts";
 import { requireSession, formatCurrency, formatDate } from "@/lib/session";
 
@@ -142,27 +139,8 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
     orderBy: asc(users.name),
   });
 
-  const lineItems = parseLineItems(invoice.lineItems);
-
-  const candidates = parseExtractionCandidates(invoice.extractionCandidates);
   const awaitingValidation =
     invoice.status === "DRAFT" && !isExtractionPending(invoice);
-  const canAssignLineItems =
-    lineItems.length > 0 &&
-    !isExtractionPending(invoice) &&
-    invoice.status !== "CANCELLED";
-  const canRequestLineCredits =
-    lineItems.length > 0 &&
-    !isExtractionPending(invoice) &&
-    invoice.status !== "CANCELLED";
-  const canDecideLineItemsOnInvoice = canDecideLineItems({
-    status: invoice.status,
-    validatedAt: invoice.validatedAt,
-    lineItemCount: lineItems.length,
-  });
-  const invoiceAssignedToLabel = invoice.assignedTo
-    ? (invoice.assignedTo.name ?? invoice.assignedTo.email)
-    : null;
 
   const invoiceCreditRequests = await db.query.creditRequests.findMany({
     where: eq(creditRequests.invoiceId, invoice.id),
@@ -386,7 +364,6 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
           <InvoiceValidationPanel
             invoiceId={invoice.id}
             status={invoice.status}
-            candidates={candidates}
             initialFields={{
               vendorName: invoice.vendorName ?? "",
               vendorEmail: invoice.vendorEmail ?? "",
@@ -396,17 +373,20 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
               respondByDate: toDateInput(invoice.respondByDate),
               totalAmount:
                 invoice.totalAmount != null ? String(invoice.totalAmount) : "",
+              subtotalAmount:
+                invoice.subtotalAmount != null ? String(invoice.subtotalAmount) : "",
+              taxAmount: invoice.taxAmount != null ? String(invoice.taxAmount) : "",
               currency: invoice.currency ?? "AUD",
             }}
-            lineItems={lineItems}
             supplierId={invoice.supplierId}
             supplierName={invoice.supplier?.name ?? null}
             suppliers={supplierOptions}
-            extractedTotals={{
-              subtotal: invoice.subtotalAmount,
-              taxAmount: invoice.taxAmount,
-            }}
-            sourceSlot={sourceCard}
+            sourceSlot={
+              <>
+                {sourceCard}
+                <InvoiceAttachmentPreviews attachments={sourceAttachments} />
+              </>
+            }
           />
         ) : (
           <div className="grid gap-6 lg:grid-cols-2">
@@ -447,6 +427,22 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
                     <dd className="font-medium">{formatDate(invoice.respondByDate)}</dd>
                   </div>
                   <div>
+                    <dt className="text-muted-foreground">Subtotal</dt>
+                    <dd className="font-medium">
+                      {invoice.subtotalAmount != null
+                        ? formatCurrency(invoice.subtotalAmount, invoice.currency ?? "AUD")
+                        : "—"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">GST</dt>
+                    <dd className="font-medium">
+                      {invoice.taxAmount != null
+                        ? formatCurrency(invoice.taxAmount, invoice.currency ?? "AUD")
+                        : "—"}
+                    </dd>
+                  </div>
+                  <div>
                     <dt className="text-muted-foreground">Total</dt>
                     <dd className="font-medium">
                       {formatCurrency(invoice.totalAmount, invoice.currency ?? "AUD")}
@@ -466,34 +462,6 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
         {!awaitingValidation || inTrash ? (
           <InvoiceAttachmentPreviews attachments={sourceAttachments} />
         ) : null}
-
-        {/* During validation the panel renders its own line-item selection table. */}
-        {awaitingValidation && !inTrash ? null : (
-          <Card>
-            <CardHeader>
-              <CardTitle>Line items</CardTitle>
-            </CardHeader>
-            <CardContent className="min-w-0">
-              <InvoiceLineItemsTable
-                key={`${invoice.id}-${invoice.updatedAt?.toString() ?? "new"}`}
-                invoiceId={invoice.id}
-                lineItems={lineItems}
-                users={orgUsers}
-                invoiceAssignedToId={invoice.assignedToId}
-                invoiceAssignedToLabel={invoiceAssignedToLabel}
-                currency={invoice.currency ?? "AUD"}
-                actionsEnabled={canRequestLineCredits && !inTrash}
-                editsEnabled={canAssignLineItems && !inTrash}
-                decisionsEnabled={canDecideLineItemsOnInvoice && !inTrash}
-                totals={{
-                  subtotal: invoice.subtotalAmount,
-                  taxAmount: invoice.taxAmount,
-                  total: invoice.totalAmount,
-                }}
-              />
-            </CardContent>
-          </Card>
-        )}
 
         <InvoiceCreditsSection
           creditRequests={invoiceCreditRequests.map((request) => ({

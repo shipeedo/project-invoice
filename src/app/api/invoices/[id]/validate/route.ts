@@ -1,10 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { validateInvoice } from "@/lib/invoices";
-import { parseRejectedLineIndexes } from "@/lib/line-items";
-import { parseInvoiceTotalsSource } from "@/lib/invoice-totals";
-import type { ValidatableField } from "@/lib/extraction-types";
-import type { ExtractedLineItem } from "@/lib/extraction";
 
 type RouteContext = {
   params: Promise<{ id: string }>;
@@ -26,44 +22,25 @@ export async function POST(request: Request, context: RouteContext) {
       dueDate?: string | null;
       respondByDate?: string | null;
       totalAmount?: number | null;
+      subtotalAmount?: number | null;
+      taxAmount?: number | null;
       currency?: string;
     };
-    lineItems?: ExtractedLineItem[];
     supplierId?: string | null;
     createSupplier?: {
       name: string;
       emailAddresses?: string[];
       emailDomains?: string[];
     };
-    selectedSources?: Partial<Record<ValidatableField, string>>;
-    rejectedLineIndexes?: unknown;
-    totalsSource?: unknown;
   };
-
-  const rejectedLineIndexes = parseRejectedLineIndexes(body.rejectedLineIndexes);
-  if (rejectedLineIndexes === null) {
-    return NextResponse.json(
-      { error: "Invalid rejected line indexes" },
-      { status: 400 },
-    );
-  }
-
-  const totalsSource = parseInvoiceTotalsSource(body.totalsSource);
-  if (totalsSource === null) {
-    return NextResponse.json({ error: "Invalid totals source" }, { status: 400 });
-  }
 
   const result = await validateInvoice({
     organizationId: session.user.organizationId,
     userId: session.user.id,
     invoiceId: id,
     fields: body.fields,
-    lineItems: body.lineItems,
     supplierId: body.supplierId,
     createSupplier: body.createSupplier,
-    selectedSources: body.selectedSources,
-    rejectedLineIndexes,
-    totalsSource,
   });
 
   if ("error" in result) {

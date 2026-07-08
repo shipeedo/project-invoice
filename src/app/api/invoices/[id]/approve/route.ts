@@ -4,7 +4,6 @@ import { auth } from "@/lib/auth";
 import { db, invoices, notes } from "@/lib/db";
 import { recordAuditEvent } from "@/lib/audit";
 import { APPROVABLE_STATUSES } from "@/lib/invoice-status";
-import { parseLineItems, setAllLineItemStatuses } from "@/lib/line-items";
 
 type RouteContext = {
   params: Promise<{ id: string }>;
@@ -44,9 +43,6 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const lineItems = parseLineItems(invoice.lineItems);
-  const updatedLineItems = setAllLineItemStatuses(lineItems, "APPROVED");
-
   // better-sqlite3 transactions must stay synchronous.
   const updated = db.transaction((tx) => {
     if (body.note?.trim()) {
@@ -65,7 +61,6 @@ export async function POST(request: Request, context: RouteContext) {
         status: "APPROVED",
         // Approving an unrouted draft assigns it to the approver.
         assignedToId: invoice.assignedToId ?? session.user.id,
-        lineItems: JSON.stringify(updatedLineItems),
         updatedAt: new Date(),
       })
       .where(eq(invoices.id, id))
@@ -77,7 +72,7 @@ export async function POST(request: Request, context: RouteContext) {
     invoiceId: id,
     userId: session.user.id,
     action: "invoice.approved",
-    details: { note: body.note?.trim(), lineItemCount: lineItems.length },
+    details: { note: body.note?.trim() },
   });
 
   return NextResponse.json(updated);
