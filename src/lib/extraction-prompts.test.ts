@@ -12,7 +12,7 @@ describe("buildInvoiceExtractionUserPrompt", () => {
     expect(prompt).not.toContain("SAME invoice");
   });
 
-  it("includes every document and dedupe instructions for multiple files", () => {
+  it("includes every document and combine instructions for multiple files", () => {
     const prompt = buildInvoiceExtractionUserPrompt([
       { fileName: "Invoice_INV369316.pdf", text: "PDF text here" },
       { fileName: "Invoice_INV369316.csv", text: "Date,Reference,Charge" },
@@ -23,7 +23,8 @@ describe("buildInvoiceExtractionUserPrompt", () => {
     expect(prompt).toContain("PDF text here");
     expect(prompt).toContain("Date,Reference,Charge");
     expect(prompt).toContain("SAME invoice");
-    expect(prompt).toContain("deduplicated lineItems list");
+    expect(prompt).toContain("confirm totals");
+    expect(prompt).not.toContain("lineItems");
   });
 
   it("appends email context when a body is provided", () => {

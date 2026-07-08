@@ -139,8 +139,7 @@ export async function reprocessDraftInvoice(params: {
     skipStatementDetection: true,
   });
 
-  const { extraction, lineItems, fieldCandidates, supplier, primaryAttachment } =
-    outcome;
+  const { extraction, supplier, primaryAttachment } = outcome;
   const parseError = extraction.error ?? outcome.portalFetchError ?? null;
 
   // Persist files extraction introduced: user uploads and any portal PDF
@@ -243,8 +242,8 @@ export async function reprocessDraftInvoice(params: {
       subtotalAmount: extraction.data.subtotal ?? null,
       taxAmount: extraction.data.taxAmount ?? null,
       currency: extraction.data.currency ?? "AUD",
-      lineItems: lineItems.length > 0 ? JSON.stringify(lineItems) : null,
-      extractionCandidates: fieldCandidates ? JSON.stringify(fieldCandidates) : null,
+      lineItems: null,
+      extractionCandidates: null,
       extractionRaw: extraction.raw ? JSON.stringify(extraction.raw) : null,
       parseError,
       supplierId: supplier?.id ?? invoice.supplierId,
@@ -267,7 +266,6 @@ export async function reprocessDraftInvoice(params: {
       supplierId: supplier?.id ?? invoice.supplierId,
       attachmentCount: savedAttachments.length,
       uploadedFileCount: params.extraFiles?.length ?? 0,
-      lineItemCount: lineItems.length,
     },
   });
 

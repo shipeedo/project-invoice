@@ -36,7 +36,9 @@ export function buildNewSupplierValues(params: {
     emailAddresses: JSON.stringify(params.emailAddresses ?? []),
     emailDomains: JSON.stringify(params.emailDomains ?? []),
     tradingTermDays: normalizeTradingTermDays(params.tradingTermDays),
-    extractionPrompt: getDefaultExtractionPrompt(),
+    // Null means "use the current default prompt" — storing a copy would pin
+    // the supplier to whatever the default was at creation time.
+    extractionPrompt: null,
     fieldMappings: "{}",
   };
 }

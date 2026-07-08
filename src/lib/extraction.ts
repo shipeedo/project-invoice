@@ -4,7 +4,7 @@ import {
   buildInvoiceExtractionFromEmailUserPrompt,
   buildInvoiceExtractionUserPrompt,
 } from "@/lib/extraction-prompts";
-import type { ExtractionCandidates, FieldCandidate } from "@/lib/extraction-types";
+import type { ExtractionCandidates } from "@/lib/extraction-types";
 import {
   resolveExtractionSystemPrompt,
   type SupplierExtractionContext,
@@ -60,7 +60,7 @@ export type ExtractedInvoice = {
   subtotal?: number;
   taxAmount?: number;
   currency?: string;
-  lineItems: ExtractedLineItem[];
+  lineItems?: ExtractedLineItem[];
   fieldCandidates?: ExtractionCandidates;
   confidence?: string;
   notes?: string;
@@ -123,7 +123,7 @@ export async function extractInvoiceFromDocument(
 /**
  * Extracts one invoice from the combined text of every provided document
  * (e.g. the invoice PDF plus a CSV breakdown of the same charges) in a single
- * AI call, so the model returns one deduplicated line item list.
+ * AI call, so the model reconciles header fields and totals across documents.
  */
 export async function extractInvoiceFromDocumentTexts(
   documents: ExtractionDocumentText[],
@@ -259,17 +259,10 @@ async function callExtractionAI(params: {
       JSON.parse(parseJsonContent(result.content)) as ExtractedInvoice,
     );
 
-    if (parsed.lineItems.length === 0) {
-      parsed.notes = [parsed.notes, "No line items were extracted — manual review required."]
-        .filter(Boolean)
-        .join(" ");
-      parsed.confidence = parsed.confidence ?? "low";
-    }
-
     return {
       data: parsed,
       raw: result.raw,
-      fieldCandidates: parsed.fieldCandidates ?? null,
+      fieldCandidates: null,
     };
   } catch (error) {
     return {
@@ -303,89 +296,6 @@ function toNumber(value: unknown): number | undefined {
   return undefined;
 }
 
-function normalizeLineItem(raw: Record<string, unknown>, index: number): ExtractedLineItem | null {
-  const description =
-    typeof raw.description === "string"
-      ? raw.description.trim()
-      : typeof raw.chargeDescription === "string"
-        ? raw.chargeDescription.trim()
-        : "";
-
-  if (!description) return null;
-
-  const lineNumber = toNumber(raw.lineNumber) ?? index + 1;
-  const amount = toNumber(raw.amount) ?? toNumber(raw.lineTotal) ?? toNumber(raw.total);
-
-  return {
-    lineNumber: Number.isInteger(lineNumber) ? lineNumber : index + 1,
-    description,
-    quantity: toNumber(raw.quantity),
-    unitPrice: toNumber(raw.unitPrice) ?? toNumber(raw.unit_price),
-    amount,
-    reference:
-      typeof raw.reference === "string"
-        ? raw.reference.trim() || undefined
-        : typeof raw.consignmentNumber === "string"
-          ? raw.consignmentNumber.trim() || undefined
-          : typeof raw.consignment === "string"
-            ? raw.consignment.trim() || undefined
-            : undefined,
-    serviceType:
-      typeof raw.serviceType === "string"
-        ? raw.serviceType.trim() || undefined
-        : typeof raw.service === "string"
-          ? raw.service.trim() || undefined
-          : undefined,
-  };
-}
-
-function normalizeFieldCandidate(raw: Record<string, unknown>): FieldCandidate | null {
-  const value =
-    typeof raw.value === "string"
-      ? raw.value.trim()
-      : raw.value != null
-        ? String(raw.value).trim()
-        : "";
-  if (!value) return null;
-
-  const label = typeof raw.label === "string" ? raw.label.trim() : value;
-  const source = typeof raw.source === "string" ? raw.source.trim() : "other";
-
-  return { value, label, source };
-}
-
-function normalizeFieldCandidates(
-  raw: Record<string, unknown> | undefined,
-): ExtractionCandidates | undefined {
-  if (!raw) return undefined;
-
-  const result: ExtractionCandidates = {};
-
-  for (const field of [
-    "vendorName",
-    "vendorEmail",
-    "invoiceNumber",
-    "invoiceDate",
-    "dueDate",
-    "respondByDate",
-    "totalAmount",
-    "currency",
-  ] as const) {
-    const entries = raw[field];
-    if (!Array.isArray(entries)) continue;
-
-    const candidates = entries
-      .map((entry) => normalizeFieldCandidate(entry as Record<string, unknown>))
-      .filter((entry): entry is FieldCandidate => entry !== null);
-
-    if (candidates.length > 0) {
-      result[field] = candidates;
-    }
-  }
-
-  return Object.keys(result).length > 0 ? result : undefined;
-}
-
 const DOCUMENT_TYPES: ReadonlySet<ExtractedDocumentType> = new Set([
   "invoice",
   "credit_note",
@@ -403,15 +313,6 @@ function normalizeDocumentType(value: unknown): ExtractedDocumentType | undefine
 }
 
 export function normalizeExtractedInvoice(raw: ExtractedInvoice): ExtractedInvoice {
-  const lineItemsSource = Array.isArray(raw.lineItems) ? raw.lineItems : [];
-
-  const lineItems = lineItemsSource
-    .map((item, index) =>
-      normalizeLineItem(item as unknown as Record<string, unknown>, index),
-    )
-    .filter((item): item is ExtractedLineItem => item !== null)
-    .sort((a, b) => (a.lineNumber ?? 0) - (b.lineNumber ?? 0));
-
   return {
     documentType: normalizeDocumentType(raw.documentType),
     vendorName: raw.vendorName?.trim() || undefined,
@@ -424,10 +325,7 @@ export function normalizeExtractedInvoice(raw: ExtractedInvoice): ExtractedInvoi
     subtotal: toNumber(raw.subtotal),
     taxAmount: toNumber(raw.taxAmount),
     currency: raw.currency?.trim().toUpperCase() || "AUD",
-    lineItems,
-    fieldCandidates: normalizeFieldCandidates(
-      raw.fieldCandidates as unknown as Record<string, unknown> | undefined,
-    ),
+    lineItems: [],
     confidence: raw.confidence ?? undefined,
     notes: raw.notes?.trim() || undefined,
   };

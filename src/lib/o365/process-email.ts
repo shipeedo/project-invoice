@@ -32,7 +32,6 @@ import {
   extractInvoiceFromDocumentTexts,
   extractInvoiceFromEmailBody,
   parseInvoiceDate,
-  type ExtractedLineItem,
   type ExtractionDocumentText,
 } from "@/lib/extraction";
 import { ensureDefaultRoutingRules } from "@/lib/routing";
@@ -253,7 +252,7 @@ export async function runInvoiceExtraction(params: {
       } else {
         // Spreadsheet attachments usually itemise the same invoice's charges,
         // so they go to the AI alongside the primary document in a single call
-        // and the model returns one deduplicated line item list.
+        // and the model can confirm header fields and totals across documents.
         const documents: ExtractionDocumentText[] = [
           { fileName: primaryAttachment.fileName, text },
         ];
@@ -337,15 +336,8 @@ export async function runInvoiceExtraction(params: {
     });
   }
 
-  const lineItems: ExtractedLineItem[] = extraction.data?.lineItems ?? [];
-
-  const fieldCandidates =
-    extraction.fieldCandidates ?? extraction.data?.fieldCandidates ?? null;
-
   return {
     extraction,
-    lineItems,
-    fieldCandidates,
     primaryAttachment,
     supplier: resolvedSupplier,
     portalFetchError,
@@ -487,7 +479,7 @@ export async function processInboundEmailForInvoice(params: ProcessEmailOptions)
 
   const savedAttachments = await saveAttachmentInputs(params.attachments);
 
-  const { extraction, lineItems, fieldCandidates, primaryAttachment, supplier, portalFetchError, portalSourceUrl, accountStatement, accountStatementNote } =
+  const { extraction, primaryAttachment, supplier, portalFetchError, portalSourceUrl, accountStatement, accountStatementNote } =
     await runInvoiceExtraction({
       organizationId: params.organizationId,
       savedAttachments,
@@ -597,8 +589,8 @@ export async function processInboundEmailForInvoice(params: ProcessEmailOptions)
       subtotalAmount: extraction.data?.subtotal,
       taxAmount: extraction.data?.taxAmount,
       currency: extraction.data?.currency ?? "AUD",
-      lineItems: lineItems.length > 0 ? JSON.stringify(lineItems) : null,
-      extractionCandidates: fieldCandidates ? JSON.stringify(fieldCandidates) : null,
+      lineItems: null,
+      extractionCandidates: null,
       extractionRaw: extraction.raw ? JSON.stringify(extraction.raw) : null,
       parseError: extraction.error ?? portalFetchError ?? null,
       supplierId: resolvedSupplierId,

@@ -32,24 +32,9 @@ async function resolveSupplierFromExtraction(
   data: {
     vendorName?: string;
     vendorEmail?: string;
-    fieldCandidates?: ExtractionCandidates | null;
   },
 ) {
-  const names = [
-    data.vendorName,
-    ...(data.fieldCandidates?.vendorName ?? []).map((candidate) => candidate.value),
-  ].filter((value): value is string => Boolean(value?.trim()));
-
-  for (const name of names) {
-    const supplier = await findMatchingSupplier(
-      organizationId,
-      name,
-      data.vendorEmail,
-    );
-    if (supplier) return supplier;
-  }
-
-  return findMatchingSupplier(organizationId, null, data.vendorEmail);
+  return findMatchingSupplier(organizationId, data.vendorName ?? null, data.vendorEmail);
 }
 
 export async function processUploadedInvoice(params: {
@@ -90,8 +75,6 @@ export async function processUploadedInvoice(params: {
     ? await resolveSupplierFromExtraction(params.organizationId, {
         vendorName: extraction.data.vendorName,
         vendorEmail: extraction.data.vendorEmail,
-        fieldCandidates:
-          extraction.fieldCandidates ?? extraction.data.fieldCandidates ?? null,
       })
     : null;
 
@@ -109,9 +92,6 @@ export async function processUploadedInvoice(params: {
       );
     }
   }
-
-  const fieldCandidates =
-    extraction.fieldCandidates ?? extraction.data?.fieldCandidates ?? null;
 
   const resolvedDueDate = resolveDueDate({
     invoiceDate: parseInvoiceDate(extraction.data?.invoiceDate),
@@ -133,12 +113,8 @@ export async function processUploadedInvoice(params: {
       subtotalAmount: extraction.data?.subtotal,
       taxAmount: extraction.data?.taxAmount,
       currency: extraction.data?.currency ?? "AUD",
-      lineItems: extraction.data?.lineItems
-        ? JSON.stringify(extraction.data.lineItems)
-        : null,
-      extractionCandidates: fieldCandidates
-        ? JSON.stringify(fieldCandidates)
-        : null,
+      lineItems: null,
+      extractionCandidates: null,
       extractionRaw: extraction.raw ? JSON.stringify(extraction.raw) : null,
       parseError: extraction.error ?? null,
       supplierId: supplier?.id ?? null,

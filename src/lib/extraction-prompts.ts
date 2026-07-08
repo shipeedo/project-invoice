@@ -10,44 +10,22 @@ export const EXTRACTION_JSON_SCHEMA = `{
   "subtotal": "number or null — amount before tax if shown separately",
   "taxAmount": "number or null — GST/VAT/tax total if shown separately",
   "currency": "3-letter ISO code, default AUD",
-  "lineItems": [
-    {
-      "lineNumber": "integer or null — row number on the invoice, starting at 1 in document order",
-      "description": "string — what was charged (service, lane, surcharge, fee, etc.)",
-      "quantity": "number or null — units, parcels, kg, trips, days, etc.",
-      "unitPrice": "number or null — price per unit before line total",
-      "amount": "number — line total charge (numeric only)",
-      "reference": "string or null — consignment, con note, job, tracking, PO, or shipment reference",
-      "serviceType": "string or null — e.g. Express, Standard, Fuel levy, Detention, Storage"
-    }
-  ],
-  "fieldCandidates": {
-    "vendorName": [{ "value": "string", "label": "string — human label e.g. Issuer: Acme Transport", "source": "issuer | bill_to | ship_to | remit_to | header | footer | other" }],
-    "vendorEmail": [{ "value": "string", "label": "string", "source": "issuer | bill_to | remit_to | other" }],
-    "invoiceNumber": [{ "value": "string", "label": "string", "source": "header | footer | other" }],
-    "invoiceDate": [{ "value": "YYYY-MM-DD", "label": "string", "source": "header | footer | other" }],
-    "dueDate": [{ "value": "YYYY-MM-DD", "label": "string", "source": "header | footer | payment_terms | other" }],
-    "respondByDate": [{ "value": "YYYY-MM-DD", "label": "string", "source": "payment_terms | footer | other" }],
-    "totalAmount": [{ "value": "number as string", "label": "string", "source": "summary | footer | other" }],
-    "currency": [{ "value": "AUD", "label": "string", "source": "summary | header | other" }]
-  },
   "confidence": "high | medium | low — your confidence in the extraction overall",
-  "notes": "string or null — AP review notes: missing fields, ambiguous rows, total mismatch, unreadable sections"
+  "notes": "string or null — AP review notes: missing fields, total discrepancies between documents, unreadable sections"
 }` as const;
 
 export const INVOICE_EXTRACTION_SYSTEM_PROMPT = `You are an experienced accounts payable clerk at a transport and logistics company. Your job is to review supplier invoices before they are approved for payment.
 
-You receive text extracted from one or more documents that together represent a SINGLE supplier invoice — typically a PDF invoice, sometimes accompanied by a CSV/spreadsheet breakdown of the same charges. Treat this like a real invoice on your desk: read every document carefully, identify the supplier, dates, totals, and every individual charge line.
+You receive text extracted from one or more documents that together represent a SINGLE supplier invoice — typically a PDF invoice, sometimes accompanied by a CSV/spreadsheet breakdown of the same charges. Treat this like a real invoice on your desk: read every document carefully and identify the supplier, dates, and totals. The documents themselves remain the source of truth — you only need the header fields, not the individual charge lines.
 
 ## Your objectives
 1. Extract header fields accurately (vendor, invoice number, dates, totals, currency).
-2. Extract EVERY billable line item — do not summarise multiple charges into one row.
+2. Totals are the product — verify totalAmount is the amount due on the invoice, and note any discrepancy between documents in "notes".
 3. Return structured JSON that downstream software can store and display without further cleanup.
-4. For each header field, list ALL plausible values you find on the invoice in fieldCandidates so a human can choose the correct one.
 
 ## Document type — critical
 - First decide what the document IS and set documentType accordingly.
-- A statement of account / account statement / activity statement lists PREVIOUSLY ISSUED invoices with amounts outstanding, running balances, ageing buckets (Current / 30 / 60 / 90+ days), or a balance brought forward. It is NOT an invoice — set documentType to "statement", extract any header fields you can, and return an empty lineItems array. Do NOT convert the listed invoices into line items.
+- A statement of account / account statement / activity statement lists PREVIOUSLY ISSUED invoices with amounts outstanding, running balances, ageing buckets (Current / 30 / 60 / 90+ days), or a balance brought forward. It is NOT an invoice — set documentType to "statement" and extract any header fields you can.
 - A tax invoice / invoice billing for specific goods or services is "invoice".
 - A credit note / adjustment note is "credit_note"; a quote or estimate is "quote"; anything else (remittance advice, reminder letter, purchase order) is "other".
 - When in doubt between "invoice" and "statement": a document referencing several distinct invoice numbers with their individual balances is a statement.
@@ -55,27 +33,16 @@ You receive text extracted from one or more documents that together represent a 
 ## Supplier vs bill-to — critical
 - vendorName is the party ISSUING the invoice (carrier, freight company, supplier). This is often in the letterhead, logo area, or "From" section.
 - Do NOT use the bill-to, ship-to, sold-to, or customer name as vendorName unless that party is clearly the invoice issuer.
-- When multiple company names appear, include each distinct candidate in fieldCandidates.vendorName with an accurate source (issuer, bill_to, ship_to, remit_to, etc.) and set vendorName to your best guess for the issuer.
-
-## Line items — critical rules
-- A line item is one charge row on the invoice: freight, cartage, fuel surcharge, detention, redelivery, storage, admin fee, etc.
-- Include ALL rows from itemised tables, even on multi-page invoices. Preserve the order they appear on the document.
-- Do NOT include document totals (subtotal, GST, tax, total due) as line items unless the invoice lists them as explicit charge rows in the item table.
-- If the invoice only shows a single lump-sum charge with no breakdown, return exactly one line item describing that charge.
-- If the invoice has both summary lines and a detailed breakdown, prefer the detailed breakdown rows.
-- Transport invoices often include consignment / con note / job / tracking / reference numbers — capture these in "reference".
-- Amounts must be numbers only (no $, commas, or currency codes). Use negative numbers for credits or reversals if shown.
-- When multiple documents are provided they describe the SAME invoice. Return ONE combined, deduplicated list: each distinct charge appears exactly once, even if it shows up in more than one document. Match rows across documents by reference, date, and amount. When the same charge appears in several documents, keep the most detailed version (usually the spreadsheet row with reference, quantity, and amount).
+- When multiple company names appear, set vendorName to your best judgement of the issuer and mention the ambiguity in "notes".
 
 ## Accounts payable review behaviour
-- Compare line amounts to the stated total when possible. If they do not reconcile, explain the discrepancy in "notes".
+- Amounts must be numbers only (no $, commas, or currency codes).
+- When multiple documents are provided they describe the SAME invoice — prefer the invoice document (usually the PDF) for header fields and use the spreadsheet to confirm totals.
 - If a field is not present or is illegible, use null — never guess.
-- If you are uncertain about a row, still include it with your best reading and lower "confidence".
-- Use "notes" for anything an AP reviewer should check: missing GST, unclear references, duplicate rows, truncated text.
+- Use "notes" for anything an AP reviewer should check: missing GST, total discrepancies between documents, truncated text.
 
 ## Output format
 - Respond with a single JSON object only — no markdown, no commentary outside JSON.
-- "lineItems" must always be an array (empty only if the invoice truly has no itemised charges).
 - Dates must be ISO 8601 (YYYY-MM-DD).`;
 
 export const SUPPLIER_FROM_EMAIL_JSON_SCHEMA = `{
@@ -189,7 +156,7 @@ export function buildInvoiceExtractionUserPrompt(
     emailContext?.bodyText?.trim()
       ? `
 
-Email context (the invoice arrived via email — use this to clarify ambiguous fields, but prefer attachment content for line items):
+Email context (the invoice arrived via email — use this to clarify ambiguous fields, but prefer attachment content for invoice fields):
 Subject: ${emailContext.subject ?? "(none)"}
 From: ${emailContext.fromName ? `${emailContext.fromName} <${emailContext.fromEmail}>` : (emailContext.fromEmail ?? "(unknown)")}
 
@@ -214,10 +181,8 @@ ${document.text}
     ? `
 
 The documents above all belong to the SAME invoice (e.g. a PDF invoice plus a CSV/spreadsheet breakdown of its charges). Combine them into a single extraction:
-- Return ONE deduplicated lineItems list covering every distinct charge exactly once.
-- When the same charge appears in more than one document, keep the most detailed version (reference, quantity, unit price, amount).
-- Prefer the document with the clearest itemised breakdown (often the spreadsheet) for line items, and the invoice document for header fields.
-- Never include header/label rows or summary/total rows as line items.`
+- Prefer the invoice document (usually the PDF) for header fields.
+- Use the spreadsheet to confirm totals; note any discrepancy between documents in "notes".`
     : "";
 
   return `Review the following transport/supplier invoice ${multiDocument ? `documents (${documents.length} files for one invoice)` : "document"} and extract structured data for accounts payable.
@@ -228,10 +193,9 @@ ${EXTRACTION_JSON_SCHEMA}
 ${documentBlocks}${multiDocumentSection}${emailSection}
 
 Before responding, mentally verify:
-- Every charge row from the invoice is represented in lineItems${multiDocument ? " exactly once (deduplicated across documents)" : ""}
-- lineNumber reflects document order when rows are numbered or sequenced
-- totalAmount matches the invoice's stated total (or explain in notes if not)
-- fieldCandidates lists alternative values for header fields when the document shows more than one possibility`;
+- totalAmount is the invoice's stated amount due (or explain in notes if unclear)
+- vendorName is the invoice ISSUER, not the bill-to party
+- Dates are ISO 8601 (YYYY-MM-DD) or null`;
 }
 
 export function buildInvoiceExtractionFromEmailUserPrompt(params: {
@@ -248,7 +212,7 @@ export function buildInvoiceExtractionFromEmailUserPrompt(params: {
 
   return `Review the following supplier invoice email and extract structured invoice data for accounts payable.
 
-There is no PDF attachment — extract invoice fields and line items from the email body (and any invoice details referenced in the message).
+There is no PDF attachment — extract invoice fields from the email body (and any invoice details referenced in the message).
 
 Subject: ${params.subject ?? "(none)"}
 From: ${params.fromName ? `${params.fromName} <${params.fromEmail}>` : (params.fromEmail ?? "(unknown)")}${attachmentLine}
@@ -262,7 +226,7 @@ ${params.emailBody}
 """
 
 Before responding, mentally verify:
-- Every charge row mentioned in the email is represented in lineItems
 - totalAmount matches any total stated in the email (or explain in notes if not)
-- If the email only references an invoice without line detail, return header fields and an empty or minimal lineItems array with an explanatory note`;
+- vendorName is the invoice issuer, not our company
+- Fields not stated in the email are null — never guessed`;
 }
