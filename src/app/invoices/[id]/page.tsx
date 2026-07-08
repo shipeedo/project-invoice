@@ -2,6 +2,7 @@ import { and, asc, desc, eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { InvoiceCreditsSection } from "@/components/invoice-credits-section";
+import { InvoiceAttachmentPreviews } from "@/components/invoice-attachment-previews";
 import { InvoiceSourceAttachments } from "@/components/invoice-source-attachments";
 import { InvoiceSourceEmailSheet } from "@/components/invoice-source-email-sheet";
 import { InvoiceHeaderActions } from "@/components/invoice-header-actions";
@@ -51,16 +52,19 @@ type SourceAttachment = {
   fileName: string;
   href: string;
   mimeType?: string | null;
+  filePath: string | null;
   isPrimary: boolean;
 };
 
 function getSourceAttachments(invoice: {
   id: string;
   filePath: string | null;
+  fileMimeType: string | null;
   originalFileName: string | null;
   attachments: Array<{
     id: string;
     fileName: string;
+    filePath: string;
     mimeType: string | null;
     isPrimary: boolean | null;
   }>;
@@ -71,6 +75,7 @@ function getSourceAttachments(invoice: {
       fileName: attachment.fileName,
       href: `/api/invoices/${invoice.id}/attachments/${attachment.id}`,
       mimeType: attachment.mimeType,
+      filePath: attachment.filePath,
       isPrimary: attachment.isPrimary ?? false,
     }));
   }
@@ -81,7 +86,8 @@ function getSourceAttachments(invoice: {
         key: "primary-file",
         fileName: invoice.originalFileName ?? "Attachment",
         href: `/api/invoices/${invoice.id}/file`,
-        mimeType: null,
+        mimeType: invoice.fileMimeType,
+        filePath: invoice.filePath,
         isPrimary: true,
       },
     ];
@@ -456,6 +462,10 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
             {sourceCard}
           </div>
         )}
+
+        {!awaitingValidation || inTrash ? (
+          <InvoiceAttachmentPreviews attachments={sourceAttachments} />
+        ) : null}
 
         {/* During validation the panel renders its own line-item selection table. */}
         {awaitingValidation && !inTrash ? null : (
