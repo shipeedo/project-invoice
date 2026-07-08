@@ -1,108 +1,140 @@
 import { describe, expect, it } from "vitest";
 import {
-  applyCreditOutcomeToLines,
-  canRequestCreditForLine,
-  computeFuelCreditAmount,
+  buildCreditRequestLineItems,
   computeGstCreditAmount,
-  computeInvoiceFuelRate,
-  isFuelLine,
-  parseFuelRatePercent,
-  markLinesCreditPending,
   parseCreateCreditLinesInput,
   parseCreditRequestLineItems,
   resolveDefaultApprovedAmount,
   sumRequestedAmounts,
 } from "@/lib/credit-line-utils";
-import type { ExtractedLineItem } from "@/lib/extraction";
 
 describe("credit line helpers", () => {
-  it("parses create-line input with reason", () => {
+  it("parses manual create-line input", () => {
     expect(
       parseCreateCreditLinesInput([
         {
-          lineIndex: 0,
+          description: "Freight overcharge",
           requestedAmount: 12.5,
           reason: "NOT_OUR_CONSIGNMENT",
         },
       ]),
     ).toEqual([
       {
-        lineIndex: 0,
+        description: "Freight overcharge",
         requestedAmount: 12.5,
+        quantity: null,
+        reference: null,
         reason: "NOT_OUR_CONSIGNMENT",
         reasonDetail: null,
       },
     ]);
+  });
+
+  it("rejects lines without a description, amount, or valid reason", () => {
     expect(parseCreateCreditLinesInput([])).toBeNull();
     expect(
-      parseCreateCreditLinesInput([{ lineIndex: 0, reason: "OTHER" }]),
+      parseCreateCreditLinesInput([
+        { description: "", requestedAmount: 10, reason: "OTHER" },
+      ]),
     ).toBeNull();
     expect(
       parseCreateCreditLinesInput([
-        { lineIndex: 0, reason: "OTHER", reasonDetail: "Wrong lane" },
+        { description: "Freight", requestedAmount: 0, reason: "SERVICE_DOWNGRADE" },
+      ]),
+    ).toBeNull();
+    expect(
+      parseCreateCreditLinesInput([
+        { description: "Freight", requestedAmount: 10, reason: "NOT_A_REASON" },
+      ]),
+    ).toBeNull();
+    // OTHER requires a custom detail.
+    expect(
+      parseCreateCreditLinesInput([
+        { description: "Freight", requestedAmount: 10, reason: "OTHER" },
+      ]),
+    ).toBeNull();
+    expect(
+      parseCreateCreditLinesInput([
+        {
+          description: "Freight",
+          requestedAmount: 10,
+          reason: "OTHER",
+          reasonDetail: "Wrong lane",
+        },
       ]),
     ).toEqual([
       {
-        lineIndex: 0,
-        requestedAmount: undefined,
+        description: "Freight",
+        requestedAmount: 10,
+        quantity: null,
+        reference: null,
         reason: "OTHER",
         reasonDetail: "Wrong lane",
       },
     ]);
   });
 
-  it("blocks credit on pending or approved credit lines", () => {
-    expect(canRequestCreditForLine("REJECTED")).toBe(true);
-    expect(canRequestCreditForLine("CREDIT_PENDING")).toBe(false);
-    expect(canRequestCreditForLine("CREDIT_APPROVED")).toBe(false);
+  it("keeps optional quantity and reference when provided", () => {
+    expect(
+      parseCreateCreditLinesInput([
+        {
+          description: "Detention",
+          requestedAmount: 45,
+          quantity: 3,
+          reference: "CON-123",
+          reason: "SERVICE_DOWNGRADE",
+        },
+      ]),
+    ).toEqual([
+      {
+        description: "Detention",
+        requestedAmount: 45,
+        quantity: 3,
+        reference: "CON-123",
+        reason: "SERVICE_DOWNGRADE",
+        reasonDetail: null,
+      },
+    ]);
   });
 
-  it("marks selected lines as credit pending", () => {
-    const lines: ExtractedLineItem[] = [
-      { description: "Freight", amount: 100, status: "REJECTED" },
-      { description: "Fuel", amount: 20 },
-    ];
-
-    const next = markLinesCreditPending(
-      lines,
-      [
+  it("builds stored line items from validated input", () => {
+    expect(
+      buildCreditRequestLineItems([
         {
-          lineIndex: 0,
           description: "Freight",
           requestedAmount: 100,
           reason: "NOT_OUR_CONSIGNMENT",
         },
-      ],
-      "cr_1",
-    );
-
-    expect(next[0].status).toBe("CREDIT_PENDING");
-    expect(next[0].creditRequestId).toBe("cr_1");
-    expect(next[1].status).toBeUndefined();
+      ]),
+    ).toEqual([
+      {
+        description: "Freight",
+        requestedAmount: 100,
+        quantity: null,
+        reference: null,
+        reason: "NOT_OUR_CONSIGNMENT",
+        reasonDetail: null,
+      },
+    ]);
   });
 
-  it("applies approved and denied outcomes to linked lines", () => {
-    const lines: ExtractedLineItem[] = [
-      { description: "Freight", status: "CREDIT_PENDING", creditRequestId: "cr_1" },
-      { description: "Fuel", status: "APPROVED" },
-    ];
-    const creditLines = parseCreditRequestLineItems(
-      JSON.stringify([
-        {
-          lineIndex: 0,
-          description: "Freight",
-          requestedAmount: 100,
-          reason: "SERVICE_DOWNGRADE",
-        },
-      ]),
-    );
+  it("still parses legacy stored lines built from invoice lines", () => {
+    const legacy = JSON.stringify([
+      {
+        lineIndex: 0,
+        lineNumber: 1,
+        description: "Freight",
+        invoiceAmount: 100,
+        requestedAmount: 80,
+        reason: "SERVICE_DOWNGRADE",
+      },
+    ]);
 
-    expect(
-      applyCreditOutcomeToLines(lines, creditLines, "APPROVED")[0].status,
-    ).toBe("CREDIT_APPROVED");
-    expect(
-      applyCreditOutcomeToLines(lines, creditLines, "DENIED")[0].status,
-    ).toBe("CREDIT_DENIED");
+    const parsed = parseCreditRequestLineItems(legacy);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].description).toBe("Freight");
+    expect(parsed[0].invoiceAmount).toBe(100);
+    expect(sumRequestedAmounts(parsed)).toBe(80);
   });
 
   it("sums requested amounts", () => {
@@ -110,83 +142,12 @@ describe("credit line helpers", () => {
       sumRequestedAmounts(
         parseCreditRequestLineItems(
           JSON.stringify([
-            { lineIndex: 0, description: "A", requestedAmount: 10 },
-            { lineIndex: 1, description: "B", requestedAmount: 5 },
+            { description: "A", requestedAmount: 10 },
+            { description: "B", requestedAmount: 5 },
           ]),
         ),
       ),
     ).toBe(15);
-  });
-
-  it("detects fuel lines by service type or description", () => {
-    expect(isFuelLine({ description: "Fuel levy", serviceType: undefined })).toBe(true);
-    expect(isFuelLine({ description: "Cartage", serviceType: "Fuel Surcharge" })).toBe(true);
-    expect(isFuelLine({ description: "Freight", serviceType: "Express" })).toBe(false);
-  });
-
-  it("derives the invoice fuel rate from fuel and non-fuel amounts", () => {
-    const lines: ExtractedLineItem[] = [
-      { description: "Freight", amount: 100 },
-      { description: "Cartage", amount: 100 },
-      { description: "Fuel levy", amount: 30 },
-    ];
-
-    expect(computeInvoiceFuelRate(lines)).toBeCloseTo(0.15);
-    expect(computeInvoiceFuelRate([{ description: "Freight", amount: 100 }])).toBeNull();
-    expect(computeInvoiceFuelRate([])).toBeNull();
-  });
-
-  it("computes the fuel credit from selected non-fuel lines only", () => {
-    const lines: ExtractedLineItem[] = [
-      { description: "Freight", amount: 100 },
-      { description: "Cartage", amount: 100 },
-      { description: "Fuel levy", amount: 30 },
-    ];
-
-    expect(
-      computeFuelCreditAmount(lines, [
-        { lineIndex: 0, requestedAmount: 80 },
-        { lineIndex: 2, requestedAmount: 30 },
-      ]),
-    ).toBe(12);
-    expect(
-      computeFuelCreditAmount(lines, [{ lineIndex: 2, requestedAmount: 30 }]),
-    ).toBeNull();
-    expect(
-      computeFuelCreditAmount(
-        [{ description: "Freight", amount: 100 }],
-        [{ lineIndex: 0, requestedAmount: 100 }],
-      ),
-    ).toBeNull();
-  });
-
-  it("parses fuel levy percentages into fractions", () => {
-    expect(parseFuelRatePercent("10.39")).toBeCloseTo(0.1039);
-    expect(parseFuelRatePercent("100")).toBe(1);
-    expect(parseFuelRatePercent("0")).toBeNull();
-    expect(parseFuelRatePercent("101")).toBeNull();
-    expect(parseFuelRatePercent("abc")).toBeNull();
-    expect(parseFuelRatePercent("")).toBeNull();
-  });
-
-  it("prefers a user-supplied fuel rate over the derived one", () => {
-    const lines: ExtractedLineItem[] = [
-      { description: "Freight", amount: 100 },
-      { description: "Fuel levy", amount: 15 },
-    ];
-
-    // Derived rate would be 15%, override says 20%.
-    expect(
-      computeFuelCreditAmount(lines, [{ lineIndex: 0, requestedAmount: 100 }], 0.2),
-    ).toBe(20);
-    // Override also works when the invoice has no fuel lines to derive from.
-    expect(
-      computeFuelCreditAmount(
-        [{ description: "Freight", amount: 100 }],
-        [{ lineIndex: 0, requestedAmount: 50 }],
-        0.1,
-      ),
-    ).toBe(5);
   });
 
   it("computes GST on the credited subtotal", () => {
@@ -197,8 +158,8 @@ describe("credit line helpers", () => {
 
   it("resolves default approved amount from total or line sum", () => {
     const lineItems = JSON.stringify([
-      { lineIndex: 0, description: "A", requestedAmount: 10 },
-      { lineIndex: 1, description: "B", requestedAmount: 5 },
+      { description: "A", requestedAmount: 10 },
+      { description: "B", requestedAmount: 5 },
     ]);
 
     expect(resolveDefaultApprovedAmount(99, lineItems)).toBe(99);

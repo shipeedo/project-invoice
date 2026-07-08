@@ -4,7 +4,6 @@ import {
   buildInvoiceExtractionFromEmailUserPrompt,
   buildInvoiceExtractionUserPrompt,
 } from "@/lib/extraction-prompts";
-import type { ExtractionCandidates } from "@/lib/extraction-types";
 import {
   resolveExtractionSystemPrompt,
   type SupplierExtractionContext,
@@ -16,30 +15,6 @@ export type EmailExtractionContext = {
   fromName?: string | null;
   bodyText?: string | null;
 };
-
-export type ExtractedLineItem = {
-  lineNumber?: number;
-  description: string;
-  quantity?: number;
-  unitPrice?: number;
-  amount?: number;
-  reference?: string;
-  serviceType?: string;
-  /** Explicit assignee override; falls back to invoice-level assignee when unset. */
-  assignedToId?: string | null;
-  /** Approval state for payment; defaults to pending. */
-  status?: LineItemStatus;
-  /** Credit request that marked this line as credit pending. */
-  creditRequestId?: string | null;
-};
-
-export type LineItemStatus =
-  | "PENDING"
-  | "APPROVED"
-  | "REJECTED"
-  | "CREDIT_PENDING"
-  | "CREDIT_APPROVED"
-  | "CREDIT_DENIED";
 
 export type ExtractedDocumentType =
   | "invoice"
@@ -60,8 +35,6 @@ export type ExtractedInvoice = {
   subtotal?: number;
   taxAmount?: number;
   currency?: string;
-  lineItems?: ExtractedLineItem[];
-  fieldCandidates?: ExtractionCandidates;
   confidence?: string;
   notes?: string;
 };
@@ -87,7 +60,6 @@ export async function extractInvoiceFromDocument(
 ): Promise<{
   data: ExtractedInvoice | null;
   raw: unknown;
-  fieldCandidates: ExtractionCandidates | null;
   error?: string;
 }> {
   let text: string;
@@ -98,7 +70,6 @@ export async function extractInvoiceFromDocument(
     return {
       data: null,
       raw: null,
-      fieldCandidates: null,
       error: error instanceof Error ? error.message : "Failed to read document",
     };
   }
@@ -107,7 +78,6 @@ export async function extractInvoiceFromDocument(
     return {
       data: null,
       raw: null,
-      fieldCandidates: null,
       error: "Document contains no extractable text",
     };
   }
@@ -132,7 +102,6 @@ export async function extractInvoiceFromDocumentTexts(
 ): Promise<{
   data: ExtractedInvoice | null;
   raw: unknown;
-  fieldCandidates: ExtractionCandidates | null;
   error?: string;
 }> {
   const usableDocuments = documents
@@ -146,7 +115,6 @@ export async function extractInvoiceFromDocumentTexts(
     return {
       data: null,
       raw: null,
-      fieldCandidates: null,
       error: "Document contains no extractable text",
     };
   }
@@ -168,7 +136,6 @@ export async function extractInvoiceFromDocumentText(
 ): Promise<{
   data: ExtractedInvoice | null;
   raw: unknown;
-  fieldCandidates: ExtractionCandidates | null;
   error?: string;
 }> {
   return extractInvoiceFromDocumentTexts(
@@ -186,7 +153,6 @@ export async function extractInvoiceFromPdf(
 ): Promise<{
   data: ExtractedInvoice | null;
   raw: unknown;
-  fieldCandidates: ExtractionCandidates | null;
   error?: string;
 }> {
   return extractInvoiceFromDocument(
@@ -210,7 +176,6 @@ export async function extractInvoiceFromEmailBody(
 ): Promise<{
   data: ExtractedInvoice | null;
   raw: unknown;
-  fieldCandidates: ExtractionCandidates | null;
   error?: string;
 }> {
   const trimmedBody = params.bodyText.trim();
@@ -218,7 +183,6 @@ export async function extractInvoiceFromEmailBody(
     return {
       data: null,
       raw: null,
-      fieldCandidates: null,
       error: "Email body is empty",
     };
   }
@@ -241,7 +205,6 @@ async function callExtractionAI(params: {
 }): Promise<{
   data: ExtractedInvoice | null;
   raw: unknown;
-  fieldCandidates: ExtractionCandidates | null;
   error?: string;
 }> {
   try {
@@ -250,7 +213,6 @@ async function callExtractionAI(params: {
       return {
         data: null,
         raw: result.raw,
-        fieldCandidates: null,
         error: result.error,
       };
     }
@@ -262,13 +224,11 @@ async function callExtractionAI(params: {
     return {
       data: parsed,
       raw: result.raw,
-      fieldCandidates: null,
     };
   } catch (error) {
     return {
       data: null,
       raw: null,
-      fieldCandidates: null,
       error: error instanceof Error ? error.message : "Extraction failed",
     };
   }
@@ -325,7 +285,6 @@ export function normalizeExtractedInvoice(raw: ExtractedInvoice): ExtractedInvoi
     subtotal: toNumber(raw.subtotal),
     taxAmount: toNumber(raw.taxAmount),
     currency: raw.currency?.trim().toUpperCase() || "AUD",
-    lineItems: [],
     confidence: raw.confidence ?? undefined,
     notes: raw.notes?.trim() || undefined,
   };

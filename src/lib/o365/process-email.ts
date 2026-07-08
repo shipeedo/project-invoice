@@ -228,7 +228,6 @@ export async function runInvoiceExtraction(params: {
   let extraction: Awaited<ReturnType<typeof extractInvoiceFromDocumentTexts>> = {
     data: null,
     raw: null,
-    fieldCandidates: null,
     error: portalFetchError ?? "No supported invoice attachment or email body to extract from",
   };
 
@@ -246,7 +245,6 @@ export async function runInvoiceExtraction(params: {
         extraction = {
           data: null,
           raw: null,
-          fieldCandidates: null,
           error: "Account statement detected in attachment",
         };
       } else {
@@ -284,7 +282,6 @@ export async function runInvoiceExtraction(params: {
       extraction = {
         data: null,
         raw: null,
-        fieldCandidates: null,
         error: error instanceof Error ? error.message : "Failed to read attachment",
       };
     }

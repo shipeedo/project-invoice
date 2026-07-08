@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { CreditOutcomeDialog } from "@/components/credit-outcome-dialog";
+import { CreditRequestSheet } from "@/components/credit-request-sheet";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -31,17 +32,23 @@ type InvoiceCreditRequest = {
 };
 
 type InvoiceCreditsSectionProps = {
+  invoiceId: string;
   creditRequests: InvoiceCreditRequest[];
   currency: string;
+  /** Enables the "Request credit" button; off for trashed/cancelled invoices. */
+  canRequestCredit: boolean;
 };
 
 export function InvoiceCreditsSection({
+  invoiceId,
   creditRequests,
   currency,
+  canRequestCredit,
 }: InvoiceCreditsSectionProps) {
   const [outcomeFor, setOutcomeFor] = useState<InvoiceCreditRequest | null>(null);
+  const [requestOpen, setRequestOpen] = useState(false);
 
-  if (creditRequests.length === 0) {
+  if (creditRequests.length === 0 && !canRequestCredit) {
     return null;
   }
 
@@ -50,11 +57,24 @@ export function InvoiceCreditsSection({
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-4">
           <CardTitle>Credit requests</CardTitle>
-          <Link href="/credits" className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
-            View all credits
-          </Link>
+          <div className="flex flex-wrap items-center gap-2">
+            {canRequestCredit ? (
+              <Button size="sm" onClick={() => setRequestOpen(true)}>
+                Request credit
+              </Button>
+            ) : null}
+            <Link href="/credits" className={cn(buttonVariants({ variant: "outline", size: "sm" }))}>
+              View all credits
+            </Link>
+          </div>
         </CardHeader>
         <CardContent>
+          {creditRequests.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No credit requests yet. Use Request credit to build a carrier
+              submission for charges on this invoice.
+            </p>
+          ) : (
           <Table>
             <TableHeader>
               <TableRow>
@@ -117,8 +137,16 @@ export function InvoiceCreditsSection({
               })}
             </TableBody>
           </Table>
+          )}
         </CardContent>
       </Card>
+
+      <CreditRequestSheet
+        open={requestOpen}
+        onOpenChange={setRequestOpen}
+        invoiceId={invoiceId}
+        currency={currency}
+      />
 
       {outcomeFor ? (
         <CreditOutcomeDialog

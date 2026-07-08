@@ -1,48 +1,33 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { recordAuditEvent } from "@/lib/audit";
 import {
-  applyCreditOutcomeToLines,
   buildCreditRequestLineItems,
-  computeFuelCreditAmount,
   computeGstCreditAmount,
   isCreditRequestOpen,
-  markLinesCreditPending,
-  OPEN_CREDIT_STATUSES,
   parseCreditRequestLineItems,
   sumRequestedAmounts,
   type CreateCreditLineInput,
 } from "@/lib/credit-line-utils";
 import { creditRequests, db, invoices } from "@/lib/db";
 import type { CreditRequestStatus } from "@/lib/db/types";
-import { parseLineItems } from "@/lib/line-items";
 
 export type {
   CreateCreditLineInput,
   CreditRequestLineItem,
 } from "@/lib/credit-line-utils";
 export {
-  applyCreditOutcomeToLines,
-  canRequestCreditForLine,
-  computeFuelCreditAmount,
   computeGstCreditAmount,
-  computeInvoiceFuelRate,
-  parseFuelRatePercent,
   isCreditRequestOpen,
-  markLinesCreditPending,
   parseCreateCreditLinesInput,
   parseCreditRequestLineItems,
   sumRequestedAmounts,
 } from "@/lib/credit-line-utils";
-export { buildCreditSubmissionCsv } from "@/lib/credit-submission-export";
 
-export async function createCreditRequestFromLines(params: {
+export async function createCreditRequest(params: {
   organizationId: string;
   userId: string;
   invoiceId: string;
   lines: CreateCreditLineInput[];
-  includeFuel?: boolean;
-  /** User-supplied fuel levy fraction; falls back to the invoice-derived rate. */
-  fuelRate?: number | null;
   includeGst?: boolean;
   requestedTotal?: number | null;
   notes?: string | null;
@@ -58,41 +43,16 @@ export async function createCreditRequestFromLines(params: {
     return { error: "Invoice not found" as const };
   }
 
-  const invoiceLines = parseLineItems(invoice.lineItems);
-  const creditLines = buildCreditRequestLineItems(invoiceLines, params.lines);
-  if (!creditLines || creditLines.length === 0) {
-    return { error: "Invalid line selection for credit request" as const };
+  const creditLines = buildCreditRequestLineItems(params.lines);
+  if (creditLines.length === 0) {
+    return { error: "At least one credit line is required" as const };
   }
 
-  const openRequests = await db.query.creditRequests.findMany({
-    where: and(
-      eq(creditRequests.invoiceId, params.invoiceId),
-      eq(creditRequests.organizationId, params.organizationId),
-      inArray(creditRequests.status, OPEN_CREDIT_STATUSES),
-    ),
-  });
-
-  const blockedIndices = new Set<number>();
-  for (const request of openRequests) {
-    for (const line of parseCreditRequestLineItems(request.lineItems)) {
-      blockedIndices.add(line.lineIndex);
-    }
-  }
-
-  if (creditLines.some((line) => blockedIndices.has(line.lineIndex))) {
-    return { error: "One or more selected lines already have an open credit request" as const };
-  }
-
-  // Fuel and GST are recomputed here from the invoice lines rather than
-  // trusted from the client.
-  const fuelAmount = params.includeFuel
-    ? computeFuelCreditAmount(invoiceLines, creditLines, params.fuelRate)
-    : null;
+  // GST is recomputed here from the entered lines rather than trusted from
+  // the client.
   const subtotal = sumRequestedAmounts(creditLines);
-  const gstAmount = params.includeGst
-    ? computeGstCreditAmount(subtotal + (fuelAmount ?? 0))
-    : null;
-  const computedTotal = subtotal + (fuelAmount ?? 0) + (gstAmount ?? 0);
+  const gstAmount = params.includeGst ? computeGstCreditAmount(subtotal) : null;
+  const computedTotal = subtotal + (gstAmount ?? 0);
   const requestedTotal =
     params.requestedTotal != null && Number.isFinite(params.requestedTotal)
       ? params.requestedTotal
@@ -105,52 +65,36 @@ export async function createCreditRequestFromLines(params: {
     notes ??
     `Credit requested for ${creditLines.length} line item${creditLines.length === 1 ? "" : "s"}.`;
 
-  const outcome = db.transaction((tx) => {
-    const [creditRequest] = tx
-      .insert(creditRequests)
-      .values({
-        organizationId: params.organizationId,
-        invoiceId: params.invoiceId,
-        createdById: params.userId,
-        status: "DRAFT",
-        subject,
-        recipientEmail,
-        message,
-        lineItems: JSON.stringify(creditLines),
-        requestedTotal,
-        fuelAmount,
-        gstAmount,
-        notes,
-      })
-      .returning()
-      .all();
-
-    const nextLines = markLinesCreditPending(invoiceLines, creditLines, creditRequest.id);
-    tx.update(invoices)
-      .set({
-        lineItems: JSON.stringify(nextLines),
-        updatedAt: new Date(),
-      })
-      .where(eq(invoices.id, params.invoiceId))
-      .run();
-
-    return creditRequest;
-  });
+  const [creditRequest] = await db
+    .insert(creditRequests)
+    .values({
+      organizationId: params.organizationId,
+      invoiceId: params.invoiceId,
+      createdById: params.userId,
+      status: "DRAFT",
+      subject,
+      recipientEmail,
+      message,
+      lineItems: JSON.stringify(creditLines),
+      requestedTotal,
+      gstAmount,
+      notes,
+    })
+    .returning();
 
   await recordAuditEvent({
     invoiceId: params.invoiceId,
     userId: params.userId,
     action: "credit_request.created",
     details: {
-      creditRequestId: outcome.id,
+      creditRequestId: creditRequest.id,
       lineCount: creditLines.length,
       requestedTotal,
-      fuelAmount,
       gstAmount,
     },
   });
 
-  return { creditRequest: outcome };
+  return { creditRequest };
 }
 
 export async function recordCreditRequestOutcome(params: {
@@ -176,21 +120,6 @@ export async function recordCreditRequestOutcome(params: {
   }
 
   const creditLines = parseCreditRequestLineItems(request.lineItems);
-  if (creditLines.length === 0) {
-    return { error: "Credit request has no linked line items" as const };
-  }
-
-  const invoice = await db.query.invoices.findFirst({
-    where: and(
-      eq(invoices.id, request.invoiceId),
-      eq(invoices.organizationId, params.organizationId),
-    ),
-  });
-
-  if (!invoice) {
-    return { error: "Invoice not found" as const };
-  }
-
   const defaultAmount = request.requestedTotal ?? sumRequestedAmounts(creditLines);
   let approvedAmount: number | null = null;
   let status: CreditRequestStatus;
@@ -211,34 +140,16 @@ export async function recordCreditRequestOutcome(params: {
     carrierDecision = "DENIED";
   }
 
-  const invoiceLines = parseLineItems(invoice.lineItems);
-  const nextLines = applyCreditOutcomeToLines(
-    invoiceLines,
-    creditLines,
-    params.outcome === "approved" ? "APPROVED" : "DENIED",
-  );
-
-  const updated = db.transaction((tx) => {
-    tx.update(invoices)
-      .set({
-        lineItems: JSON.stringify(nextLines),
-        updatedAt: new Date(),
-      })
-      .where(eq(invoices.id, invoice.id))
-      .run();
-
-    return tx
-      .update(creditRequests)
-      .set({
-        status,
-        carrierDecision,
-        approvedAmount,
-        updatedAt: new Date(),
-      })
-      .where(eq(creditRequests.id, request.id))
-      .returning()
-      .get();
-  });
+  const [updated] = await db
+    .update(creditRequests)
+    .set({
+      status,
+      carrierDecision,
+      approvedAmount,
+      updatedAt: new Date(),
+    })
+    .where(eq(creditRequests.id, request.id))
+    .returning();
 
   await recordAuditEvent({
     invoiceId: request.invoiceId,

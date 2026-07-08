@@ -11,7 +11,6 @@ export type CreditSubmissionParams = {
   currency?: string | null;
   notes?: string | null;
   requestedTotal?: number | null;
-  fuelAmount?: number | null;
   gstAmount?: number | null;
   lineItems: CreditRequestLineItem[];
 };
@@ -130,7 +129,6 @@ export async function buildCreditSubmissionWorkbook(params: CreditSubmissionPara
     (sum, line) => sum + (line.invoiceAmount ?? 0),
     0,
   );
-  const fuelAmount = formatMoney(params.fuelAmount);
   const gstAmount = formatMoney(params.gstAmount);
   const totalCredit =
     params.requestedTotal != null && Number.isFinite(params.requestedTotal)
@@ -138,9 +136,7 @@ export async function buildCreditSubmissionWorkbook(params: CreditSubmissionPara
       : params.lineItems.reduce(
           (sum, line) => sum + (line.requestedAmount ?? 0),
           0,
-        ) +
-        (fuelAmount ?? 0) +
-        (gstAmount ?? 0);
+        ) + (gstAmount ?? 0);
 
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet("Credit Request");
@@ -199,7 +195,7 @@ export async function buildCreditSubmissionWorkbook(params: CreditSubmissionPara
     const reasonFill =
       index % 2 === 0 ? CREDIT_TEMPLATE_COLORS.white : CREDIT_TEMPLATE_COLORS.altFill;
     const row = sheet.addRow([
-      line.lineNumber ?? line.lineIndex + 1,
+      line.lineNumber ?? (line.lineIndex != null ? line.lineIndex + 1 : index + 1),
       line.serviceType ?? "",
       line.reference ?? "",
       line.description,
@@ -226,7 +222,6 @@ export async function buildCreditSubmissionWorkbook(params: CreditSubmissionPara
   });
 
   const surchargeRows: Array<[string, number]> = [];
-  if (fuelAmount != null) surchargeRows.push(["Fuel surcharge", fuelAmount]);
   if (gstAmount != null) surchargeRows.push(["GST", gstAmount]);
 
   for (const [label, amount] of surchargeRows) {
@@ -260,31 +255,4 @@ export async function buildCreditSubmissionWorkbook(params: CreditSubmissionPara
 export async function buildCreditSubmissionXlsxBuffer(params: CreditSubmissionParams) {
   const workbook = await buildCreditSubmissionWorkbook(params);
   return Buffer.from(await workbook.xlsx.writeBuffer());
-}
-
-/** @deprecated Use XLSX export via buildCreditSubmissionXlsxBuffer */
-export function buildCreditSubmissionCsv(params: CreditSubmissionParams) {
-  const header = [
-    "Line",
-    "Type",
-    "Reference",
-    "Description",
-    "Invoiced Amount",
-    "Credit Amount",
-    "Reason",
-  ];
-
-  const rows = params.lineItems.map((line) =>
-    [
-      String(line.lineNumber ?? line.lineIndex + 1),
-      line.serviceType ?? "",
-      line.reference ?? "",
-      line.description,
-      line.invoiceAmount != null ? String(line.invoiceAmount) : "",
-      line.requestedAmount != null ? String(line.requestedAmount) : "",
-      formatCreditLineReason(line),
-    ].join(","),
-  );
-
-  return [header.join(","), ...rows].join("\n");
 }

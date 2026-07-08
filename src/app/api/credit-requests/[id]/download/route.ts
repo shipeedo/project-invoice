@@ -49,7 +49,6 @@ export async function GET(_request: Request, context: RouteContext) {
     currency: request.invoice.currency,
     notes: request.notes,
     requestedTotal: request.requestedTotal,
-    fuelAmount: request.fuelAmount,
     gstAmount: request.gstAmount,
     lineItems,
   });

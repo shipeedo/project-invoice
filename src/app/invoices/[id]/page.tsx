@@ -464,6 +464,8 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
         ) : null}
 
         <InvoiceCreditsSection
+          invoiceId={invoice.id}
+          canRequestCredit={!inTrash && invoice.status !== "CANCELLED"}
           creditRequests={invoiceCreditRequests.map((request) => ({
             id: request.id,
             status: request.status,

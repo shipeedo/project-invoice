@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { PlusIcon, Trash2Icon } from "lucide-react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -22,16 +23,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
-import type { ExtractedLineItem } from "@/lib/extraction";
-import {
-  canRequestCreditForLine,
-  computeFuelCreditAmount,
-  computeGstCreditAmount,
-  computeInvoiceFuelRate,
-  GST_RATE,
-  parseFuelRatePercent,
-} from "@/lib/credit-line-utils";
-import { resolveLineItemStatus } from "@/lib/line-items";
+import { computeGstCreditAmount, GST_RATE } from "@/lib/credit-line-utils";
 import {
   CREDIT_REASON_OPTIONS,
   type CreditReasonCode,
@@ -47,21 +39,29 @@ type CreditRequestSheetProps = {
   onOpenChange: (open: boolean) => void;
   invoiceId: string;
   currency: string;
-  selectedIndexes: number[];
-  lineItems: ExtractedLineItem[];
 };
 
 type LineDraft = {
-  lineIndex: number;
-  lineNumber: number;
+  key: number;
   description: string;
-  serviceType: string | null;
-  reference: string | null;
-  invoiceAmount: number | null;
   requestedAmount: string;
+  quantity: string;
+  reference: string;
   reason: CreditReasonCode | "";
   reasonDetail: string;
 };
+
+function emptyLine(key: number): LineDraft {
+  return {
+    key,
+    description: "",
+    requestedAmount: "",
+    quantity: "",
+    reference: "",
+    reason: "",
+    reasonDetail: "",
+  };
+}
 
 function formatAmountField(value: string) {
   const parsed = parseDecimalAmount(value);
@@ -73,60 +73,22 @@ export function CreditRequestSheet({
   onOpenChange,
   invoiceId,
   currency,
-  selectedIndexes,
-  lineItems,
 }: CreditRequestSheetProps) {
   const router = useRouter();
-  const [draftOverrides, setDraftOverrides] = useState<Record<number, Partial<LineDraft>>>(
-    {},
-  );
+  const [lines, setLines] = useState<LineDraft[]>([emptyLine(0)]);
+  const [nextKey, setNextKey] = useState(1);
   const [notes, setNotes] = useState("");
-  const [includeFuel, setIncludeFuel] = useState(false);
-  const [fuelRateInput, setFuelRateInput] = useState("");
   const [includeGst, setIncludeGst] = useState(false);
   const [requestedTotal, setRequestedTotal] = useState("");
   const [totalTouched, setTotalTouched] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const baseDrafts = useMemo(() => {
-    if (!open) return [];
-
-    return selectedIndexes
-      .map((lineIndex) => {
-        const line = lineItems[lineIndex];
-        if (!line) return null;
-        return {
-          lineIndex,
-          lineNumber: line.lineNumber ?? lineIndex + 1,
-          description: line.description,
-          serviceType: line.serviceType ?? null,
-          reference: line.reference ?? null,
-          invoiceAmount: line.amount ?? null,
-          requestedAmount:
-            line.amount != null ? formatDecimalAmount(line.amount) : "",
-          reason: "" as CreditReasonCode | "",
-          reasonDetail: "",
-        } satisfies LineDraft;
-      })
-      .filter((line): line is LineDraft => line !== null);
-  }, [open, selectedIndexes, lineItems]);
-
-  const drafts = useMemo(
-    () =>
-      baseDrafts.map((draft) => ({
-        ...draft,
-        ...draftOverrides[draft.lineIndex],
-      })),
-    [baseDrafts, draftOverrides],
-  );
-
   function handleOpenChange(nextOpen: boolean) {
     if (!nextOpen) {
-      setDraftOverrides({});
+      setLines([emptyLine(0)]);
+      setNextKey(1);
       setNotes("");
-      setIncludeFuel(false);
-      setFuelRateInput("");
       setIncludeGst(false);
       setRequestedTotal("");
       setTotalTouched(false);
@@ -135,81 +97,61 @@ export function CreditRequestSheet({
     onOpenChange(nextOpen);
   }
 
-  const fuelRate = useMemo(() => computeInvoiceFuelRate(lineItems), [lineItems]);
-
-  const subtotal = useMemo(
-    () =>
-      drafts.reduce(
-        (sum, line) => sum + (parseDecimalAmount(line.requestedAmount) ?? 0),
-        0,
-      ),
-    [drafts],
-  );
-
-  const effectiveFuelRate = includeFuel
-    ? parseFuelRatePercent(fuelRateInput)
-    : null;
-
-  const fuelAmount = useMemo(() => {
-    if (!includeFuel || effectiveFuelRate == null) return null;
-    return computeFuelCreditAmount(
-      lineItems,
-      drafts.map((line) => ({
-        lineIndex: line.lineIndex,
-        requestedAmount: parseDecimalAmount(line.requestedAmount),
-      })),
-      effectiveFuelRate,
+  function updateLine(key: number, patch: Partial<LineDraft>) {
+    setLines((current) =>
+      current.map((line) => (line.key === key ? { ...line, ...patch } : line)),
     );
-  }, [includeFuel, effectiveFuelRate, lineItems, drafts]);
+  }
 
-  const gstAmount = includeGst
-    ? computeGstCreditAmount(subtotal + (fuelAmount ?? 0))
-    : null;
+  function addLine() {
+    setLines((current) => [...current, emptyLine(nextKey)]);
+    setNextKey((key) => key + 1);
+  }
 
-  const computedTotal = subtotal + (fuelAmount ?? 0) + (gstAmount ?? 0);
-  const autoTotal =
-    computedTotal > 0 ? formatDecimalAmount(computedTotal) : "";
+  function removeLine(key: number) {
+    setLines((current) =>
+      current.length > 1 ? current.filter((line) => line.key !== key) : current,
+    );
+  }
+
+  const subtotal = lines.reduce(
+    (sum, line) => sum + (parseDecimalAmount(line.requestedAmount) ?? 0),
+    0,
+  );
+  const gstAmount = includeGst ? computeGstCreditAmount(subtotal) : null;
+  const computedTotal = subtotal + (gstAmount ?? 0);
+  const autoTotal = computedTotal > 0 ? formatDecimalAmount(computedTotal) : "";
   const displayTotal = totalTouched ? requestedTotal : autoTotal;
 
-  const invalidSelection = selectedIndexes.some((index) => {
-    const line = lineItems[index];
-    if (!line) return true;
-    return !canRequestCreditForLine(resolveLineItemStatus(line));
-  });
-
-  const validationError = useMemo(() => {
-    if (drafts.length === 0) return "Select at least one line item.";
-    for (const line of drafts) {
-      if (!line.reason) return `Choose a reason for line ${line.lineNumber}.`;
+  function validationError(): string | null {
+    for (const [index, line] of lines.entries()) {
+      const label = `line ${index + 1}`;
+      if (!line.description.trim()) return `Enter a description for ${label}.`;
+      const amount = parseDecimalAmount(line.requestedAmount);
+      if (amount == null || amount <= 0) return `Enter a credit amount for ${label}.`;
+      if (!line.reason) return `Choose a reason for ${label}.`;
       if (line.reason === "OTHER" && !line.reasonDetail.trim()) {
-        return `Enter a custom reason for line ${line.lineNumber}.`;
+        return `Enter a custom reason for ${label}.`;
       }
     }
-    if (includeFuel && parseFuelRatePercent(fuelRateInput) == null) {
-      return "Enter a fuel levy percentage between 0 and 100.";
-    }
     return null;
-  }, [drafts, includeFuel, fuelRateInput]);
-
-  function updateDraft(lineIndex: number, patch: Partial<LineDraft>) {
-    setDraftOverrides((current) => ({
-      ...current,
-      [lineIndex]: { ...current[lineIndex], ...patch },
-    }));
   }
 
   async function handleSubmit() {
-    if (invalidSelection || validationError) {
-      setError(validationError);
+    const problem = validationError();
+    if (problem) {
+      setError(problem);
       return;
     }
 
     setLoading(true);
     setError(null);
 
-    const lines = drafts.map((line) => ({
-      lineIndex: line.lineIndex,
+    const payload = lines.map((line) => ({
+      description: line.description.trim(),
       requestedAmount: parseDecimalAmount(line.requestedAmount),
+      quantity: parseDecimalAmount(line.quantity),
+      reference: line.reference.trim() || null,
       reason: line.reason as CreditReasonCode,
       reasonDetail: line.reason === "OTHER" ? line.reasonDetail.trim() : null,
     }));
@@ -218,9 +160,7 @@ export function CreditRequestSheet({
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        lines,
-        includeFuel,
-        fuelRate: effectiveFuelRate,
+        lines: payload,
         includeGst,
         requestedTotal: parseDecimalAmount(displayTotal),
         notes: notes.trim() || null,
@@ -230,8 +170,8 @@ export function CreditRequestSheet({
     setLoading(false);
 
     if (!response.ok) {
-      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
-      setError(payload?.error ?? "Failed to create credit request");
+      const body = (await response.json().catch(() => null)) as { error?: string } | null;
+      setError(body?.error ?? "Failed to create credit request");
       return;
     }
 
@@ -245,48 +185,56 @@ export function CreditRequestSheet({
         <SheetHeader className="border-b px-6 py-5">
           <SheetTitle>Create credit request</SheetTitle>
           <SheetDescription>
-            Review each selected line, set the credit amount, and choose a reason. A spreadsheet
-            will be generated for carrier submission.
+            Add each charge you want credited with its amount and reason. A
+            spreadsheet will be generated for carrier submission.
           </SheetDescription>
         </SheetHeader>
 
         <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5">
-          {invalidSelection ? (
-            <p className="text-sm text-destructive">
-              One or more selected lines already have an open credit request or approved credit.
-            </p>
-          ) : null}
-
-          {drafts.map((line) => (
+          {lines.map((line, index) => (
             <section
-              key={line.lineIndex}
+              key={line.key}
               className="space-y-4 rounded-xl border bg-muted/20 p-4"
             >
-              <div className="space-y-1">
-                <p className="text-sm font-medium">
-                  Line {line.lineNumber} · {line.description}
-                </p>
-                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                  {line.serviceType ? <span>Service: {line.serviceType}</span> : null}
-                  {line.reference ? <span>Reference: {line.reference}</span> : null}
-                  {line.invoiceAmount != null ? (
-                    <span>Invoiced: {formatCurrency(line.invoiceAmount, currency)}</span>
-                  ) : null}
-                </div>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-medium">Credit line {index + 1}</p>
+                {lines.length > 1 ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label={`Remove line ${index + 1}`}
+                    onClick={() => removeLine(line.key)}
+                  >
+                    <Trash2Icon />
+                  </Button>
+                ) : null}
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor={`credit-amount-${line.lineIndex}`}>Credit amount</Label>
+                <div className="space-y-2 sm:col-span-2">
+                  <Label htmlFor={`credit-description-${line.key}`}>Description</Label>
                   <Input
-                    id={`credit-amount-${line.lineIndex}`}
+                    id={`credit-description-${line.key}`}
+                    value={line.description}
+                    onChange={(event) =>
+                      updateLine(line.key, { description: event.target.value })
+                    }
+                    placeholder="e.g. Fuel surcharge overcharged on consignment 12345"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor={`credit-amount-${line.key}`}>Credit amount</Label>
+                  <Input
+                    id={`credit-amount-${line.key}`}
                     inputMode="decimal"
                     value={line.requestedAmount}
                     onChange={(event) =>
-                      updateDraft(line.lineIndex, { requestedAmount: event.target.value })
+                      updateLine(line.key, { requestedAmount: event.target.value })
                     }
                     onBlur={() =>
-                      updateDraft(line.lineIndex, {
+                      updateLine(line.key, {
                         requestedAmount: formatAmountField(line.requestedAmount),
                       })
                     }
@@ -294,8 +242,23 @@ export function CreditRequestSheet({
                   />
                 </div>
 
+                <div className="space-y-2">
+                  <Label htmlFor={`credit-reference-${line.key}`}>
+                    Reference{" "}
+                    <span className="font-normal text-muted-foreground">(optional)</span>
+                  </Label>
+                  <Input
+                    id={`credit-reference-${line.key}`}
+                    value={line.reference}
+                    onChange={(event) =>
+                      updateLine(line.key, { reference: event.target.value })
+                    }
+                    placeholder="Consignment / con note"
+                  />
+                </div>
+
                 <div className="space-y-2 sm:col-span-2">
-                  <Label htmlFor={`credit-reason-${line.lineIndex}`}>Reason</Label>
+                  <Label htmlFor={`credit-reason-${line.key}`}>Reason</Label>
                   <Select
                     items={CREDIT_REASON_OPTIONS.map((option) => ({
                       label: option.label,
@@ -304,13 +267,13 @@ export function CreditRequestSheet({
                     value={line.reason || undefined}
                     onValueChange={(value) => {
                       if (!value) return;
-                      updateDraft(line.lineIndex, {
+                      updateLine(line.key, {
                         reason: value as CreditReasonCode,
                         reasonDetail: value === "OTHER" ? line.reasonDetail : "",
                       });
                     }}
                   >
-                    <SelectTrigger id={`credit-reason-${line.lineIndex}`} className="w-full">
+                    <SelectTrigger id={`credit-reason-${line.key}`} className="w-full">
                       <SelectValue placeholder="Select a reason" />
                     </SelectTrigger>
                     <SelectContent>
@@ -333,16 +296,16 @@ export function CreditRequestSheet({
 
                 {line.reason === "OTHER" ? (
                   <div className="space-y-2 sm:col-span-2">
-                    <Label htmlFor={`credit-reason-detail-${line.lineIndex}`}>
+                    <Label htmlFor={`credit-reason-detail-${line.key}`}>
                       Custom reason
                     </Label>
                     <Input
-                      id={`credit-reason-detail-${line.lineIndex}`}
+                      id={`credit-reason-detail-${line.key}`}
                       value={line.reasonDetail}
                       onChange={(event) =>
-                        updateDraft(line.lineIndex, { reasonDetail: event.target.value })
+                        updateLine(line.key, { reasonDetail: event.target.value })
                       }
-                      placeholder="Describe why this line should be credited"
+                      placeholder="Describe why this charge should be credited"
                     />
                   </div>
                 ) : null}
@@ -350,48 +313,12 @@ export function CreditRequestSheet({
             </section>
           ))}
 
-          <div className="space-y-3 rounded-xl border p-4">
-            <div className="flex items-start gap-2">
-              <Checkbox
-                id="credit-include-fuel"
-                checked={includeFuel}
-                onCheckedChange={(checked) => {
-                  const next = checked === true;
-                  setIncludeFuel(next);
-                  if (next && !fuelRateInput && fuelRate != null) {
-                    setFuelRateInput((fuelRate * 100).toFixed(2));
-                  }
-                }}
-              />
-              <div className="flex-1 space-y-1.5">
-                <Label htmlFor="credit-include-fuel">Include fuel surcharge</Label>
-                <p className="text-xs text-muted-foreground">
-                  {fuelRate == null
-                    ? "No fuel surcharge detected on this invoice — enter the levy manually."
-                    : `Invoice fuel levy detected at ${(fuelRate * 100).toFixed(2)}% — adjust if the carrier's rate differs.`}
-                </p>
-                {includeFuel ? (
-                  <div className="flex items-center gap-2">
-                    <Input
-                      id="credit-fuel-rate"
-                      inputMode="decimal"
-                      value={fuelRateInput}
-                      onChange={(event) => setFuelRateInput(event.target.value)}
-                      placeholder={fuelRate != null ? (fuelRate * 100).toFixed(2) : "e.g. 10.5"}
-                      aria-label="Fuel levy percentage"
-                      className="w-24"
-                    />
-                    <span className="text-xs text-muted-foreground">
-                      % fuel levy
-                      {fuelAmount != null
-                        ? ` adds ${formatCurrency(fuelAmount, currency)}.`
-                        : ""}
-                    </span>
-                  </div>
-                ) : null}
-              </div>
-            </div>
+          <Button type="button" variant="outline" size="sm" onClick={addLine}>
+            <PlusIcon data-icon="inline-start" />
+            Add credit line item
+          </Button>
 
+          <div className="space-y-3 rounded-xl border p-4">
             <div className="flex items-start gap-2">
               <Checkbox
                 id="credit-include-gst"
@@ -456,11 +383,7 @@ export function CreditRequestSheet({
           >
             Cancel
           </Button>
-          <Button
-            type="button"
-            onClick={() => void handleSubmit()}
-            disabled={loading || invalidSelection || drafts.length === 0}
-          >
+          <Button type="button" onClick={() => void handleSubmit()} disabled={loading}>
             {loading ? "Creating..." : "Create credit request"}
           </Button>
         </SheetFooter>

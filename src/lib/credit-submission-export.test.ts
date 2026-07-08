@@ -108,14 +108,11 @@ describe("credit submission export", () => {
     expect(rows[7]?.slice(0, 7)).toEqual(["", "", "", "Total", 100, 99.5, ""]);
   });
 
-  it("adds fuel surcharge and GST rows before the total", async () => {
+  it("adds a GST row before the total", async () => {
     const buffer = await buildCreditSubmissionXlsxBuffer({
-      fuelAmount: 15,
       gstAmount: 11.5,
       lineItems: [
         {
-          lineIndex: 0,
-          lineNumber: 1,
           description: "Freight",
           invoiceAmount: 100,
           requestedAmount: 100,
@@ -131,9 +128,9 @@ describe("credit submission export", () => {
       defval: "",
     });
 
-    expect(rows[6]?.slice(3, 6)).toEqual(["Fuel surcharge", "", 15]);
-    expect(rows[7]?.slice(3, 6)).toEqual(["GST", "", 11.5]);
-    expect(rows[9]?.slice(0, 7)).toEqual(["", "", "", "Total", 100, 126.5, ""]);
+    expect(rows[5]?.[0]).toBe(1);
+    expect(rows[6]?.slice(3, 6)).toEqual(["GST", "", 11.5]);
+    expect(rows[8]?.slice(0, 7)).toEqual(["", "", "", "Total", 100, 111.5, ""]);
   });
 
   it("applies carrier template colors to headers, rows, and totals", async () => {
