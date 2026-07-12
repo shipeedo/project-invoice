@@ -1,11 +1,12 @@
 "use client";
 
-import { PlayIcon, RotateCcwIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { PlayIcon, RotateCcwIcon, SearchIcon } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import {
   Table,
   TableBody,
@@ -14,6 +15,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { ProcessingJobSheet } from "@/components/processing-job-sheet";
 import type { ProcessingJobStatus } from "@/lib/db/types";
 import { formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -69,8 +71,24 @@ export function ProcessingQueueView({
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [openJobId, setOpenJobId] = useState<string | null>(null);
 
   const activeCount = counts.PENDING + counts.PROCESSING;
+
+  const visibleJobs = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    if (!normalized) return jobs;
+    return jobs.filter((job) =>
+      [
+        job.subject,
+        job.fromEmail,
+        job.status,
+        job.outcome?.replaceAll("_", " "),
+        job.lastError,
+      ].some((field) => field?.toLowerCase().includes(normalized)),
+    );
+  }, [jobs, query]);
 
   // Keep the view live while jobs are moving; idle queues refresh slowly so
   // an open tab still notices new arrivals.
@@ -141,10 +159,25 @@ export function ProcessingQueueView({
 
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
+      <div className="relative max-w-sm">
+        <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search by subject, sender, status, or outcome"
+          className="pl-8"
+          aria-label="Search processing jobs"
+        />
+      </div>
+
       {jobs.length === 0 ? (
         <p className="text-sm text-muted-foreground">
           No processing jobs yet. Jobs appear here when synced emails are queued
           for invoice extraction.
+        </p>
+      ) : visibleJobs.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          No jobs match &ldquo;{query}&rdquo;.
         </p>
       ) : (
         <div className="rounded-xl border">
@@ -161,8 +194,12 @@ export function ProcessingQueueView({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {jobs.map((job) => (
-                <TableRow key={job.id}>
+              {visibleJobs.map((job) => (
+                <TableRow
+                  key={job.id}
+                  className="cursor-pointer"
+                  onClick={() => setOpenJobId(job.id)}
+                >
                   <TableCell className="max-w-md">
                     <p className="truncate font-medium">{job.subject ?? "(no subject)"}</p>
                     <p className="truncate text-xs text-muted-foreground">
@@ -174,6 +211,7 @@ export function ProcessingQueueView({
                     {job.invoiceId ? (
                       <a
                         href={`/invoices/${job.invoiceId}`}
+                        onClick={(event) => event.stopPropagation()}
                         className="text-sm font-medium underline-offset-2 hover:underline"
                       >
                         {formatOutcome(job)}
@@ -198,7 +236,10 @@ export function ProcessingQueueView({
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => void retryJob(job.id)}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void retryJob(job.id);
+                        }}
                       >
                         <RotateCcwIcon data-icon="inline-start" />
                         Retry
@@ -211,6 +252,13 @@ export function ProcessingQueueView({
           </Table>
         </div>
       )}
+
+      <ProcessingJobSheet
+        jobId={openJobId}
+        onOpenChange={(open) => {
+          if (!open) setOpenJobId(null);
+        }}
+      />
     </div>
   );
 }
