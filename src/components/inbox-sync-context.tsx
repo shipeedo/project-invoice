@@ -66,8 +66,8 @@ function completionMessage(result: PollResult) {
     if (result.skipped > 0) {
       parts.push(`${result.skipped} already synced`);
     }
-    if (result.invoicesProcessed > 0) {
-      parts.push(`${result.invoicesProcessed} invoices processed`);
+    if (result.invoicesQueued > 0) {
+      parts.push(`${result.invoicesQueued} queued for invoice processing`);
     }
     const summary = `Sync complete — ${parts.join(", ")}.`;
     if (result.errors.length > 0) {

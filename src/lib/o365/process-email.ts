@@ -80,7 +80,7 @@ type ProcessEmailOptions = {
   attachments: EmailAttachmentInput[];
   emailBody?: EmailBodyContent;
   supplierHintId?: string | null;
-  triggeredBy?: "sync" | "manual" | "background";
+  triggeredBy?: "sync" | "manual" | "background" | "queue";
   mailboxMessageId?: string;
 };
 
@@ -355,7 +355,7 @@ async function ignoreInboundEmail(params: {
     | "duplicate_invoice";
   note?: string | null;
   duplicateInvoiceId?: string | null;
-  triggeredBy?: "sync" | "manual" | "background";
+  triggeredBy?: "sync" | "manual" | "background" | "queue";
 }) {
   await recordEmailProcessingOutcome({
     organizationId: params.organizationId,
@@ -661,7 +661,7 @@ export async function processEmailInvoice(params: {
   attachments: EmailAttachmentInput[];
   emailBody?: EmailBodyContent;
   supplierHintId?: string | null;
-  triggeredBy?: "sync" | "manual" | "background";
+  triggeredBy?: "sync" | "manual" | "background" | "queue";
   mailboxMessageId?: string;
 }) {
   const emailBody = params.emailBody ?? extractEmailBody(params.message);
@@ -687,9 +687,15 @@ export async function processEmailInvoice(params: {
   });
 }
 
-export async function processMailboxMessageInvoice(params: {
+/**
+ * Runs the invoice pipeline for a message already synced to the database,
+ * reading attachments from local uploads instead of Microsoft Graph. Manual
+ * triggers skip the classifier/statement gates; queued ones keep them.
+ */
+export async function processStoredMailboxMessage(params: {
   organizationId: string;
   messageId: string;
+  triggeredBy?: "sync" | "manual" | "background" | "queue";
 }) {
   const message = await db.query.mailboxMessages.findFirst({
     where: and(
@@ -742,9 +748,31 @@ export async function processMailboxMessageInvoice(params: {
       })),
     ),
     supplierHintId: message.supplierId,
-    triggeredBy: "manual",
+    triggeredBy: params.triggeredBy ?? "manual",
     mailboxMessageId: message.id,
   });
+
+  return { outcome };
+}
+
+export async function processMailboxMessageInvoice(params: {
+  organizationId: string;
+  messageId: string;
+}) {
+  const result = await processStoredMailboxMessage({
+    organizationId: params.organizationId,
+    messageId: params.messageId,
+    triggeredBy: "manual",
+  });
+
+  if (result.error) {
+    return { error: result.error, invoiceId: result.invoiceId };
+  }
+
+  const { outcome } = result;
+  if (!outcome) {
+    return { error: "Message not found" as const };
+  }
 
   if (outcome.skipped) {
     if (outcome.reason === "duplicate_invoice" && outcome.duplicateInvoiceId) {

@@ -340,6 +340,40 @@ export const mailboxMessageAttachments = sqliteTable("mailbox_message_attachment
   createdAt: timestamp(),
 });
 
+export const processingJobs = sqliteTable(
+  "processing_jobs",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    mailboxMessageId: text("mailbox_message_id")
+      .notNull()
+      .references(() => mailboxMessages.id, { onDelete: "cascade" }),
+    status: text("status", {
+      enum: ["PENDING", "PROCESSING", "COMPLETED", "FAILED"],
+    })
+      .notNull()
+      .default("PENDING"),
+    attempts: integer("attempts").notNull().default(0),
+    /** How the job finished: invoice_created or an ignore reason. */
+    outcome: text("outcome"),
+    lastError: text("last_error"),
+    invoiceId: text("invoice_id").references(() => invoices.id, {
+      onDelete: "set null",
+    }),
+    startedAt: integer("started_at", { mode: "timestamp_ms" }),
+    finishedAt: integer("finished_at", { mode: "timestamp_ms" }),
+    createdAt: timestamp(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    uniqueIndex("processing_jobs_message_unique").on(table.mailboxMessageId),
+  ],
+);
+
 export const emailContacts = sqliteTable(
   "email_contacts",
   {
@@ -582,6 +616,21 @@ export const mailboxMessagesRelations = relations(
   }),
 );
 
+export const processingJobsRelations = relations(processingJobs, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [processingJobs.organizationId],
+    references: [organizations.id],
+  }),
+  message: one(mailboxMessages, {
+    fields: [processingJobs.mailboxMessageId],
+    references: [mailboxMessages.id],
+  }),
+  invoice: one(invoices, {
+    fields: [processingJobs.invoiceId],
+    references: [invoices.id],
+  }),
+}));
+
 export const mailboxMessageAttachmentsRelations = relations(
   mailboxMessageAttachments,
   ({ one }) => ({
@@ -664,3 +713,4 @@ export type MailboxMessage = typeof mailboxMessages.$inferSelect;
 export type MailboxMessageAttachment = typeof mailboxMessageAttachments.$inferSelect;
 export type EmailContact = typeof emailContacts.$inferSelect;
 export type CreditRequest = typeof creditRequests.$inferSelect;
+export type ProcessingJob = typeof processingJobs.$inferSelect;

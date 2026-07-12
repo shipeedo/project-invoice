@@ -4,6 +4,7 @@ import {
   FileTextIcon,
   GalleryVerticalEndIcon,
   InboxIcon,
+  ListChecksIcon,
   MailIcon,
   ReceiptIcon,
   RouteIcon,
@@ -76,6 +77,17 @@ export function AppSidebar({ user, activePath, navCounts, ...props }: AppSidebar
       isActive: activePath === "/credits",
       badge: navCounts?.credits,
     },
+    ...(isAdmin
+      ? [
+          {
+            title: "Processing",
+            url: "/processing",
+            icon: <ListChecksIcon />,
+            isActive: activePath === "/processing",
+            badge: navCounts?.processing,
+          },
+        ]
+      : []),
   ];
 
   const adminProjects = isAdmin

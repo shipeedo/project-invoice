@@ -6,15 +6,12 @@ import {
   emailThreads,
   mailboxMessageAttachments,
   mailboxMessages,
-  processedO365Messages,
 } from "@/lib/db";
 import {
   applySupplierLinkToMessage,
   linkSupplierToThreadsAndMessages,
   resolveSupplierIdFromInboundMessage,
 } from "@/lib/email-contacts";
-import { emailHasProcessableInvoiceSource } from "@/lib/invoice-portals";
-import { countInvoiceLikeAttachments } from "@/lib/attachment-types";
 import { getValidAccessToken, updateO365Mailbox, resolveGraphMailboxUser } from "@/lib/o365/connection";
 import {
   downloadFileAttachment,
@@ -27,7 +24,10 @@ import {
   resolveGraphMailboxByAddress,
   type GraphMessage,
 } from "@/lib/o365/graph";
-import { processEmailInvoice } from "@/lib/o365/process-email";
+import {
+  enqueuePendingInboundMessages,
+  kickProcessingQueue,
+} from "@/lib/processing-queue";
 import type { SyncProgressEvent } from "@/lib/o365/sync-events";
 import { getUploadAbsolutePath, saveBufferToUploads } from "@/lib/uploads";
 
@@ -46,7 +46,8 @@ type SyncConnection = {
 export type SyncInboxResult = {
   organizationId: string;
   synced: number;
-  invoicesProcessed: number;
+  /** Messages handed to the processing queue this sync (not processed inline). */
+  invoicesQueued: number;
   skipped: number;
   errors: string[];
   /** True when the sync could not run at all (auth, mailbox, connection). */
@@ -363,94 +364,6 @@ export async function syncGraphMessage(params: {
   return { message: storedMessage, thread, isNew: true as const };
 }
 
-async function tryProcessInvoiceFromMessage(params: {
-  organizationId: string;
-  accessToken: string;
-  mailbox: string;
-  message: GraphMessage;
-  dbMessageId: string;
-  bodyHtml?: string | null;
-  bodyText?: string | null;
-  supplierHintId?: string | null;
-}) {
-  const attachments = [];
-  if (params.message.hasAttachments) {
-    const attachmentList = await listMessageAttachments({
-      accessToken: params.accessToken,
-      mailbox: params.mailbox,
-      messageId: params.message.id,
-    });
-
-    for (const attachment of attachmentList.value) {
-      if (!attachment.id || !attachment.name) continue;
-      const downloaded = await downloadFileAttachment({
-        accessToken: params.accessToken,
-        mailbox: params.mailbox,
-        messageId: params.message.id,
-        attachmentId: attachment.id,
-      });
-      attachments.push({
-        fileName: downloaded.name,
-        mimeType: downloaded.contentType,
-        size: downloaded.size,
-        buffer: downloaded.buffer,
-      });
-    }
-  }
-
-  return processEmailInvoice({
-    organizationId: params.organizationId,
-    message: params.message,
-    attachments,
-    emailBody: {
-      html: params.bodyHtml ?? null,
-      text: params.bodyText ?? null,
-    },
-    supplierHintId: params.supplierHintId,
-    triggeredBy: "sync",
-    mailboxMessageId: params.dbMessageId,
-  });
-}
-
-async function tryProcessStoredInboundMessage(params: {
-  organizationId: string;
-  accessToken: string;
-  mailbox: string;
-  message: {
-    id: string;
-    graphMessageId: string;
-    subject: string | null;
-    fromEmail: string | null;
-    fromName: string | null;
-    receivedAt: Date | null;
-    bodyHtml: string | null;
-    bodyText: string | null;
-    supplierId: string | null;
-    hasAttachments: boolean;
-  };
-}) {
-  const graphMessage: GraphMessage = {
-    id: params.message.graphMessageId,
-    subject: params.message.subject ?? undefined,
-    from: params.message.fromEmail
-      ? { emailAddress: { address: params.message.fromEmail, name: params.message.fromName ?? undefined } }
-      : undefined,
-    receivedDateTime: (params.message.receivedAt ?? new Date()).toISOString(),
-    hasAttachments: params.message.hasAttachments,
-  };
-
-  return tryProcessInvoiceFromMessage({
-    organizationId: params.organizationId,
-    accessToken: params.accessToken,
-    mailbox: params.mailbox,
-    message: graphMessage,
-    dbMessageId: params.message.id,
-    bodyHtml: params.message.bodyHtml,
-    bodyText: params.message.bodyText,
-    supplierHintId: params.message.supplierId,
-  });
-}
-
 async function backfillInboundMessageSuppliers(organizationId: string) {
   const messages = await db.query.mailboxMessages.findMany({
     where: and(
@@ -478,65 +391,6 @@ async function backfillInboundMessageSuppliers(organizationId: string) {
   }
 }
 
-async function processPendingInboundInvoices(params: {
-  organizationId: string;
-  accessToken: string;
-  mailbox: string;
-}) {
-  const pendingMessages = await db.query.mailboxMessages.findMany({
-    where: and(
-      eq(mailboxMessages.organizationId, params.organizationId),
-      eq(mailboxMessages.direction, "INBOUND"),
-      isNull(mailboxMessages.invoiceId),
-    ),
-  });
-
-  let processed = 0;
-
-  for (const message of pendingMessages) {
-    const alreadyProcessed = await db.query.processedO365Messages.findFirst({
-      where: and(
-        eq(processedO365Messages.organizationId, params.organizationId),
-        eq(processedO365Messages.messageId, message.graphMessageId),
-      ),
-    });
-    if (alreadyProcessed) continue;
-
-    const fileAttachments = message.hasAttachments
-      ? (
-          await db.query.mailboxMessageAttachments.findMany({
-            where: eq(mailboxMessageAttachments.messageId, message.id),
-          })
-        ).filter((attachment) => !attachment.isInline)
-      : [];
-
-    if (
-      !emailHasProcessableInvoiceSource({
-        attachmentCount: countInvoiceLikeAttachments(fileAttachments),
-        attachmentFileNames: fileAttachments.map((attachment) => attachment.fileName),
-        subject: message.subject,
-        bodyHtml: message.bodyHtml,
-        bodyText: message.bodyText,
-      })
-    ) {
-      continue;
-    }
-
-    const outcome = await tryProcessStoredInboundMessage({
-      organizationId: params.organizationId,
-      accessToken: params.accessToken,
-      mailbox: params.mailbox,
-      message,
-    });
-
-    if (!outcome.skipped) {
-      processed += 1;
-    }
-  }
-
-  return processed;
-}
-
 export async function syncOrganizationInbox(
   connection: SyncConnection,
   options?: { onProgress?: (event: SyncProgressEvent) => void },
@@ -545,7 +399,7 @@ export async function syncOrganizationInbox(
   const result: SyncInboxResult = {
     organizationId: connection.organizationId,
     synced: 0,
-    invoicesProcessed: 0,
+    invoicesQueued: 0,
     skipped: 0,
     errors: [],
     fatal: false,
@@ -634,26 +488,6 @@ export async function syncOrganizationInbox(
         } else {
           result.skipped += 1;
         }
-
-        if (
-          !isOutboundFromMailbox(summary, connection.selectedMailboxUpn) &&
-          (synced.isNew || !synced.message.invoiceId)
-        ) {
-          const invoiceOutcome = await tryProcessInvoiceFromMessage({
-            organizationId: connection.organizationId,
-            accessToken,
-            mailbox: graphMailbox!,
-            message: summary,
-            dbMessageId: synced.message.id,
-            bodyHtml: synced.message.bodyHtml,
-            bodyText: synced.message.bodyText,
-            supplierHintId: synced.message.supplierId ?? synced.thread.supplierId,
-          });
-
-          if (!invoiceOutcome.skipped) {
-            result.invoicesProcessed += 1;
-          }
-        }
       } catch (error) {
         result.errors.push(
           error instanceof Error ? error.message : "Failed to sync message",
@@ -676,20 +510,17 @@ export async function syncOrganizationInbox(
     }
 
     try {
-      report?.({ type: "status", message: "Processing pending invoice emails…" });
-      const accessToken = await getValidAccessToken(connection);
-      const graphMailbox = resolveGraphMailboxUser(connection);
-      if (graphMailbox) {
-        const pendingProcessed = await processPendingInboundInvoices({
-          organizationId: connection.organizationId,
-          accessToken,
-          mailbox: graphMailbox,
-        });
-        result.invoicesProcessed += pendingProcessed;
-      }
+      report?.({ type: "status", message: "Queueing invoice emails for processing…" });
+      // Processing runs through the queue (LLM classification + extraction),
+      // never inline — a burst of inbound mail must not fan out into a burst
+      // of AI calls.
+      result.invoicesQueued = await enqueuePendingInboundMessages(
+        connection.organizationId,
+      );
+      kickProcessingQueue();
     } catch (error) {
       result.errors.push(
-        error instanceof Error ? error.message : "Pending invoice processing failed",
+        error instanceof Error ? error.message : "Queueing invoice emails failed",
       );
     }
   }

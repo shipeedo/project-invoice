@@ -40,3 +40,11 @@ export type CarrierDecision = (typeof carrierDecisions)[number];
 
 export const mailboxMessageDirections = ["INBOUND", "OUTBOUND"] as const;
 export type MailboxMessageDirection = (typeof mailboxMessageDirections)[number];
+
+export const processingJobStatuses = [
+  "PENDING",
+  "PROCESSING",
+  "COMPLETED",
+  "FAILED",
+] as const;
+export type ProcessingJobStatus = (typeof processingJobStatuses)[number];

@@ -8,14 +8,14 @@ import { syncOrganizationInbox, type SyncInboxResult } from "@/lib/o365/sync-inb
 import type { SyncProgressEvent } from "@/lib/o365/sync-events";
 
 export type PollResult = SyncInboxResult & {
-  processed: number;
+  queued: number;
   pollSkipped?: boolean;
 };
 
 function toPollResult(sync: SyncInboxResult, pollSkipped = false): PollResult {
   return {
     ...sync,
-    processed: sync.invoicesProcessed,
+    queued: sync.invoicesQueued,
     pollSkipped,
   };
 }
@@ -79,7 +79,7 @@ export async function pollAllO365Mailboxes(options?: {
     return [toPollResult({
       organizationId: "all",
       synced: 0,
-      invoicesProcessed: 0,
+      invoicesQueued: 0,
       skipped: 0,
       errors: ["Mailbox sync already in progress"],
       fatal: false,
@@ -119,8 +119,8 @@ export async function pollOrganizationMailbox(
     return {
       organizationId,
       synced: 0,
-      invoicesProcessed: 0,
-      processed: 0,
+      invoicesQueued: 0,
+      queued: 0,
       skipped: 0,
       errors: ["Mailbox sync already in progress"],
       fatal: false,
@@ -137,8 +137,8 @@ export async function pollOrganizationMailbox(
     return {
       organizationId,
       synced: 0,
-      invoicesProcessed: 0,
-      processed: 0,
+      invoicesQueued: 0,
+      queued: 0,
       skipped: 0,
       errors: ["O365 is not connected"],
       fatal: true,

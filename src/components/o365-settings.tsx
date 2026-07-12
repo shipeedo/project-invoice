@@ -386,8 +386,7 @@ export function O365Settings({
       const data = (await response.json()) as {
         synced?: number;
         skipped?: number;
-        invoicesProcessed?: number;
-        processed?: number;
+        invoicesQueued?: number;
         errors?: string[];
         error?: string;
       };
@@ -396,7 +395,7 @@ export function O365Settings({
       }
       setMessage(
         (data.synced ?? 0) > 0 || (data.skipped ?? 0) > 0
-          ? `Sync complete — imported ${data.synced ?? 0} new emails${(data.skipped ?? 0) > 0 ? ` (${data.skipped} already synced)` : ""}, processed ${data.invoicesProcessed ?? 0} invoices.`
+          ? `Sync complete — imported ${data.synced ?? 0} new emails${(data.skipped ?? 0) > 0 ? ` (${data.skipped} already synced)` : ""}, queued ${data.invoicesQueued ?? 0} for invoice processing.`
           : "Sync complete — no new emails found in the latest batch.",
       );
       if (data.errors?.length) {

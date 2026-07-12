@@ -20,7 +20,7 @@ export async function recordEmailProcessingOutcome(params: {
   note?: string | null;
   invoiceId?: string | null;
   duplicateInvoiceId?: string | null;
-  triggeredBy?: "sync" | "manual" | "background";
+  triggeredBy?: "sync" | "manual" | "background" | "queue";
 }) {
   const existing = await db.query.processedO365Messages.findFirst({
     where: and(

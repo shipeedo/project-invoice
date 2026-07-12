@@ -8,6 +8,7 @@ describe("nav counts", () => {
       inbox: 0,
       trash: 0,
       credits: 0,
+      processing: 0,
     });
   });
 });
