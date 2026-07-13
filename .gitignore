@@ -14,7 +14,6 @@ build/
 .next/
 out/
 uploads/
-drizzle/meta/
 *.db
 *.db-journal
 __pycache__/
