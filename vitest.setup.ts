@@ -11,3 +11,5 @@ const { migrate } = await import("drizzle-orm/better-sqlite3/migrator");
 const { db } = await import("@/lib/db");
 
 migrate(db, { migrationsFolder: "./drizzle" });
+
+export {};
