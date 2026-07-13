@@ -13,7 +13,7 @@ export default async function InboxRouteLayout({
   const [threads, connection, navCounts] = await Promise.all([
     loadInboxThreads(session.user.organizationId),
     loadInboxConnection(session.user.organizationId),
-    getNavCounts(session.user.organizationId),
+    getNavCounts(session.user.organizationId, session.user.id),
   ]);
 
   const canSync =

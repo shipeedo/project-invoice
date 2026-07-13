@@ -25,7 +25,7 @@ export default async function CreditsPage() {
       },
       orderBy: desc(creditRequests.createdAt),
     }),
-    getNavCounts(session.user.organizationId),
+    getNavCounts(session.user.organizationId, session.user.id),
   ]);
 
   const serialized = rows.map((request) => ({

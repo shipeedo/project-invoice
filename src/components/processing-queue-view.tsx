@@ -1,10 +1,9 @@
 "use client";
 
-import { PlayIcon, RotateCcwIcon, SearchIcon } from "lucide-react";
+import { SearchIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
@@ -37,7 +36,6 @@ export type ProcessingQueueJob = {
 type ProcessingQueueViewProps = {
   jobs: ProcessingQueueJob[];
   counts: Record<ProcessingJobStatus, number>;
-  concurrency: number;
 };
 
 const REFRESH_INTERVAL_MS = 5_000;
@@ -66,11 +64,8 @@ function formatOutcome(job: ProcessingQueueJob) {
 export function ProcessingQueueView({
   jobs,
   counts,
-  concurrency,
 }: ProcessingQueueViewProps) {
   const router = useRouter();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [openJobId, setOpenJobId] = useState<string | null>(null);
 
@@ -100,32 +95,6 @@ export function ProcessingQueueView({
     return () => clearInterval(interval);
   }, [router, activeCount]);
 
-  async function processNow() {
-    setBusy(true);
-    setError(null);
-    const response = await fetch("/api/processing-queue/run", { method: "POST" });
-    setBusy(false);
-    if (!response.ok) {
-      const body = (await response.json().catch(() => null)) as { error?: string } | null;
-      setError(body?.error ?? "Failed to start queue run");
-      return;
-    }
-    router.refresh();
-  }
-
-  async function retryJob(jobId: string) {
-    setError(null);
-    const response = await fetch(`/api/processing-queue/jobs/${jobId}/retry`, {
-      method: "POST",
-    });
-    if (!response.ok) {
-      const body = (await response.json().catch(() => null)) as { error?: string } | null;
-      setError(body?.error ?? "Failed to retry job");
-      return;
-    }
-    router.refresh();
-  }
-
   const summaryTiles: Array<{ label: string; value: number }> = [
     { label: "Pending", value: counts.PENDING },
     { label: "Processing", value: counts.PROCESSING },
@@ -135,29 +104,16 @@ export function ProcessingQueueView({
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {summaryTiles.map((tile) => (
-            <Card key={tile.label} className="py-3">
-              <CardContent className="px-4">
-                <p className="text-xs text-muted-foreground">{tile.label}</p>
-                <p className="text-2xl font-semibold">{tile.value}</p>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-        <div className="flex flex-col items-end gap-1.5">
-          <Button onClick={() => void processNow()} disabled={busy || activeCount === 0}>
-            <PlayIcon data-icon="inline-start" />
-            {busy ? "Processing…" : "Process now"}
-          </Button>
-          <p className="text-xs text-muted-foreground">
-            Concurrency: {concurrency} job{concurrency === 1 ? "" : "s"} at a time
-          </p>
-        </div>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {summaryTiles.map((tile) => (
+          <Card key={tile.label} className="py-3">
+            <CardContent className="px-4">
+              <p className="text-xs text-muted-foreground">{tile.label}</p>
+              <p className="text-2xl font-semibold">{tile.value}</p>
+            </CardContent>
+          </Card>
+        ))}
       </div>
-
-      {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
       <div className="relative max-w-sm">
         <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -190,7 +146,6 @@ export function ProcessingQueueView({
                 <TableHead>Attempts</TableHead>
                 <TableHead>Queued</TableHead>
                 <TableHead>Finished</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -231,21 +186,6 @@ export function ProcessingQueueView({
                   <TableCell>{job.attempts}</TableCell>
                   <TableCell>{formatDate(job.createdAt)}</TableCell>
                   <TableCell>{job.finishedAt ? formatDate(job.finishedAt) : "—"}</TableCell>
-                  <TableCell className="text-right">
-                    {job.status === "FAILED" ? (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          void retryJob(job.id);
-                        }}
-                      >
-                        <RotateCcwIcon data-icon="inline-start" />
-                        Retry
-                      </Button>
-                    ) : null}
-                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>

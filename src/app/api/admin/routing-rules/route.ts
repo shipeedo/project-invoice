@@ -37,7 +37,7 @@ export async function POST(request: Request) {
   const body = (await request.json()) as {
     name: string;
     priority: number;
-    type: "SENDER_EMAIL" | "AMOUNT_THRESHOLD" | "PARSE_FAILURE" | "DEFAULT";
+    type: "SUPPLIER" | "SENDER_EMAIL" | "AMOUNT_THRESHOLD" | "PARSE_FAILURE" | "DEFAULT";
     condition: Record<string, unknown>;
     approverId?: string;
     isDefault?: boolean;

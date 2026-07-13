@@ -5,6 +5,7 @@ import { InvoiceCreditsSection } from "@/components/invoice-credits-section";
 import { InvoiceAttachmentPreviews } from "@/components/invoice-attachment-previews";
 import { InvoiceSourceAttachments } from "@/components/invoice-source-attachments";
 import { InvoiceSourceEmailSheet } from "@/components/invoice-source-email-sheet";
+import { InvoiceAssigneeControl } from "@/components/invoice-assignee-control";
 import { InvoiceHeaderActions } from "@/components/invoice-header-actions";
 import { InvoiceReprocessButton } from "@/components/invoice-reprocess-button";
 import { InvoiceTrashActions } from "@/components/invoice-trash-actions";
@@ -23,6 +24,7 @@ import {
   suppliers,
   users,
 } from "@/lib/db";
+import { recordInvoiceView } from "@/lib/audit";
 import { describeAuditEvent } from "@/lib/audit-log";
 import { resolveInvoiceSourceEmail } from "@/lib/invoice-source-email";
 import { isExtractionPending } from "@/lib/invoice-status";
@@ -96,7 +98,7 @@ function getSourceAttachments(invoice: {
 export default async function InvoiceDetailPage({ params }: PageProps) {
   const session = await requireSession();
   const { id } = await params;
-  const navCountsPromise = getNavCounts(session.user.organizationId);
+  const navCountsPromise = getNavCounts(session.user.organizationId, session.user.id);
 
   const invoice = await db.query.invoices.findFirst({
     where: and(
@@ -126,6 +128,8 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
   }
 
   const inTrash = isInvoiceDeleted(invoice);
+
+  await recordInvoiceView({ invoiceId: invoice.id, userId: session.user.id });
 
   const supplierOptions = await db.query.suppliers.findMany({
     where: eq(suppliers.organizationId, session.user.organizationId),
@@ -288,6 +292,17 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
               />
             ) : (
               <>
+                <InvoiceAssigneeControl
+                  invoiceId={invoice.id}
+                  assignedToId={invoice.assignedToId}
+                  assignedToName={
+                    invoice.assignedTo
+                      ? (invoice.assignedTo.name ?? invoice.assignedTo.email)
+                      : null
+                  }
+                  currentUserId={session.user.id}
+                  status={invoice.status}
+                />
                 {invoice.status === "DRAFT" ? (
                   <InvoiceReprocessButton
                     invoiceId={invoice.id}
@@ -381,6 +396,7 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
             supplierId={invoice.supplierId}
             supplierName={invoice.supplier?.name ?? null}
             suppliers={supplierOptions}
+            canExtractSupplier={sourceMessage != null}
             sourceSlot={
               <>
                 {sourceCard}

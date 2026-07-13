@@ -53,6 +53,9 @@ export async function POST(_request: Request, context: RouteContext) {
       onHoldAt: null,
       onHoldById: null,
       onHoldReason: null,
+      // Give the assignee a fresh escalation window — the hold time was
+      // deliberate, not idle time.
+      assignedAt: invoice.assignedToId ? new Date() : invoice.assignedAt,
       updatedAt: new Date(),
     })
     .where(eq(invoices.id, id))

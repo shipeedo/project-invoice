@@ -15,6 +15,7 @@ export const invoiceSourceTypes = ["UPLOAD", "EMAIL"] as const;
 export type InvoiceSourceType = (typeof invoiceSourceTypes)[number];
 
 export const routingRuleTypes = [
+  "SUPPLIER",
   "SENDER_EMAIL",
   "AMOUNT_THRESHOLD",
   "PARSE_FAILURE",
@@ -48,3 +49,10 @@ export const processingJobStatuses = [
   "FAILED",
 ] as const;
 export type ProcessingJobStatus = (typeof processingJobStatuses)[number];
+
+export const notificationTypes = [
+  "INVOICE_ASSIGNED",
+  "INVOICE_REMINDER",
+  "TEST",
+] as const;
+export type NotificationType = (typeof notificationTypes)[number];

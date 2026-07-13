@@ -6,6 +6,7 @@ import {
   getRespondByDate,
   isUrgentInvoice,
   matchesInvoiceSearch,
+  matchesUrgencyFilter,
   needsMyUrgentAttention,
   nextBusinessDay,
 } from "@/lib/invoice-deadlines";
@@ -118,6 +119,21 @@ describe("urgency helpers", () => {
     // The same overdue due date on an unhandled invoice still alerts.
     const pending = { ...handled, status: "PENDING_APPROVAL" as const };
     expect(isUrgentInvoice(pending, now)).toBe(true);
+  });
+
+  it("matches the due_tomorrow filter only when a deadline falls tomorrow", () => {
+    const base = {
+      id: "inv-3",
+      status: "PENDING_APPROVAL" as const,
+      createdAt: new Date(2026, 5, 20),
+      validatedAt: new Date(2026, 5, 20),
+      assignedToId: "user-1",
+    };
+    const dueTomorrow = { ...base, dueDate: new Date(2026, 6, 4) };
+    const dueLater = { ...base, dueDate: new Date(2026, 6, 20) };
+
+    expect(matchesUrgencyFilter(dueTomorrow, "due_tomorrow", "user-1", now)).toBe(true);
+    expect(matchesUrgencyFilter(dueLater, "due_tomorrow", "user-1", now)).toBe(false);
   });
 });
 

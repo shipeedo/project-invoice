@@ -5,7 +5,7 @@ import { requireSession } from "@/lib/session";
 
 export default async function UploadPage() {
   const session = await requireSession();
-  const navCounts = await getNavCounts(session.user.organizationId);
+  const navCounts = await getNavCounts(session.user.organizationId, session.user.id);
 
   return (
     <AppShell

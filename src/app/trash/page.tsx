@@ -35,7 +35,7 @@ export default async function TrashPage() {
       },
       orderBy: desc(invoices.deletedAt),
     }),
-    getNavCounts(session.user.organizationId),
+    getNavCounts(session.user.organizationId, session.user.id),
   ]);
 
   return (

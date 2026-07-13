@@ -1,7 +1,8 @@
 "use client";
 
-import { PlusIcon, SearchIcon } from "lucide-react";
-import { useState } from "react";
+import { BellIcon, BellOffIcon, PlusIcon, SearchIcon } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -37,9 +38,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { UserRole } from "@/lib/db/types";
 import { userRoles } from "@/lib/db/types";
-import { formatDate } from "@/lib/format";
+import { formatDate, formatRelativeTime, isWithinLast } from "@/lib/format";
 
 type ProductUser = {
   id: string;
@@ -47,6 +49,8 @@ type ProductUser = {
   email: string;
   role: UserRole;
   createdAt: string | Date;
+  pushEnabled?: boolean;
+  lastNotificationCheckAt?: string | Date | null;
 };
 
 type DirectoryUser = {
@@ -81,10 +85,46 @@ function sortByName(list: ProductUser[]) {
   );
 }
 
+const ACTIVE_WINDOW_MS = 2 * 60_000;
+const ACTIVITY_REFRESH_MS = 60_000;
+
+function ActivityIndicator({ lastSeen }: { lastSeen: string | Date | null }) {
+  if (!lastSeen) {
+    return <span className="text-sm text-muted-foreground">Never</span>;
+  }
+  const lastSeenDate = new Date(lastSeen);
+  const isActive = isWithinLast(lastSeenDate, ACTIVE_WINDOW_MS);
+  return (
+    <span className="flex items-center gap-2 text-sm">
+      <span
+        className={`size-2 shrink-0 rounded-full ${isActive ? "bg-emerald-500" : "bg-muted-foreground/40"}`}
+      />
+      {isActive ? "Active now" : `Last active ${formatRelativeTime(lastSeenDate)}`}
+    </span>
+  );
+}
+
 export function UsersManager({ initialUsers, currentUserId }: UsersManagerProps) {
+  const router = useRouter();
   const [users, setUsers] = useState<ProductUser[]>(initialUsers);
   const [error, setError] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
+  const [testingId, setTestingId] = useState<string | null>(null);
+  const [testResults, setTestResults] = useState<Record<string, string>>({});
+
+  // Keep the activity/notification columns fresh: re-render the server page
+  // periodically and re-sync local state when it delivers new data. Safe to
+  // clobber because every mutation round-trips through the server first.
+  const [prevInitialUsers, setPrevInitialUsers] = useState(initialUsers);
+  if (prevInitialUsers !== initialUsers) {
+    setPrevInitialUsers(initialUsers);
+    setUsers(sortByName(initialUsers));
+  }
+
+  useEffect(() => {
+    const interval = setInterval(() => router.refresh(), ACTIVITY_REFRESH_MS);
+    return () => clearInterval(interval);
+  }, [router]);
 
   const [sheetOpen, setSheetOpen] = useState(false);
   const [addRole, setAddRole] = useState<UserRole>("APPROVER");
@@ -168,6 +208,45 @@ export function UsersManager({ initialUsers, currentUserId }: UsersManagerProps)
     }
   }
 
+  async function sendTestNotification(user: ProductUser) {
+    setTestingId(user.id);
+    setTestResults((current) => ({ ...current, [user.id]: "" }));
+    try {
+      const response = await fetch(
+        `/api/admin/users/${user.id}/test-notification`,
+        { method: "POST" },
+      );
+      const body = (await response.json().catch(() => null)) as {
+        error?: string;
+        delivery?: {
+          subscriptions: number;
+          delivered: number;
+          pruned: number;
+          failed: number;
+        };
+      } | null;
+
+      if (!response.ok || !body?.delivery) {
+        setTestResults((current) => ({
+          ...current,
+          [user.id]: body?.error ?? "Could not send the test notification.",
+        }));
+        return;
+      }
+
+      const { subscriptions, delivered } = body.delivery;
+      const message =
+        subscriptions === 0
+          ? "In-app only — no push devices enrolled"
+          : delivered > 0
+            ? `Push sent to ${delivered} of ${subscriptions} device${subscriptions === 1 ? "" : "s"}`
+            : `Push failed on all ${subscriptions} device${subscriptions === 1 ? "" : "s"}`;
+      setTestResults((current) => ({ ...current, [user.id]: message }));
+    } finally {
+      setTestingId(null);
+    }
+  }
+
   async function removeUser(user: ProductUser) {
     if (
       !window.confirm(
@@ -225,6 +304,8 @@ export function UsersManager({ initialUsers, currentUserId }: UsersManagerProps)
                 <TableHead>Name</TableHead>
                 <TableHead>Email</TableHead>
                 <TableHead>Role</TableHead>
+                <TableHead>Notifications</TableHead>
+                <TableHead>Activity</TableHead>
                 <TableHead>Added</TableHead>
                 <TableHead className="w-[100px]" />
               </TableRow>
@@ -232,7 +313,7 @@ export function UsersManager({ initialUsers, currentUserId }: UsersManagerProps)
             <TableBody>
               {users.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-muted-foreground">
+                  <TableCell colSpan={7} className="text-muted-foreground">
                     No users have access yet.
                   </TableCell>
                 </TableRow>
@@ -248,6 +329,53 @@ export function UsersManager({ initialUsers, currentUserId }: UsersManagerProps)
                     <TableCell>{user.email}</TableCell>
                     <TableCell>
                       <Badge variant="secondary">{ROLE_LABELS[user.role]}</Badge>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <span
+                                aria-label={
+                                  user.pushEnabled
+                                    ? "Browser notifications enabled"
+                                    : "Browser notifications not enabled"
+                                }
+                              />
+                            }
+                          >
+                            {user.pushEnabled ? (
+                              <BellIcon className="size-4 text-foreground" />
+                            ) : (
+                              <BellOffIcon className="size-4 text-muted-foreground/50" />
+                            )}
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {user.pushEnabled
+                              ? "Browser notifications enabled"
+                              : "Browser notifications not enabled"}
+                          </TooltipContent>
+                        </Tooltip>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          disabled={testingId !== null}
+                          onClick={() => void sendTestNotification(user)}
+                        >
+                          {testingId === user.id ? "Sending..." : "Send test"}
+                        </Button>
+                      </div>
+                      {testResults[user.id] ? (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {testResults[user.id]}
+                        </p>
+                      ) : null}
+                    </TableCell>
+                    <TableCell>
+                      <ActivityIndicator
+                        lastSeen={user.lastNotificationCheckAt ?? null}
+                      />
                     </TableCell>
                     <TableCell>{formatDate(user.createdAt)}</TableCell>
                     <TableCell className="text-right">

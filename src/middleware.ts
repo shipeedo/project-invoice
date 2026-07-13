@@ -24,5 +24,10 @@ export default middlewareAuth((req) => {
 });
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  // sw.js, the manifest, and icons are excluded so the browser can always
+  // fetch them anonymously (SW updates and manifest requests don't carry
+  // auth) without being bounced to the login page.
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|sw.js|manifest.webmanifest|icons/).*)",
+  ],
 };

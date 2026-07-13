@@ -14,7 +14,7 @@ export default async function O365SettingsPage({ searchParams }: PageProps) {
   const params = await searchParams;
   const [connection, navCounts] = await Promise.all([
     getO365Connection(session.user.organizationId),
-    getNavCounts(session.user.organizationId),
+    getNavCounts(session.user.organizationId, session.user.id),
   ]);
 
   let initialMailboxes: Array<{
@@ -51,7 +51,11 @@ export default async function O365SettingsPage({ searchParams }: PageProps) {
       user={session.user}
       activePath="/admin/o365"
       navCounts={navCounts}
-      breadcrumbs={[{ label: "Admin" }, { label: "Office 365" }]}
+      breadcrumbs={[
+        { label: "Admin" },
+        { label: "Connections", href: "/admin/connections" },
+        { label: "Office 365" },
+      ]}
     >
       <div className="space-y-4">
         <div>

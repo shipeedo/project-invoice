@@ -131,6 +131,8 @@ export function describeAuditEvent(
     }
     case "invoice.extracted":
       return { label: "Invoice data extracted", description: null };
+    case "invoice.viewed":
+      return { label: "Invoice viewed", description: null };
     case "invoice.reprocessed": {
       const parseError = asString(details.parseError);
       const sourceType = asString(details.sourceType);
@@ -180,6 +182,40 @@ export function describeAuditEvent(
       return {
         label: "Routed for approval",
         description: assignee ? `Assigned to ${assignee}` : null,
+      };
+    }
+    case "invoice.assigned": {
+      const assignee = asString(details.assignedToEmail);
+      return {
+        label: "Assignee changed",
+        description: assignee ? `Assigned to ${assignee}` : "Assignment removed",
+      };
+    }
+    case "notification.sent": {
+      const recipient = asString(details.recipientEmail);
+      const type = asString(details.type);
+      return {
+        label: "Notification sent",
+        description: recipient
+          ? `Notified ${recipient}${type ? ` (${statusLabel(type)})` : ""}`
+          : null,
+      };
+    }
+    case "notification.reminder_sent": {
+      const recipient = asString(details.recipientEmail);
+      return {
+        label: "Reminder sent",
+        description: withNote(
+          recipient ? `Reminder sent to ${recipient}` : null,
+          details,
+        ),
+      };
+    }
+    case "notification.test_sent": {
+      const recipient = asString(details.recipientEmail);
+      return {
+        label: "Test notification sent",
+        description: recipient ? `Test sent to ${recipient}` : null,
       };
     }
     case "invoice.approved": {

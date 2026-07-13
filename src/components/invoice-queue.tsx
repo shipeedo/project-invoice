@@ -85,7 +85,7 @@ function supplierLabel(invoice: InvoiceQueueRow) {
     invoice.supplier?.name ??
     invoice.vendorName ??
     invoice.originalFileName ??
-    "Unknown vendor"
+    "Unknown supplier"
   );
 }
 
@@ -120,6 +120,7 @@ const URGENCY_FILTER_VALUES: UrgencyFilter[] = [
   "all",
   "needs_my_attention",
   "overdue",
+  "due_tomorrow",
   "nearing_respond",
   "nearing_due",
 ];
@@ -128,6 +129,7 @@ const URGENCY_LABELS: Record<UrgencyFilter, string> = {
   all: "All invoices",
   needs_my_attention: "Needs my attention",
   overdue: "Overdue",
+  due_tomorrow: "Due tomorrow",
   nearing_respond: "Nearing respond-by",
   nearing_due: "Nearing due date",
 };
@@ -437,10 +439,10 @@ export function InvoiceQueue({
               {urgentForMe.slice(0, 3).map((invoice) => (
                 <Button
                   key={invoice.id}
-                  type="button"
                   size="sm"
                   variant="ghost"
                   className="h-auto px-2 py-1 text-destructive"
+                  nativeButton={false}
                   render={<Link href={`/invoices/${invoice.id}`} />}
                 >
                   {supplierLabel(invoice)}

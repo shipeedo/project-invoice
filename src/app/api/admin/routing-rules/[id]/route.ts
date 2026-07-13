@@ -21,7 +21,7 @@ export async function PATCH(request: Request, context: RouteContext) {
   const body = (await request.json()) as {
     name?: string;
     priority?: number;
-    type?: "SENDER_EMAIL" | "AMOUNT_THRESHOLD" | "PARSE_FAILURE" | "DEFAULT";
+    type?: "SUPPLIER" | "SENDER_EMAIL" | "AMOUNT_THRESHOLD" | "PARSE_FAILURE" | "DEFAULT";
     condition?: Record<string, unknown>;
     approverId?: string | null;
     enabled?: boolean;

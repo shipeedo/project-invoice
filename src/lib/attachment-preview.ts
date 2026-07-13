@@ -4,7 +4,9 @@ import { classifyAttachment } from "@/lib/attachment-types";
 import { getUploadAbsolutePath } from "@/lib/uploads";
 
 const MAX_PREVIEW_ROWS = 200;
-const MAX_PREVIEW_COLUMNS = 20;
+// Generous bound: real invoice exports run 30-40 columns; this only guards
+// against degenerate files (xlsx allows 16k columns).
+const MAX_PREVIEW_COLUMNS = 100;
 
 export type SpreadsheetPreviewSheet = {
   name: string;

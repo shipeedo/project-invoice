@@ -1,10 +1,15 @@
 "use client";
 
-import { PlusIcon, Wand2Icon } from "lucide-react";
+import { PlusIcon, SparklesIcon, TriangleAlertIcon, Wand2Icon } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  SupplierCandidateCard,
+  type SupplierCandidate,
+} from "@/components/supplier-candidate";
 import {
   Card,
   CardContent,
@@ -53,6 +58,8 @@ type InvoiceValidationPanelProps = {
   supplierId: string | null;
   supplierName: string | null;
   suppliers: SupplierOption[];
+  /** Whether the invoice has a source email thread the AI can read. */
+  canExtractSupplier?: boolean;
   /** Inline document previews rendered beside the fields being confirmed. */
   sourceSlot?: React.ReactNode;
 };
@@ -63,9 +70,12 @@ type FieldConfig = {
   type: "text" | "date" | "number";
 };
 
-const FIELD_CONFIG: FieldConfig[] = [
-  { key: "vendorName", label: "Supplier", type: "text" },
+const SUPPLIER_FIELDS: FieldConfig[] = [
+  { key: "vendorName", label: "Supplier name", type: "text" },
   { key: "vendorEmail", label: "Supplier email", type: "text" },
+];
+
+const INVOICE_FIELDS: FieldConfig[] = [
   { key: "invoiceNumber", label: "Invoice no.", type: "text" },
   { key: "invoiceDate", label: "Invoice date", type: "date" },
   { key: "dueDate", label: "Due date", type: "date" },
@@ -75,6 +85,33 @@ const FIELD_CONFIG: FieldConfig[] = [
   { key: "totalAmount", label: "Total", type: "number" },
   { key: "currency", label: "Currency", type: "text" },
 ];
+
+/** Invoicing platforms whose "from" address is not the supplier's own inbox. */
+const PLATFORM_EMAIL_LABELS: Record<string, string> = {
+  xero: "Xero",
+  myob: "MYOB",
+};
+
+/** Returns the platform name (e.g. "Xero") when an email is sent via an
+ * invoicing platform rather than the supplier's own domain. */
+function detectPlatformEmail(email: string): string | null {
+  const at = email.indexOf("@");
+  if (at === -1) return null;
+  const domain = email.slice(at + 1).trim().toLowerCase();
+  if (!domain) return null;
+  for (const label of domain.split(".")) {
+    if (PLATFORM_EMAIL_LABELS[label]) return PLATFORM_EMAIL_LABELS[label];
+  }
+  return null;
+}
+
+function SectionHeading({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+      {children}
+    </p>
+  );
+}
 
 type SupplierFeaturedOptionProps = {
   icon: React.ReactNode;
@@ -151,6 +188,7 @@ export function InvoiceValidationPanel({
   supplierId: initialSupplierId,
   supplierName,
   suppliers,
+  canExtractSupplier = false,
   sourceSlot,
 }: InvoiceValidationPanelProps) {
   const router = useRouter();
@@ -159,6 +197,13 @@ export function InvoiceValidationPanel({
   const [createSupplier, setCreateSupplier] = useState(!initialSupplierId);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [extracting, setExtracting] = useState(false);
+  const [candidates, setCandidates] = useState<SupplierCandidate[]>([]);
+  const [selectedCandidateIndex, setSelectedCandidateIndex] = useState<number | null>(
+    null,
+  );
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [extractError, setExtractError] = useState<string | null>(null);
 
   const canValidate = status === "DRAFT";
 
@@ -189,6 +234,65 @@ export function InvoiceValidationPanel({
 
   function updateField(key: ValidationFieldKey, value: string) {
     setFields((current) => ({ ...current, [key]: value }));
+  }
+
+  /** Fill the supplier fields from a candidate and collapse the picker so the
+   * form fields are the single source of truth for what gets saved. */
+  function chooseCandidate(candidate: SupplierCandidate, index: number) {
+    setSelectedCandidateIndex(index);
+    setCreateSupplier(true);
+    setSupplierId("none");
+    setPickerOpen(false);
+    setFields((current) => ({
+      ...current,
+      vendorName: candidate.company ?? current.vendorName,
+      vendorEmail: candidate.senderEmail ?? current.vendorEmail,
+    }));
+  }
+
+  async function handleFillWithAi() {
+    setExtracting(true);
+    setExtractError(null);
+    setCandidates([]);
+    setSelectedCandidateIndex(null);
+    setPickerOpen(false);
+
+    const response = await fetch(`/api/invoices/${invoiceId}/extract-supplier`, {
+      method: "POST",
+    });
+
+    setExtracting(false);
+
+    if (!response.ok) {
+      const payload = (await response.json()) as { error?: string };
+      setExtractError(payload.error ?? "Failed to read supplier details");
+      return;
+    }
+
+    const payload = (await response.json()) as {
+      candidates: SupplierCandidate[];
+      recommendedIndex: number;
+    };
+
+    const next = payload.candidates ?? [];
+    setCandidates(next);
+
+    if (next.length === 0) {
+      setExtractError("AI could not identify a supplier in this email.");
+      return;
+    }
+
+    const recommendedIndex =
+      payload.recommendedIndex >= 0 && payload.recommendedIndex < next.length
+        ? payload.recommendedIndex
+        : 0;
+
+    // Pre-fill the recommended match. If several organisations were found, open
+    // the picker so the reviewer can choose; otherwise just fill the fields.
+    chooseCandidate(next[recommendedIndex], recommendedIndex);
+    if (next.length > 1) {
+      setPickerOpen(true);
+    }
   }
 
   function numberOrNull(value: string) {
@@ -244,9 +348,19 @@ export function InvoiceValidationPanel({
     router.refresh();
   }
 
+  const selectedCandidate =
+    selectedCandidateIndex != null ? candidates[selectedCandidateIndex] : null;
+  const platformEmail = detectPlatformEmail(fields.vendorEmail);
+
+  const supplierActionSummary = createSupplier
+    ? `A new supplier "${fields.vendorName || "…"}" will be created and linked.`
+    : supplierId !== "none"
+      ? "The invoice will be linked to the selected supplier."
+      : "Choose or create a supplier to link this invoice to.";
+
   return (
     <div className="grid gap-6 xl:grid-cols-[minmax(0,28rem)_minmax(0,1fr)] xl:items-start">
-      <Card>
+      <Card className="min-w-0">
         <CardHeader className="pb-4">
           <CardTitle>Review extraction</CardTitle>
           <CardDescription>
@@ -258,13 +372,33 @@ export function InvoiceValidationPanel({
           <form
             id="invoice-validation-form"
             onSubmit={handleSubmit}
-            className="flex flex-col gap-4"
+            className="flex flex-col gap-6"
           >
-            <div className="grid gap-2">
-              <Label htmlFor="linked-supplier" className="text-sm text-muted-foreground">
-                Supplier
-              </Label>
-              <Select
+            <section className="grid min-w-0 grid-cols-1 gap-3">
+              <div className="flex items-center justify-between gap-2">
+                <SectionHeading>Supplier</SectionHeading>
+                {canExtractSupplier ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={extracting || loading}
+                    onClick={() => void handleFillWithAi()}
+                  >
+                    <Wand2Icon className="size-4" />
+                    {extracting ? "Reading email…" : "Fill with AI"}
+                  </Button>
+                ) : null}
+              </div>
+
+              <div className="grid min-w-0 grid-cols-1 gap-2">
+                <Label
+                  htmlFor="linked-supplier"
+                  className="text-sm text-muted-foreground"
+                >
+                  Link to supplier
+                </Label>
+                <Select
                 items={supplierSelectItems}
                 value={createSupplier ? "create" : supplierId}
                 onValueChange={(value) => {
@@ -324,28 +458,129 @@ export function InvoiceValidationPanel({
                     </>
                   ) : null}
                 </SelectContent>
-              </Select>
-            </div>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {supplierActionSummary}
+                </p>
+              </div>
+
+              {extractError ? (
+                <Alert variant="destructive">
+                  <AlertDescription>{extractError}</AlertDescription>
+                </Alert>
+              ) : null}
+
+              {extracting ? (
+                <div className="space-y-2">
+                  <p className="text-sm text-muted-foreground">
+                    Reviewing the email thread for supplier matches…
+                  </p>
+                  <Skeleton className="h-24 w-full" />
+                </div>
+              ) : null}
+
+              {!extracting && pickerOpen && candidates.length > 0 ? (
+                <div className="space-y-2">
+                  <p className="text-sm text-muted-foreground">
+                    {candidates.length > 1
+                      ? "AI found more than one organisation in this email. Pick the one to bill against — it fills the fields below."
+                      : "Review the suggested supplier — it fills the fields below."}
+                  </p>
+                  <div className="flex min-w-0 flex-col gap-2">
+                    {candidates.map((candidate, index) => (
+                      <SupplierCandidateCard
+                        key={`${candidate.label}-${index}`}
+                        candidate={candidate}
+                        selected={selectedCandidateIndex === index}
+                        onSelect={() => chooseCandidate(candidate, index)}
+                        onModify={() => setPickerOpen(false)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              {!extracting && !pickerOpen && selectedCandidate ? (
+                <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/40 px-3 py-2">
+                  <p className="flex min-w-0 flex-1 items-center gap-2 text-sm text-muted-foreground">
+                    <SparklesIcon className="size-4 shrink-0 text-primary" />
+                    <span className="min-w-0 truncate">
+                      Filled from{" "}
+                      <span className="font-medium text-foreground">
+                        {selectedCandidate.company ?? selectedCandidate.label}
+                      </span>
+                    </span>
+                  </p>
+                  {candidates.length > 1 ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-auto shrink-0 px-1.5 py-0.5 text-xs"
+                      onClick={() => setPickerOpen(true)}
+                    >
+                      Choose again ({candidates.length})
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null}
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                {SUPPLIER_FIELDS.map((config) => (
+                  <div key={config.key} className="grid gap-1.5">
+                    <Label
+                      htmlFor={config.key}
+                      className="text-sm text-muted-foreground"
+                    >
+                      {config.label}
+                    </Label>
+                    <Input
+                      id={config.key}
+                      type={config.type}
+                      value={fields[config.key]}
+                      onChange={(event) => updateField(config.key, event.target.value)}
+                      required={config.key === "vendorName"}
+                    />
+                  </div>
+                ))}
+              </div>
+
+              {platformEmail ? (
+                <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                  <TriangleAlertIcon className="mt-0.5 size-4 shrink-0" />
+                  <span>
+                    <span className="font-medium">{platformEmail} invoicing address.</span>{" "}
+                    This isn&apos;t the supplier&apos;s own inbox — use their direct
+                    email so future invoices match automatically.
+                  </span>
+                </div>
+              ) : null}
+            </section>
 
             <Separator />
 
-            <div className="grid gap-4 sm:grid-cols-2">
-              {FIELD_CONFIG.map((config) => (
-                <div key={config.key} className="grid gap-1.5">
-                  <Label htmlFor={config.key} className="text-sm text-muted-foreground">
-                    {config.label}
-                  </Label>
-                  <Input
-                    id={config.key}
-                    type={config.type}
-                    step={config.type === "number" ? "0.01" : undefined}
-                    value={fields[config.key]}
-                    onChange={(event) => updateField(config.key, event.target.value)}
-                    required={config.key === "vendorName"}
-                  />
-                </div>
-              ))}
-            </div>
+            <section className="grid min-w-0 grid-cols-1 gap-3">
+              <SectionHeading>Invoice details</SectionHeading>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                {INVOICE_FIELDS.map((config) => (
+                  <div key={config.key} className="grid gap-1.5">
+                    <Label
+                      htmlFor={config.key}
+                      className="text-sm text-muted-foreground"
+                    >
+                      {config.label}
+                    </Label>
+                    <Input
+                      id={config.key}
+                      type={config.type}
+                      step={config.type === "number" ? "0.01" : undefined}
+                      value={fields[config.key]}
+                      onChange={(event) => updateField(config.key, event.target.value)}
+                    />
+                  </div>
+                ))}
+              </div>
+            </section>
 
             {error ? (
               <Alert variant="destructive">

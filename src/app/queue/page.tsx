@@ -35,7 +35,7 @@ export default async function QueuePage() {
       columns: { id: true, name: true, email: true },
       orderBy: asc(users.name),
     }),
-    getNavCounts(session.user.organizationId),
+    getNavCounts(session.user.organizationId, session.user.id),
   ]);
 
   const serializedInvoices = rows.map((invoice) => ({

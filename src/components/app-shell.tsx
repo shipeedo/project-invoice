@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { AppSidebar } from "@/components/app-sidebar";
+import { NotificationPermissionBanner } from "@/components/notification-permission-banner";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -17,6 +18,8 @@ import {
 import { cn } from "@/lib/utils";
 import type { UserRole } from "@/lib/db/types";
 import type { NavCounts } from "@/lib/nav-counts";
+import { getO365Connection } from "@/lib/o365/connection";
+import { formatRelativeTime } from "@/lib/format";
 
 export type BreadcrumbEntry = {
   label: string;
@@ -29,6 +32,7 @@ type AppShellProps = {
     name?: string | null;
     email?: string | null;
     role: UserRole;
+    organizationId?: string;
   };
   activePath?: string;
   navCounts?: NavCounts;
@@ -36,7 +40,7 @@ type AppShellProps = {
   fillViewport?: boolean;
 };
 
-export function AppShell({
+export async function AppShell({
   children,
   user,
   activePath,
@@ -44,9 +48,30 @@ export function AppShell({
   breadcrumbs = [],
   fillViewport = false,
 }: AppShellProps) {
+  // Surface the connected invoice mailbox in the sidebar for admins.
+  let mailboxConnection: React.ComponentProps<
+    typeof AppSidebar
+  >["mailboxConnection"] = null;
+  if (user.role === "ADMIN" && user.organizationId) {
+    const connection = await getO365Connection(user.organizationId);
+    if (connection?.status === "CONNECTED" && connection.selectedMailboxUpn) {
+      mailboxConnection = {
+        email: connection.selectedMailboxUpn,
+        lastSyncedLabel: connection.lastSyncedAt
+          ? formatRelativeTime(connection.lastSyncedAt)
+          : null,
+      };
+    }
+  }
+
   return (
     <SidebarProvider>
-      <AppSidebar user={user} activePath={activePath} navCounts={navCounts} />
+      <AppSidebar
+        user={user}
+        activePath={activePath}
+        navCounts={navCounts}
+        mailboxConnection={mailboxConnection}
+      />
       <SidebarInset
         className={cn(
           "min-w-0 overflow-x-hidden",
@@ -89,6 +114,7 @@ export function AppShell({
             )}
           </div>
         </header>
+        <NotificationPermissionBanner />
         <div
           className={cn(
             "flex min-w-0 flex-1 flex-col gap-4 p-4 pt-0",

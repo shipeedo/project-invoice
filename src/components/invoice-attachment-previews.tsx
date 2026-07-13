@@ -1,14 +1,6 @@
 import { ExternalLinkIcon, FileTextIcon } from "lucide-react";
 import { readSpreadsheetPreview } from "@/lib/attachment-preview";
 import { classifyAttachment, isInvoiceLikeAttachment } from "@/lib/attachment-types";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 
 export type PreviewAttachment = {
   key: string;
@@ -76,31 +68,41 @@ async function SpreadsheetPreviewBlock({
     <div className="space-y-3">
       {preview.sheets.map((sheet) => (
         <div key={sheet.name} className="overflow-hidden rounded-lg border">
+          {/* Plain table (not the shadcn Table wrapper): the wrapper's own
+              overflow container would break position:sticky against this
+              scroll area, and border-separate keeps the header's borders
+              attached while the body scrolls underneath. */}
           <div className="max-h-[60vh] overflow-auto">
-            <Table>
+            <table className="w-full border-separate border-spacing-0 text-sm">
               {sheet.rows.length > 0 ? (
-                <TableHeader className="sticky top-0 bg-background">
-                  <TableRow>
+                <thead>
+                  <tr>
                     {sheet.rows[0].map((cell, cellIndex) => (
-                      <TableHead key={cellIndex} className="whitespace-nowrap">
+                      <th
+                        key={cellIndex}
+                        className="sticky top-0 z-10 border-r border-b bg-muted px-2.5 py-2 text-left text-xs font-semibold whitespace-nowrap last:border-r-0"
+                      >
                         {cell}
-                      </TableHead>
+                      </th>
                     ))}
-                  </TableRow>
-                </TableHeader>
+                  </tr>
+                </thead>
               ) : null}
-              <TableBody>
+              <tbody className="[&>tr:last-child>td]:border-b-0">
                 {sheet.rows.slice(1).map((row, rowIndex) => (
-                  <TableRow key={rowIndex}>
+                  <tr key={rowIndex} className="hover:bg-muted/30">
                     {row.map((cell, cellIndex) => (
-                      <TableCell key={cellIndex} className="whitespace-nowrap">
+                      <td
+                        key={cellIndex}
+                        className="border-r border-b px-2.5 py-1.5 whitespace-nowrap tabular-nums last:border-r-0"
+                      >
                         {cell}
-                      </TableCell>
+                      </td>
                     ))}
-                  </TableRow>
+                  </tr>
                 ))}
-              </TableBody>
-            </Table>
+              </tbody>
+            </table>
           </div>
           {sheet.truncated || preview.sheets.length > 1 ? (
             <p className="border-t bg-muted/50 px-3 py-1.5 text-xs text-muted-foreground">

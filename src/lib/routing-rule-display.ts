@@ -1,6 +1,7 @@
 import type { RoutingRuleType } from "@/lib/db/types";
 
 type RuleCondition =
+  | { supplierId?: string; supplierName?: string }
   | { senderEmail?: string; senderDomain?: string }
   | { minAmount?: number }
   | { parseFailure?: boolean }
@@ -10,12 +11,19 @@ export const RULE_TYPE_INFO: Record<
   RoutingRuleType,
   { label: string; description: string; example: string }
 > = {
+  SUPPLIER: {
+    label: "Supplier",
+    description:
+      "Matches invoices linked to one of your suppliers, whichever address they send from.",
+    example:
+      'e.g. supplier "Acme Logistics" routes every invoice from any of their email addresses or domains.',
+  },
   SENDER_EMAIL: {
     label: "Sender email or domain",
     description:
-      "Matches invoices from a specific vendor email address or email domain extracted from the PDF.",
+      "Matches invoices from a specific supplier email address or email domain extracted from the PDF.",
     example:
-      'e.g. sender email "billing@acme.com" or domain "acme.com" to route all invoices from that vendor.',
+      'e.g. sender email "billing@acme.com" or domain "acme.com" to route all invoices from that supplier.',
   },
   AMOUNT_THRESHOLD: {
     label: "Amount threshold",
@@ -56,10 +64,15 @@ export function formatRuleCondition(type: string, condition: string): string {
   const parsed = parseRuleCondition(condition);
 
   switch (type) {
+    case "SUPPLIER": {
+      const c = parsed as { supplierId?: string; supplierName?: string };
+      if (c.supplierName) return `Supplier is ${c.supplierName}`;
+      return c.supplierId ? "Supplier no longer exists" : "No supplier selected";
+    }
     case "SENDER_EMAIL": {
       const c = parsed as { senderEmail?: string; senderDomain?: string };
-      if (c.senderEmail) return `Vendor email is ${c.senderEmail}`;
-      if (c.senderDomain) return `Vendor domain is @${c.senderDomain}`;
+      if (c.senderEmail) return `Supplier email is ${c.senderEmail}`;
+      if (c.senderDomain) return `Supplier domain is @${c.senderDomain}`;
       return "No sender condition set";
     }
     case "AMOUNT_THRESHOLD": {
@@ -81,11 +94,24 @@ export function formatRuleCondition(type: string, condition: string): string {
 export function buildRuleCondition(
   type: RoutingRuleType,
   fields: {
+    supplierId?: string;
+    supplierName?: string;
     senderEmail?: string;
     senderDomain?: string;
     minAmount?: string;
   },
 ): { condition: Record<string, unknown>; error?: string } {
+  if (type === "SUPPLIER") {
+    const supplierId = fields.supplierId?.trim() ?? "";
+    if (!supplierId) {
+      return { condition: {}, error: "Choose a supplier for this rule." };
+    }
+    // The name is a display snapshot; matching uses only the id.
+    return {
+      condition: { supplierId, supplierName: fields.supplierName?.trim() || undefined },
+    };
+  }
+
   if (type === "SENDER_EMAIL") {
     const senderEmail = fields.senderEmail?.trim() ?? "";
     const senderDomain = fields.senderDomain?.trim() ?? "";
@@ -122,11 +148,14 @@ export function buildRuleCondition(
 export function conditionFieldsFromRule(
   type: RoutingRuleType,
   condition: string,
-): { senderEmail: string; senderDomain: string; minAmount: string } {
+): { supplierId: string; senderEmail: string; senderDomain: string; minAmount: string } {
   const parsed = parseRuleCondition(condition);
-  const fields = { senderEmail: "", senderDomain: "", minAmount: "" };
+  const fields = { supplierId: "", senderEmail: "", senderDomain: "", minAmount: "" };
 
-  if (type === "SENDER_EMAIL") {
+  if (type === "SUPPLIER") {
+    const c = parsed as { supplierId?: string };
+    fields.supplierId = c.supplierId ?? "";
+  } else if (type === "SENDER_EMAIL") {
     const c = parsed as { senderEmail?: string; senderDomain?: string };
     fields.senderEmail = c.senderEmail ?? "";
     fields.senderDomain = c.senderDomain ?? "";

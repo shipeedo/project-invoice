@@ -41,6 +41,13 @@ describe("describeAuditEvent", () => {
     expect(result.description).toContain("Approved line 3");
   });
 
+  it("labels invoice views", () => {
+    expect(describeAuditEvent("invoice.viewed", null)).toEqual({
+      label: "Invoice viewed",
+      description: null,
+    });
+  });
+
   it("notes deselected lines on validation", () => {
     const result = describeAuditEvent(
       "invoice.validated",

@@ -21,7 +21,7 @@ export default async function SuppliersPage() {
     }),
     getSupplierSuggestions(organizationId),
     getSupplierInvoiceStats(organizationId),
-    getNavCounts(organizationId),
+    getNavCounts(organizationId, session.user.id),
   ]);
 
   return (

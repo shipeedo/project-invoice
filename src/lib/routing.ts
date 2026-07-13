@@ -2,6 +2,7 @@ import { and, count, desc, eq } from "drizzle-orm";
 import { db, routingRules, users, type Invoice, type RoutingRule, type User } from "@/lib/db";
 
 type RuleCondition =
+  | { supplierId?: string; supplierName?: string }
   | { senderEmail?: string; senderDomain?: string }
   | { minAmount?: number }
   | { parseFailure?: boolean }
@@ -13,6 +14,11 @@ function parseCondition(condition: string): RuleCondition {
   } catch {
     return {};
   }
+}
+
+function matchesSupplierRule(rule: RoutingRule, invoice: Invoice): boolean {
+  const condition = parseCondition(rule.condition) as { supplierId?: string };
+  return condition.supplierId != null && invoice.supplierId === condition.supplierId;
 }
 
 function matchesSenderRule(rule: RoutingRule, invoice: Invoice): boolean {
@@ -64,6 +70,9 @@ export async function assignApproverForInvoice(
 
     let matches = false;
     switch (rule.type) {
+      case "SUPPLIER":
+        matches = matchesSupplierRule(rule, invoice);
+        break;
       case "SENDER_EMAIL":
         matches = matchesSenderRule(rule, invoice);
         break;

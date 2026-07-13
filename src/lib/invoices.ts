@@ -3,6 +3,7 @@ import { db, invoices, suppliers } from "@/lib/db";
 import { recordAuditEvent } from "@/lib/audit";
 import { extractInvoiceFromDocument, parseInvoiceDate } from "@/lib/extraction";
 import { resolveDueDate } from "@/lib/trading-terms";
+import { createNotification, invoiceSummaryLine } from "@/lib/notifications";
 import { assignApproverForInvoice, ensureDefaultRoutingRules } from "@/lib/routing";
 import {
   buildNewSupplierValues,
@@ -259,6 +260,7 @@ export async function validateInvoice(input: ValidateInvoiceInput) {
     .update(invoices)
     .set({
       assignedToId: approver?.id ?? null,
+      assignedAt: approver ? new Date() : null,
       // An invoice only leaves DRAFT once it has an assignee.
       status: approver ? "PENDING_APPROVAL" : "DRAFT",
       updatedAt: new Date(),
@@ -303,6 +305,19 @@ export async function validateInvoice(input: ValidateInvoiceInput) {
       action: "invoice.routed",
       details: { assignedToId: approver.id, assignedToEmail: approver.email },
     });
+
+    if (approver.id !== input.userId) {
+      await createNotification({
+        organizationId: input.organizationId,
+        recipientId: approver.id,
+        actorId: input.userId,
+        invoiceId: input.invoiceId,
+        type: "INVOICE_ASSIGNED",
+        title: "Invoice assigned to you",
+        body: invoiceSummaryLine(routedInvoice),
+        auditDetails: { recipientEmail: approver.email, via: "routing" },
+      });
+    }
   }
 
   const result = await db.query.invoices.findFirst({

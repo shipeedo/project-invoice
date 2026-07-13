@@ -60,6 +60,31 @@ export function formatDate(value: Date | string | number | null | undefined) {
   }).format(date);
 }
 
+export function isWithinLast(
+  value: Date | string | number | null | undefined,
+  ms: number,
+) {
+  const date = value == null ? null : parseDate(value);
+  if (!date) return false;
+  return Date.now() - date.getTime() < ms;
+}
+
+export function formatRelativeTime(
+  value: Date | string | number | null | undefined,
+) {
+  const date = value == null ? null : parseDate(value);
+  if (!date) return "—";
+  const diffMs = Date.now() - date.getTime();
+  if (diffMs < 60_000) return "just now";
+  const minutes = Math.floor(diffMs / 60_000);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return formatDate(date);
+}
+
 export function statusLabel(status: string) {
   return status
     .toLowerCase()

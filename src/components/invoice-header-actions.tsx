@@ -22,6 +22,11 @@ import {
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   APPROVABLE_STATUSES,
   HOLDABLE_STATUSES,
   REJECTABLE_STATUSES,
@@ -199,16 +204,23 @@ export function InvoiceHeaderActions({
             </Button>
           ) : null}
           {canCancel ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => openDialog("cancel")}
-              disabled={loading !== null}
-            >
-              <BanIcon />
-              Cancel invoice
-            </Button>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    size="icon-sm"
+                    variant="outline"
+                    aria-label="Cancel invoice"
+                    onClick={() => openDialog("cancel")}
+                    disabled={loading !== null}
+                  />
+                }
+              >
+                <BanIcon />
+              </TooltipTrigger>
+              <TooltipContent>Cancel invoice</TooltipContent>
+            </Tooltip>
           ) : null}
         </div>
         {error && !pendingAction ? (

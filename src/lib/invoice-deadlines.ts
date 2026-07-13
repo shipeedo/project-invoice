@@ -307,6 +307,7 @@ export type UrgencyFilter =
   | "all"
   | "needs_my_attention"
   | "overdue"
+  | "due_tomorrow"
   | "nearing_respond"
   | "nearing_due";
 
@@ -325,6 +326,8 @@ export function matchesUrgencyFilter(
       return needsMyUrgentAttention(invoice, userId, now);
     case "overdue":
       return signals.some((signal) => signal.urgency === "overdue");
+    case "due_tomorrow":
+      return signals.some((signal) => signal.urgency === "due_tomorrow");
     case "nearing_respond":
       return signals.some(
         (signal) =>

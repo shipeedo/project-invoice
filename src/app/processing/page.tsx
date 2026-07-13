@@ -7,10 +7,7 @@ import {
 } from "@/components/processing-queue-view";
 import { db, processingJobs } from "@/lib/db";
 import { getNavCounts } from "@/lib/nav-counts";
-import {
-  getProcessingQueueCounts,
-  resolveProcessingConcurrency,
-} from "@/lib/processing-queue";
+import { getProcessingQueueCounts } from "@/lib/processing-queue";
 import { requireSession } from "@/lib/session";
 
 const MAX_LISTED_JOBS = 100;
@@ -32,7 +29,7 @@ export default async function ProcessingQueuePage() {
       limit: MAX_LISTED_JOBS,
     }),
     getProcessingQueueCounts(session.user.organizationId),
-    getNavCounts(session.user.organizationId),
+    getNavCounts(session.user.organizationId, session.user.id),
   ]);
 
   const jobs: ProcessingQueueJob[] = rows.map((row) => ({
@@ -66,7 +63,7 @@ export default async function ProcessingQueuePage() {
           </p>
         </div>
 
-        <ProcessingQueueView jobs={jobs} counts={counts} concurrency={resolveProcessingConcurrency()} />
+        <ProcessingQueueView jobs={jobs} counts={counts} />
       </div>
     </AppShell>
   );

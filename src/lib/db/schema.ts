@@ -1,5 +1,12 @@
 import { relations } from "drizzle-orm";
-import { integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import {
+  index,
+  integer,
+  real,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core";
 import { createId } from "@paralleldrive/cuid2";
 
 const timestamp = () =>
@@ -38,6 +45,10 @@ export const users = sqliteTable("users", {
   // Product access is deny-by-default: the auth server may issue a token,
   // but only users designated by an admin can use the app.
   hasAccess: integer("has_access", { mode: "boolean" }).notNull().default(false),
+  // Heartbeat: stamped each time this user's client polls for notifications.
+  lastNotificationCheckAt: integer("last_notification_check_at", {
+    mode: "timestamp_ms",
+  }),
   createdAt: timestamp(),
   updatedAt: updatedAt(),
 });
@@ -100,6 +111,9 @@ export const invoices = sqliteTable("invoices", {
   assignedToId: text("assigned_to_id").references(() => users.id, {
     onDelete: "set null",
   }),
+  // When the current assignee received the invoice — the clock escalation
+  // rules measure idle time against. Reset on every (re)assignment.
+  assignedAt: integer("assigned_at", { mode: "timestamp_ms" }),
   onHoldAt: integer("on_hold_at", { mode: "timestamp_ms" }),
   onHoldById: text("on_hold_by_id").references(() => users.id, {
     onDelete: "set null",
@@ -141,13 +155,33 @@ export const routingRules = sqliteTable("routing_rules", {
   name: text("name").notNull(),
   priority: integer("priority").notNull(),
   type: text("type", {
-    enum: ["SENDER_EMAIL", "AMOUNT_THRESHOLD", "PARSE_FAILURE", "DEFAULT"],
+    enum: ["SUPPLIER", "SENDER_EMAIL", "AMOUNT_THRESHOLD", "PARSE_FAILURE", "DEFAULT"],
   }).notNull(),
   condition: text("condition").notNull(),
   approverId: text("approver_id").references(() => users.id, {
     onDelete: "set null",
   }),
   isDefault: integer("is_default", { mode: "boolean" }).notNull().default(false),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  createdAt: timestamp(),
+  updatedAt: updatedAt(),
+});
+
+export const escalationRules = sqliteTable("escalation_rules", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => createId()),
+  organizationId: text("organization_id")
+    .notNull()
+    .references(() => organizations.id, { onDelete: "cascade" }),
+  // Null means the rule watches every assignee (catch-all).
+  watchedUserId: text("watched_user_id").references(() => users.id, {
+    onDelete: "cascade",
+  }),
+  afterBusinessDays: integer("after_business_days").notNull(),
+  escalateToId: text("escalate_to_id").references(() => users.id, {
+    onDelete: "set null",
+  }),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   createdAt: timestamp(),
   updatedAt: updatedAt(),
@@ -459,6 +493,53 @@ export const creditDrafts = sqliteTable("credit_drafts", {
   createdAt: timestamp(),
 });
 
+export const notifications = sqliteTable(
+  "notifications",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    recipientId: text("recipient_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    // User whose action caused the notification; null for system/automated.
+    actorId: text("actor_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    invoiceId: text("invoice_id").references(() => invoices.id, {
+      onDelete: "cascade",
+    }),
+    type: text("type", {
+      enum: ["INVOICE_ASSIGNED", "INVOICE_REMINDER", "TEST"],
+    }).notNull(),
+    title: text("title").notNull(),
+    body: text("body").notNull(),
+    readAt: integer("read_at", { mode: "timestamp_ms" }),
+    createdAt: timestamp(),
+  },
+  (table) => [
+    index("notifications_recipient_read_idx").on(table.recipientId, table.readAt),
+  ],
+);
+
+export const pushSubscriptions = sqliteTable("push_subscriptions", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => createId()),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  endpoint: text("endpoint").notNull().unique(),
+  p256dh: text("p256dh").notNull(),
+  auth: text("auth").notNull(),
+  userAgent: text("user_agent"),
+  lastUsedAt: integer("last_used_at", { mode: "timestamp_ms" }),
+  createdAt: timestamp(),
+});
+
 export const organizationsRelations = relations(organizations, ({ many, one }) => ({
   users: many(users),
   invoices: many(invoices),
@@ -481,6 +562,7 @@ export const usersRelations = relations(users, ({ one, many }) => ({
   routingRules: many(routingRules),
   auditEvents: many(auditEvents),
   creditDrafts: many(creditDrafts),
+  pushSubscriptions: many(pushSubscriptions),
 }));
 
 export const invoicesRelations = relations(invoices, ({ one, many }) => ({
@@ -561,6 +643,21 @@ export const routingRulesRelations = relations(routingRules, ({ one }) => ({
   }),
   approver: one(users, {
     fields: [routingRules.approverId],
+    references: [users.id],
+  }),
+}));
+
+export const escalationRulesRelations = relations(escalationRules, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [escalationRules.organizationId],
+    references: [organizations.id],
+  }),
+  watchedUser: one(users, {
+    fields: [escalationRules.watchedUserId],
+    references: [users.id],
+  }),
+  escalateTo: one(users, {
+    fields: [escalationRules.escalateToId],
     references: [users.id],
   }),
 }));
@@ -697,10 +794,37 @@ export const creditDraftsRelations = relations(creditDrafts, ({ one }) => ({
   }),
 }));
 
+export const notificationsRelations = relations(notifications, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [notifications.organizationId],
+    references: [organizations.id],
+  }),
+  recipient: one(users, {
+    fields: [notifications.recipientId],
+    references: [users.id],
+  }),
+  actor: one(users, {
+    fields: [notifications.actorId],
+    references: [users.id],
+  }),
+  invoice: one(invoices, {
+    fields: [notifications.invoiceId],
+    references: [invoices.id],
+  }),
+}));
+
+export const pushSubscriptionsRelations = relations(pushSubscriptions, ({ one }) => ({
+  user: one(users, {
+    fields: [pushSubscriptions.userId],
+    references: [users.id],
+  }),
+}));
+
 export type Organization = typeof organizations.$inferSelect;
 export type User = typeof users.$inferSelect;
 export type Invoice = typeof invoices.$inferSelect;
 export type RoutingRule = typeof routingRules.$inferSelect;
+export type EscalationRule = typeof escalationRules.$inferSelect;
 export type Supplier = typeof suppliers.$inferSelect;
 export type AuditEvent = typeof auditEvents.$inferSelect;
 export type CreditDraft = typeof creditDrafts.$inferSelect;
@@ -714,3 +838,5 @@ export type MailboxMessageAttachment = typeof mailboxMessageAttachments.$inferSe
 export type EmailContact = typeof emailContacts.$inferSelect;
 export type CreditRequest = typeof creditRequests.$inferSelect;
 export type ProcessingJob = typeof processingJobs.$inferSelect;
+export type Notification = typeof notifications.$inferSelect;
+export type PushSubscription = typeof pushSubscriptions.$inferSelect;

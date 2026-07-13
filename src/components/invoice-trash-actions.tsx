@@ -14,6 +14,11 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 type InvoiceTrashActionsProps = {
   invoiceId: string;
@@ -93,19 +98,42 @@ export function InvoiceTrashActions({
 
   return (
     <>
-      <Button
-        variant={variant === "row" ? "ghost" : "outline"}
-        size="sm"
-        disabled={pending}
-        onClick={() => {
-          setReason("");
-          setError(null);
-          setDialogOpen(true);
-        }}
-      >
-        <Trash2Icon />
-        Move to trash
-      </Button>
+      {variant === "row" ? (
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={pending}
+          onClick={() => {
+            setReason("");
+            setError(null);
+            setDialogOpen(true);
+          }}
+        >
+          <Trash2Icon />
+          Move to trash
+        </Button>
+      ) : (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="outline"
+                size="icon-sm"
+                aria-label="Move to trash"
+                disabled={pending}
+                onClick={() => {
+                  setReason("");
+                  setError(null);
+                  setDialogOpen(true);
+                }}
+              />
+            }
+          >
+            <Trash2Icon />
+          </TooltipTrigger>
+          <TooltipContent>Move to trash</TooltipContent>
+        </Tooltip>
+      )}
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>
