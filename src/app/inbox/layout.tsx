@@ -1,6 +1,7 @@
 import { InboxPageShell } from "@/components/inbox-page-shell";
 import { loadInboxConnection, loadInboxThreads } from "@/lib/inbox-data";
 import { getNavCounts } from "@/lib/nav-counts";
+import { buildMailboxConnectionSummary } from "@/lib/o365/connection";
 import { requireSession } from "@/lib/session";
 
 export default async function InboxRouteLayout({
@@ -21,11 +22,17 @@ export default async function InboxRouteLayout({
     connection?.status !== "DISCONNECTED" &&
     Boolean(connection?.accessTokenEncrypted);
 
+  const mailboxConnection = buildMailboxConnectionSummary(
+    session.user,
+    connection,
+  );
+
   return (
     <InboxPageShell
       user={session.user}
       threads={threads}
       navCounts={navCounts}
+      mailboxConnection={mailboxConnection}
       sync={{
         canSync,
         lastSyncedAt: connection?.lastSyncedAt?.toISOString() ?? null,

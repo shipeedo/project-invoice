@@ -1,7 +1,10 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { AppShell } from "@/components/app-shell";
+import {
+  AppShellView,
+  type MailboxConnectionSummary,
+} from "@/components/app-shell-view";
 import { InboxLayout } from "@/components/inbox-layout";
 import type { InboxThreadSummary } from "@/components/inbox-thread-list";
 import type { UserRole } from "@/lib/db/types";
@@ -19,6 +22,7 @@ type InboxPageShellProps = {
     lastSyncedAt: string | null;
   };
   navCounts?: NavCounts;
+  mailboxConnection?: MailboxConnectionSummary | null;
   children: React.ReactNode;
 };
 
@@ -32,6 +36,7 @@ export function InboxPageShell({
   threads,
   sync,
   navCounts,
+  mailboxConnection,
   children,
 }: InboxPageShellProps) {
   const pathname = usePathname();
@@ -48,16 +53,17 @@ export function InboxPageShell({
     : [{ label: "Inbox" }];
 
   return (
-    <AppShell
+    <AppShellView
       user={user}
       activePath="/inbox"
       navCounts={navCounts}
       fillViewport
       breadcrumbs={breadcrumbs}
+      mailboxConnection={mailboxConnection}
     >
       <InboxLayout threads={threads} activeThreadId={activeThreadId} sync={sync}>
         {children}
       </InboxLayout>
-    </AppShell>
+    </AppShellView>
   );
 }

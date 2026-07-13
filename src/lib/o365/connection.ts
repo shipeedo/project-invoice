@@ -1,7 +1,9 @@
 import { eq } from "drizzle-orm";
+import type { MailboxConnectionSummary } from "@/components/app-shell-view";
 import { db, o365Connections } from "@/lib/db";
-import type { O365ConnectionStatus } from "@/lib/db/types";
+import type { O365ConnectionStatus, UserRole } from "@/lib/db/types";
 import { decryptSecret, encryptSecret } from "@/lib/o365/crypto";
+import { formatRelativeTime } from "@/lib/format";
 import {
   decodeMicrosoftIdTokenTenant,
   refreshMicrosoftTokens,
@@ -12,6 +14,38 @@ export async function getO365Connection(organizationId: string) {
   return db.query.o365Connections.findFirst({
     where: eq(o365Connections.organizationId, organizationId),
   });
+}
+
+// Build the sidebar's connected-mailbox summary from an already-fetched
+// connection row, so callers that have loaded it (e.g. the inbox layout) avoid
+// a second query. Only admins see the mailbox.
+export function buildMailboxConnectionSummary(
+  user: { role: UserRole },
+  connection:
+    | { status: O365ConnectionStatus; selectedMailboxUpn: string | null; lastSyncedAt: Date | null }
+    | null
+    | undefined,
+): MailboxConnectionSummary | null {
+  if (user.role !== "ADMIN") return null;
+  if (connection?.status === "CONNECTED" && connection.selectedMailboxUpn) {
+    return {
+      email: connection.selectedMailboxUpn,
+      lastSyncedLabel: connection.lastSyncedAt
+        ? formatRelativeTime(connection.lastSyncedAt)
+        : null,
+    };
+  }
+  return null;
+}
+
+// Fetch-and-build variant for callers that don't already have the connection.
+export async function getMailboxConnectionSummary(user: {
+  role: UserRole;
+  organizationId?: string;
+}): Promise<MailboxConnectionSummary | null> {
+  if (user.role !== "ADMIN" || !user.organizationId) return null;
+  const connection = await getO365Connection(user.organizationId);
+  return buildMailboxConnectionSummary(user, connection);
 }
 
 export async function upsertO365Connection(params: {
