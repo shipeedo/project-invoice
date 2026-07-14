@@ -1,11 +1,38 @@
 import type { RoutingRuleType } from "@/lib/db/types";
+import type { RuleCondition } from "@/lib/routing";
 
-type RuleCondition =
-  | { supplierId?: string; supplierName?: string }
-  | { senderEmail?: string; senderDomain?: string }
-  | { minAmount?: number }
-  | { parseFailure?: boolean }
-  | Record<string, never>;
+// Condition kinds a user can pick inside a rule. DEFAULT is not a condition —
+// it's the catch-all rule type handled separately.
+export type ConditionKind = RuleCondition["kind"];
+
+export const CONDITION_KIND_INFO: Record<
+  ConditionKind,
+  { label: string; helper: string }
+> = {
+  SUPPLIER: {
+    label: "From a supplier",
+    helper:
+      "Matches every invoice linked to this supplier, whichever address they send from.",
+  },
+  SENDER_EMAIL: {
+    label: "From an email or domain",
+    helper:
+      "Matches the supplier email address or domain extracted from the invoice.",
+  },
+  AMOUNT_THRESHOLD: {
+    label: "Over an amount",
+    helper: "Matches invoices with a total greater than this amount.",
+  },
+  ACCOUNT_REFERENCE: {
+    label: "Account reference",
+    helper:
+      "Matches the account / cost centre / reference / department value read from the invoice.",
+  },
+  PARSE_FAILURE: {
+    label: "Couldn't be read",
+    helper: "Matches invoices that failed automatic extraction.",
+  },
+};
 
 export const RULE_TYPE_INFO: Record<
   RoutingRuleType,
@@ -39,6 +66,13 @@ export const RULE_TYPE_INFO: Record<
     example:
       "e.g. unreadable PDFs or missing fields go to an admin for data entry before approval.",
   },
+  COMBO: {
+    label: "Multiple conditions",
+    description:
+      "Matches only when every one of its conditions is true — combine supplier, amount, and account reference checks.",
+    example:
+      'e.g. supplier "Pegasus" AND account reference "Chill Chair" routes that account\'s invoices to its approver.',
+  },
   DEFAULT: {
     label: "Default (catch-all)",
     description:
@@ -48,121 +82,311 @@ export const RULE_TYPE_INFO: Record<
   },
 };
 
-export function parseRuleCondition(condition: string): RuleCondition {
-  try {
-    return JSON.parse(condition) as RuleCondition;
-  } catch {
-    return {};
-  }
-}
-
 export function formatRuleType(type: string): string {
   return RULE_TYPE_INFO[type as RoutingRuleType]?.label ?? type;
 }
 
-export function formatRuleCondition(type: string, condition: string): string {
-  const parsed = parseRuleCondition(condition);
+// ---------------------------------------------------------------------------
+// Parsing stored conditions (display-lenient)
+// ---------------------------------------------------------------------------
 
-  switch (type) {
+function asTrimmedString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function coerceCondition(raw: unknown): RuleCondition | null {
+  if (raw == null || typeof raw !== "object") return null;
+  const record = raw as Record<string, unknown>;
+
+  switch (record.kind) {
     case "SUPPLIER": {
-      const c = parsed as { supplierId?: string; supplierName?: string };
-      if (c.supplierName) return `Supplier is ${c.supplierName}`;
-      return c.supplierId ? "Supplier no longer exists" : "No supplier selected";
+      const supplierId = asTrimmedString(record.supplierId);
+      if (!supplierId) return null;
+      const supplierName = asTrimmedString(record.supplierName);
+      return {
+        kind: "SUPPLIER",
+        supplierId,
+        supplierName: supplierName || undefined,
+      };
     }
     case "SENDER_EMAIL": {
-      const c = parsed as { senderEmail?: string; senderDomain?: string };
-      if (c.senderEmail) return `Supplier email is ${c.senderEmail}`;
-      if (c.senderDomain) return `Supplier domain is @${c.senderDomain}`;
-      return "No sender condition set";
+      const senderEmail = asTrimmedString(record.senderEmail);
+      const senderDomain = asTrimmedString(record.senderDomain);
+      if (!senderEmail && !senderDomain) return null;
+      return {
+        kind: "SENDER_EMAIL",
+        senderEmail: senderEmail || undefined,
+        senderDomain: senderDomain || undefined,
+      };
     }
     case "AMOUNT_THRESHOLD": {
-      const c = parsed as { minAmount?: number };
-      if (c.minAmount == null || Number.isNaN(c.minAmount)) {
-        return "No amount threshold set";
-      }
-      return `Total amount is greater than ${c.minAmount.toLocaleString("en-AU")}`;
+      const minAmount = record.minAmount;
+      if (typeof minAmount !== "number" || !Number.isFinite(minAmount)) return null;
+      return { kind: "AMOUNT_THRESHOLD", minAmount };
+    }
+    case "ACCOUNT_REFERENCE": {
+      const value = asTrimmedString(record.value);
+      const match = record.match;
+      if (!value || (match !== "equals" && match !== "contains")) return null;
+      return { kind: "ACCOUNT_REFERENCE", value, match };
     }
     case "PARSE_FAILURE":
+      return { kind: "PARSE_FAILURE" };
+    default:
+      return null;
+  }
+}
+
+/**
+ * Parses a rule row into the conditions it represents. Legacy single-condition
+ * rows become one-element lists; COMBO rows return their whole list. Unusable
+ * entries are dropped (this is for display/editing — the engine is stricter).
+ */
+export function parseRuleConditions(type: string, condition: string): RuleCondition[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(condition);
+  } catch {
+    return [];
+  }
+  if (parsed == null || typeof parsed !== "object") return [];
+  const record = parsed as Record<string, unknown>;
+
+  switch (type) {
+    case "COMBO": {
+      if (!Array.isArray(record.conditions)) return [];
+      return record.conditions
+        .map(coerceCondition)
+        .filter((item): item is RuleCondition => item != null);
+    }
+    case "SUPPLIER":
+    case "SENDER_EMAIL":
+    case "ACCOUNT_REFERENCE": {
+      const coerced = coerceCondition({ ...record, kind: type });
+      return coerced ? [coerced] : [];
+    }
+    case "AMOUNT_THRESHOLD": {
+      const coerced = coerceCondition({ ...record, kind: "AMOUNT_THRESHOLD" });
+      return coerced ? [coerced] : [];
+    }
+    case "PARSE_FAILURE":
+      return record.parseFailure === true ? [{ kind: "PARSE_FAILURE" }] : [];
+    default:
+      return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Formatting
+// ---------------------------------------------------------------------------
+
+export function formatCondition(condition: RuleCondition): string {
+  switch (condition.kind) {
+    case "SUPPLIER":
+      return condition.supplierName
+        ? `Supplier is ${condition.supplierName}`
+        : "Supplier no longer exists";
+    case "SENDER_EMAIL":
+      if (condition.senderEmail) return `Supplier email is ${condition.senderEmail}`;
+      return `Supplier domain is @${condition.senderDomain}`;
+    case "AMOUNT_THRESHOLD":
+      return `Total amount is greater than ${condition.minAmount.toLocaleString("en-AU")}`;
+    case "ACCOUNT_REFERENCE":
+      return condition.match === "equals"
+        ? `Account reference is '${condition.value}'`
+        : `Account reference contains '${condition.value}'`;
+    case "PARSE_FAILURE":
       return "Invoice could not be parsed automatically";
-    case "DEFAULT":
-      return "Matches when no other rule applies";
+  }
+}
+
+function joinConditionSummaries(summaries: string[]): string {
+  return summaries
+    .map((summary, index) =>
+      index === 0 ? summary : summary.charAt(0).toLowerCase() + summary.slice(1),
+    )
+    .join(" and ");
+}
+
+export function formatRuleCondition(type: string, condition: string): string {
+  if (type === "DEFAULT") return "Matches when no other rule applies";
+
+  const conditions = parseRuleConditions(type, condition);
+  if (conditions.length > 0) {
+    return joinConditionSummaries(conditions.map(formatCondition));
+  }
+
+  switch (type) {
+    case "SUPPLIER":
+      return "No supplier selected";
+    case "SENDER_EMAIL":
+      return "No sender condition set";
+    case "AMOUNT_THRESHOLD":
+      return "No amount threshold set";
+    case "ACCOUNT_REFERENCE":
+      return "No account reference set";
+    case "COMBO":
+      return "No conditions set";
+    case "PARSE_FAILURE":
+      return "Invoice could not be parsed automatically";
     default:
       return condition;
   }
 }
 
-export function buildRuleCondition(
-  type: RoutingRuleType,
-  fields: {
-    supplierId?: string;
-    supplierName?: string;
-    senderEmail?: string;
-    senderDomain?: string;
-    minAmount?: string;
-  },
-): { condition: Record<string, unknown>; error?: string } {
-  if (type === "SUPPLIER") {
-    const supplierId = fields.supplierId?.trim() ?? "";
-    if (!supplierId) {
-      return { condition: {}, error: "Choose a supplier for this rule." };
-    }
-    // The name is a display snapshot; matching uses only the id.
-    return {
-      condition: { supplierId, supplierName: fields.supplierName?.trim() || undefined },
+// ---------------------------------------------------------------------------
+// Form <-> payload plumbing
+// ---------------------------------------------------------------------------
+
+/** One editable condition row in the rule form (all fields as input strings). */
+export type ConditionRowFields = {
+  kind: ConditionKind;
+  supplierId: string;
+  senderEmail: string;
+  senderDomain: string;
+  minAmount: string;
+  accountValue: string;
+  accountMatch: "equals" | "contains";
+};
+
+export const EMPTY_CONDITION_ROW_FIELDS: Omit<ConditionRowFields, "kind"> = {
+  supplierId: "",
+  senderEmail: "",
+  senderDomain: "",
+  minAmount: "",
+  accountValue: "",
+  accountMatch: "equals",
+};
+
+/** Loads a stored rule into editable rows (legacy rules become one row). */
+export function conditionRowsFromRule(
+  type: string,
+  condition: string,
+): ConditionRowFields[] {
+  return parseRuleConditions(type, condition).map((parsed) => {
+    const fields: ConditionRowFields = {
+      ...EMPTY_CONDITION_ROW_FIELDS,
+      kind: parsed.kind,
     };
-  }
-
-  if (type === "SENDER_EMAIL") {
-    const senderEmail = fields.senderEmail?.trim() ?? "";
-    const senderDomain = fields.senderDomain?.trim() ?? "";
-    if (!senderEmail && !senderDomain) {
-      return {
-        condition: {},
-        error: "Enter a sender email or domain for this rule type.",
-      };
+    switch (parsed.kind) {
+      case "SUPPLIER":
+        fields.supplierId = parsed.supplierId;
+        break;
+      case "SENDER_EMAIL":
+        fields.senderEmail = parsed.senderEmail ?? "";
+        fields.senderDomain = parsed.senderDomain ?? "";
+        break;
+      case "AMOUNT_THRESHOLD":
+        fields.minAmount = String(parsed.minAmount);
+        break;
+      case "ACCOUNT_REFERENCE":
+        fields.accountValue = parsed.value;
+        fields.accountMatch = parsed.match;
+        break;
+      case "PARSE_FAILURE":
+        break;
     }
-    const condition: Record<string, unknown> = {};
-    if (senderEmail) condition.senderEmail = senderEmail;
-    if (senderDomain) condition.senderDomain = senderDomain;
-    return { condition };
-  }
-
-  if (type === "AMOUNT_THRESHOLD") {
-    const minAmount = Number(fields.minAmount);
-    if (!fields.minAmount?.trim() || Number.isNaN(minAmount)) {
-      return {
-        condition: {},
-        error: "Enter a valid minimum amount for this rule type.",
-      };
-    }
-    return { condition: { minAmount } };
-  }
-
-  if (type === "PARSE_FAILURE") {
-    return { condition: { parseFailure: true } };
-  }
-
-  return { condition: {} };
+    return fields;
+  });
 }
 
-export function conditionFieldsFromRule(
-  type: RoutingRuleType,
-  condition: string,
-): { supplierId: string; senderEmail: string; senderDomain: string; minAmount: string } {
-  const parsed = parseRuleCondition(condition);
-  const fields = { supplierId: "", senderEmail: "", senderDomain: "", minAmount: "" };
+export function conditionFromRowFields(
+  row: ConditionRowFields,
+  suppliers: Array<{ id: string; name: string }>,
+): { condition: RuleCondition } | { error: string } {
+  switch (row.kind) {
+    case "SUPPLIER": {
+      const supplierId = row.supplierId.trim();
+      if (!supplierId) return { error: "Choose a supplier for the supplier condition." };
+      const supplierName = suppliers.find((supplier) => supplier.id === supplierId)?.name;
+      return { condition: { kind: "SUPPLIER", supplierId, supplierName } };
+    }
+    case "SENDER_EMAIL": {
+      const senderEmail = row.senderEmail.trim();
+      const senderDomain = row.senderDomain.trim();
+      if (!senderEmail && !senderDomain) {
+        return { error: "Enter a sender email or domain for the sender condition." };
+      }
+      return {
+        condition: {
+          kind: "SENDER_EMAIL",
+          senderEmail: senderEmail || undefined,
+          senderDomain: senderDomain || undefined,
+        },
+      };
+    }
+    case "AMOUNT_THRESHOLD": {
+      const minAmount = Number(row.minAmount);
+      if (!row.minAmount.trim() || Number.isNaN(minAmount)) {
+        return { error: "Enter a valid minimum amount for the amount condition." };
+      }
+      return { condition: { kind: "AMOUNT_THRESHOLD", minAmount } };
+    }
+    case "ACCOUNT_REFERENCE": {
+      const value = row.accountValue.trim();
+      if (!value) {
+        return { error: "Enter the account reference value to match." };
+      }
+      return {
+        condition: { kind: "ACCOUNT_REFERENCE", value, match: row.accountMatch },
+      };
+    }
+    case "PARSE_FAILURE":
+      return { condition: { kind: "PARSE_FAILURE" } };
+  }
+}
 
-  if (type === "SUPPLIER") {
-    const c = parsed as { supplierId?: string };
-    fields.supplierId = c.supplierId ?? "";
-  } else if (type === "SENDER_EMAIL") {
-    const c = parsed as { senderEmail?: string; senderDomain?: string };
-    fields.senderEmail = c.senderEmail ?? "";
-    fields.senderDomain = c.senderDomain ?? "";
-  } else if (type === "AMOUNT_THRESHOLD") {
-    const c = parsed as { minAmount?: number };
-    fields.minAmount = c.minAmount != null ? String(c.minAmount) : "";
+/**
+ * Turns the form's condition rows into the { type, condition } payload to
+ * save. A single condition keeps its legacy rule type and bare condition shape
+ * (so existing rows and any external consumers stay unchanged); account
+ * reference has no legacy type, and multiple conditions become COMBO.
+ */
+export function buildRuleConditionsPayload(
+  rows: ConditionRowFields[],
+  suppliers: Array<{ id: string; name: string }>,
+):
+  | { type: RoutingRuleType; condition: Record<string, unknown> }
+  | { error: string } {
+  if (rows.length === 0) {
+    return { error: "Add at least one condition." };
   }
 
-  return fields;
+  const conditions: RuleCondition[] = [];
+  for (const row of rows) {
+    const result = conditionFromRowFields(row, suppliers);
+    if ("error" in result) return result;
+    conditions.push(result.condition);
+  }
+
+  if (conditions.length === 1) {
+    const [condition] = conditions;
+    switch (condition.kind) {
+      case "SUPPLIER":
+        return {
+          type: "SUPPLIER",
+          condition: {
+            supplierId: condition.supplierId,
+            supplierName: condition.supplierName,
+          },
+        };
+      case "SENDER_EMAIL":
+        return {
+          type: "SENDER_EMAIL",
+          condition: {
+            ...(condition.senderEmail ? { senderEmail: condition.senderEmail } : {}),
+            ...(condition.senderDomain ? { senderDomain: condition.senderDomain } : {}),
+          },
+        };
+      case "AMOUNT_THRESHOLD":
+        return { type: "AMOUNT_THRESHOLD", condition: { minAmount: condition.minAmount } };
+      case "PARSE_FAILURE":
+        return { type: "PARSE_FAILURE", condition: { parseFailure: true } };
+      case "ACCOUNT_REFERENCE":
+        // No legacy single-condition type exists for account reference.
+        return { type: "COMBO", condition: { conditions } };
+    }
+  }
+
+  return { type: "COMBO", condition: { conditions } };
 }

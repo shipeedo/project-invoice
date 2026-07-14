@@ -69,9 +69,13 @@ export async function createNotification(params: {
   type: NotificationType;
   title: string;
   body: string;
+  /** Deep link opened on click; defaults to the invoice page (or home). */
+  url?: string;
   auditAction?: string;
   auditDetails?: Record<string, unknown>;
 }): Promise<PushDeliverySummary | null> {
+  const url =
+    params.url ?? (params.invoiceId ? `/invoices/${params.invoiceId}` : "/");
   try {
     const [notification] = await db
       .insert(notifications)
@@ -83,6 +87,7 @@ export async function createNotification(params: {
         type: params.type,
         title: params.title,
         body: params.body,
+        url: params.url ?? null,
       })
       .returning();
 
@@ -100,7 +105,7 @@ export async function createNotification(params: {
     return await sendPushToUser(params.recipientId, {
       title: params.title,
       body: params.body,
-      url: params.invoiceId ? `/invoices/${params.invoiceId}` : "/",
+      url,
       tag: notification.id,
     });
   } catch (error) {

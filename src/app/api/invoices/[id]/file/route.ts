@@ -10,7 +10,7 @@ type RouteContext = {
   params: Promise<{ id: string }>;
 };
 
-export async function GET(_request: Request, context: RouteContext) {
+export async function GET(request: Request, context: RouteContext) {
   const session = await auth();
   if (!session?.user?.organizationId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -30,6 +30,8 @@ export async function GET(_request: Request, context: RouteContext) {
 
   const absolutePath = getUploadAbsolutePath(invoice.filePath);
   const buffer = await readFile(absolutePath);
+  const download =
+    new URL(request.url).searchParams.get("download") === "1";
 
   return new NextResponse(buffer, {
     headers: {
@@ -37,7 +39,7 @@ export async function GET(_request: Request, context: RouteContext) {
         invoice.originalFileName ?? "invoice.pdf",
         invoice.fileMimeType,
       ),
-      "Content-Disposition": `inline; filename="${invoice.originalFileName ?? "invoice.pdf"}"`,
+      "Content-Disposition": `${download ? "attachment" : "inline"}; filename="${invoice.originalFileName ?? "invoice.pdf"}"`,
     },
   });
 }

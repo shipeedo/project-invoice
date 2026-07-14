@@ -10,7 +10,7 @@ type RouteContext = {
   params: Promise<{ id: string; attachmentId: string }>;
 };
 
-export async function GET(_request: Request, context: RouteContext) {
+export async function GET(request: Request, context: RouteContext) {
   const session = await auth();
   if (!session?.user?.organizationId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -42,6 +42,8 @@ export async function GET(_request: Request, context: RouteContext) {
 
   const absolutePath = getUploadAbsolutePath(attachment.filePath);
   const buffer = await readFile(absolutePath);
+  const download =
+    new URL(request.url).searchParams.get("download") === "1";
 
   return new NextResponse(buffer, {
     headers: {
@@ -49,7 +51,7 @@ export async function GET(_request: Request, context: RouteContext) {
         attachment.fileName,
         attachment.mimeType,
       ),
-      "Content-Disposition": `inline; filename="${attachment.fileName}"`,
+      "Content-Disposition": `${download ? "attachment" : "inline"}; filename="${attachment.fileName}"`,
     },
   });
 }

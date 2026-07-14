@@ -3,6 +3,10 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { createAndSendCreditRequest } from "@/lib/credit-requests";
 import { creditRequests, db, invoices } from "@/lib/db";
+import {
+  DOCUMENT_UPLOAD_EXTENSIONS,
+  hasAllowedExtension,
+} from "@/lib/invoice-documents";
 import { saveUploadedFile } from "@/lib/uploads";
 
 type RouteContext = {
@@ -50,16 +54,33 @@ export async function POST(request: Request, context: RouteContext) {
     );
   }
 
-  const attachmentMeta: Array<{ name: string; path: string; mimeType: string }> = [];
+  const attachmentFiles: File[] = [];
   for (const [key, value] of formData.entries()) {
     if (key.startsWith("attachment") && value instanceof File && value.size > 0) {
-      const saved = await saveUploadedFile(value);
-      attachmentMeta.push({
-        name: value.name,
-        path: saved.storedPath,
-        mimeType: saved.mimeType,
-      });
+      if (!hasAllowedExtension(value.name, DOCUMENT_UPLOAD_EXTENSIONS)) {
+        return NextResponse.json(
+          { error: "Supported uploads: PDF, CSV, XLSX, XLS, DOCX, PNG, and JPEG" },
+          { status: 400 },
+        );
+      }
+      attachmentFiles.push(value);
     }
+  }
+
+  const attachmentMeta: Array<{
+    name: string;
+    path: string;
+    mimeType: string;
+    size: number;
+  }> = [];
+  for (const file of attachmentFiles) {
+    const saved = await saveUploadedFile(file);
+    attachmentMeta.push({
+      name: file.name,
+      path: saved.storedPath,
+      mimeType: saved.mimeType,
+      size: saved.size,
+    });
   }
 
   const outcome = await createAndSendCreditRequest({

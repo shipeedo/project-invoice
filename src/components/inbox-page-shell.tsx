@@ -3,6 +3,7 @@
 import { usePathname } from "next/navigation";
 import {
   AppShellView,
+  type AiBalanceWarning,
   type MailboxConnectionSummary,
 } from "@/components/app-shell-view";
 import { InboxLayout } from "@/components/inbox-layout";
@@ -23,6 +24,7 @@ type InboxPageShellProps = {
   };
   navCounts?: NavCounts;
   mailboxConnection?: MailboxConnectionSummary | null;
+  aiBalanceWarning?: AiBalanceWarning | null;
   children: React.ReactNode;
 };
 
@@ -37,6 +39,7 @@ export function InboxPageShell({
   sync,
   navCounts,
   mailboxConnection,
+  aiBalanceWarning,
   children,
 }: InboxPageShellProps) {
   const pathname = usePathname();
@@ -60,6 +63,7 @@ export function InboxPageShell({
       fillViewport
       breadcrumbs={breadcrumbs}
       mailboxConnection={mailboxConnection}
+      aiBalanceWarning={aiBalanceWarning}
     >
       <InboxLayout threads={threads} activeThreadId={activeThreadId} sync={sync}>
         {children}

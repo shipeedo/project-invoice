@@ -51,6 +51,7 @@ export async function processUploadedInvoice(params: {
   });
 
   let extraction = await extractInvoiceFromDocument(
+    params.organizationId,
     params.filePath,
     params.fileName,
     params.mimeType,
@@ -70,6 +71,7 @@ export async function processUploadedInvoice(params: {
     );
     if (supplierHasCustomExtraction(supplierContext)) {
       extraction = await extractInvoiceFromDocument(
+        params.organizationId,
         params.filePath,
         params.fileName,
         params.mimeType,
@@ -98,6 +100,7 @@ export async function processUploadedInvoice(params: {
       subtotalAmount: extraction.data?.subtotal,
       taxAmount: extraction.data?.taxAmount,
       currency: extraction.data?.currency ?? "AUD",
+      accountReference: extraction.data?.accountReference ?? null,
       extractionRaw: extraction.raw ? JSON.stringify(extraction.raw) : null,
       parseError: extraction.error ?? null,
       supplierId: supplier?.id ?? null,

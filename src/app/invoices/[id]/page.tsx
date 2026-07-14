@@ -2,25 +2,27 @@ import { and, asc, desc, eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { InvoiceCreditsSection } from "@/components/invoice-credits-section";
+import { InvoiceActionsMenu } from "@/components/invoice-actions-menu";
 import { InvoiceAttachmentPreviews } from "@/components/invoice-attachment-previews";
-import { InvoiceSourceAttachments } from "@/components/invoice-source-attachments";
 import { InvoiceSourceEmailSheet } from "@/components/invoice-source-email-sheet";
 import { InvoiceAssigneeControl } from "@/components/invoice-assignee-control";
-import { InvoiceHeaderActions } from "@/components/invoice-header-actions";
-import { InvoiceReprocessButton } from "@/components/invoice-reprocess-button";
-import { InvoiceTrashActions } from "@/components/invoice-trash-actions";
+import { InvoiceDocumentsCard } from "@/components/invoice-documents-card";
+import { InvoiceNotesSheet } from "@/components/invoice-notes-sheet";
 import { InvoiceDueDate } from "@/components/invoice-due-date";
 import { InvoiceValidationPanel } from "@/components/invoice-validation-panel";
 import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   auditEvents,
   creditRequests,
   db,
+  invoiceDocuments,
   invoices,
   mailboxMessages,
   notes,
+  rebills,
   suppliers,
   users,
 } from "@/lib/db";
@@ -39,6 +41,7 @@ import { requireSession, formatCurrency, formatDate } from "@/lib/session";
 
 type PageProps = {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ note?: string }>;
 };
 
 function toDateInput(value: Date | null | undefined) {
@@ -50,8 +53,10 @@ type SourceAttachment = {
   key: string;
   fileName: string;
   href: string;
+  previewHref: string;
   mimeType?: string | null;
   filePath: string | null;
+  size: number | null;
   isPrimary: boolean;
 };
 
@@ -65,6 +70,7 @@ function getSourceAttachments(invoice: {
     fileName: string;
     filePath: string;
     mimeType: string | null;
+    size: number | null;
     isPrimary: boolean | null;
   }>;
 }): SourceAttachment[] {
@@ -73,8 +79,10 @@ function getSourceAttachments(invoice: {
       key: attachment.id,
       fileName: attachment.fileName,
       href: `/api/invoices/${invoice.id}/attachments/${attachment.id}`,
+      previewHref: `/api/invoices/${invoice.id}/preview?attachmentId=${attachment.id}`,
       mimeType: attachment.mimeType,
       filePath: attachment.filePath,
+      size: attachment.size,
       isPrimary: attachment.isPrimary ?? false,
     }));
   }
@@ -85,8 +93,10 @@ function getSourceAttachments(invoice: {
         key: "primary-file",
         fileName: invoice.originalFileName ?? "Attachment",
         href: `/api/invoices/${invoice.id}/file`,
+        previewHref: `/api/invoices/${invoice.id}/preview?file=1`,
         mimeType: invoice.fileMimeType,
         filePath: invoice.filePath,
+        size: null,
         isPrimary: true,
       },
     ];
@@ -95,9 +105,10 @@ function getSourceAttachments(invoice: {
   return [];
 }
 
-export default async function InvoiceDetailPage({ params }: PageProps) {
+export default async function InvoiceDetailPage({ params, searchParams }: PageProps) {
   const session = await requireSession();
   const { id } = await params;
+  const { note: deepLinkedNoteId } = await searchParams;
   const navCountsPromise = getNavCounts(session.user.organizationId, session.user.id);
 
   const invoice = await db.query.invoices.findFirst({
@@ -111,7 +122,22 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
       validatedBy: { columns: { name: true, email: true } },
       deletedBy: { columns: { name: true, email: true } },
       attachments: true,
-      notes: { orderBy: desc(notes.createdAt) },
+      notes: {
+        orderBy: desc(notes.createdAt),
+        with: {
+          user: { columns: { name: true, email: true } },
+          document: { columns: { id: true, fileName: true } },
+        },
+      },
+      documents: {
+        orderBy: desc(invoiceDocuments.createdAt),
+        with: {
+          uploadedBy: { columns: { name: true, email: true } },
+          rebill: { columns: { customerName: true } },
+          creditRequest: { columns: { subject: true } },
+        },
+      },
+      rebills: { orderBy: desc(rebills.createdAt) },
       auditEvents: {
         with: { user: { columns: { name: true, email: true } } },
         orderBy: desc(auditEvents.createdAt),
@@ -159,6 +185,50 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
 
   const sourceAttachments = getSourceAttachments(invoice);
 
+  const latestRebill = invoice.rebills[0] ?? null;
+  const hasCreditDocument = invoice.documents.some(
+    (document) => document.kind === "CREDIT",
+  );
+
+  const noteItems = invoice.notes.map((note) => ({
+    id: note.id,
+    content: note.content,
+    createdAt: note.createdAt.toISOString(),
+    authorId: note.userId,
+    authorName: note.user ? (note.user.name ?? note.user.email) : null,
+    document: note.document
+      ? { id: note.document.id, fileName: note.document.fileName }
+      : null,
+  }));
+
+  const documentItems = invoice.documents.map((document) => ({
+    id: document.id,
+    fileName: document.fileName,
+    mimeType: document.mimeType,
+    kind: document.kind,
+    size: document.size,
+    createdAt: document.createdAt.toISOString(),
+    uploaderName: document.uploadedBy
+      ? (document.uploadedBy.name ?? document.uploadedBy.email)
+      : null,
+    rebillCustomerName: document.rebill?.customerName ?? null,
+    creditRequestSubject: document.creditRequest?.subject ?? null,
+  }));
+
+  // Source files (email attachments or the uploaded file) shown as the
+  // "Original" group at the top of the Documents card.
+  const receivedAtIso = (invoice.emailReceivedAt ?? invoice.createdAt).toISOString();
+  const originalItems = sourceAttachments.map((attachment) => ({
+    key: attachment.key,
+    fileName: attachment.fileName,
+    mimeType: attachment.mimeType ?? null,
+    size: attachment.size,
+    receivedAt: receivedAtIso,
+    isPrimary: attachment.isPrimary,
+    streamUrl: attachment.href,
+    previewUrl: attachment.previewHref,
+  }));
+
   const sourceMessage =
     invoice.sourceType === "EMAIL"
       ? await db.query.mailboxMessages.findFirst({
@@ -199,7 +269,7 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
     <Card className="flex h-full flex-col">
       <CardHeader className="pb-3">
         <CardTitle>
-          {invoice.sourceType === "EMAIL" ? "Source email & attachments" : "Source file"}
+          {invoice.sourceType === "EMAIL" ? "Source email" : "Source file"}
         </CardTitle>
       </CardHeader>
       <CardContent className="flex flex-1 flex-col gap-5">
@@ -232,13 +302,15 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
                 <InvoiceSourceEmailSheet email={sourceEmail} />
               </div>
             ) : null}
+            <p className="text-sm text-muted-foreground">
+              Email attachments are listed under Documents.
+            </p>
           </>
-        ) : null}
-
-        {sourceAttachments.length > 0 ? (
-          <InvoiceSourceAttachments attachments={sourceAttachments} />
-        ) : invoice.sourceType === "EMAIL" ? (
-          <p className="text-sm text-muted-foreground">No attachments available.</p>
+        ) : sourceAttachments.length > 0 ? (
+          <p className="text-sm text-muted-foreground">
+            Uploaded as “{sourceAttachments[0].fileName}”. The original file is
+            listed under Documents.
+          </p>
         ) : (
           <p className="text-sm text-muted-foreground">No source file available.</p>
         )}
@@ -267,6 +339,14 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
                 {invoice.vendorName ?? invoice.originalFileName ?? "Invoice"}
               </h2>
               <StatusBadge status={invoice.status} />
+              {hasCreditDocument ? (
+                <Badge
+                  variant="outline"
+                  className="border-amber-500/60 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                >
+                  Credit attached
+                </Badge>
+              ) : null}
             </div>
             <p className="mt-1 text-sm text-muted-foreground">
               Received {formatDate(invoice.createdAt)}
@@ -276,6 +356,10 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
               {invoice.assignedTo
                 ? ` · Assigned to ${invoice.assignedTo.name ?? invoice.assignedTo.email}`
                 : null}
+              {latestRebill ? ` · Rebilled to ${latestRebill.customerName}` : null}
+              {invoice.accountReference
+                ? ` · Account ref: ${invoice.accountReference}`
+                : null}
             </p>
             {invoice.supplier ? (
               <p className="mt-1 text-sm text-muted-foreground">
@@ -284,51 +368,44 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
             ) : null}
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
-            {inTrash ? (
-              <InvoiceTrashActions
+            {!inTrash ? (
+              <InvoiceAssigneeControl
                 invoiceId={invoice.id}
-                deletedAt={invoice.deletedAt}
-                vendorName={invoice.vendorName ?? invoice.originalFileName}
+                assignedToId={invoice.assignedToId}
+                assignedToName={
+                  invoice.assignedTo
+                    ? (invoice.assignedTo.name ?? invoice.assignedTo.email)
+                    : null
+                }
+                currentUserId={session.user.id}
+                status={invoice.status}
               />
-            ) : (
-              <>
-                <InvoiceAssigneeControl
-                  invoiceId={invoice.id}
-                  assignedToId={invoice.assignedToId}
-                  assignedToName={
-                    invoice.assignedTo
-                      ? (invoice.assignedTo.name ?? invoice.assignedTo.email)
-                      : null
-                  }
-                  currentUserId={session.user.id}
-                  status={invoice.status}
-                />
-                {invoice.status === "DRAFT" ? (
-                  <InvoiceReprocessButton
-                    invoiceId={invoice.id}
-                    sourceType={invoice.sourceType}
-                    attachments={sourceAttachments.map((attachment) => ({
-                      id: attachment.key,
-                      fileName: attachment.fileName,
-                      mimeType: attachment.mimeType,
-                      isPrimary: attachment.isPrimary,
-                    }))}
-                  />
-                ) : null}
-                <InvoiceHeaderActions
-                  invoiceId={invoice.id}
-                  status={invoice.status}
-                  validatedAt={invoice.validatedAt}
-                  assignedToId={invoice.assignedToId}
-                  currentUserId={session.user.id}
-                  currentUserRole={session.user.role}
-                />
-                <InvoiceTrashActions
-                  invoiceId={invoice.id}
-                  vendorName={invoice.vendorName ?? invoice.originalFileName}
-                />
-              </>
-            )}
+            ) : null}
+            <InvoiceNotesSheet
+              invoiceId={invoice.id}
+              notes={noteItems}
+              canCompose={!inTrash}
+              currentUserId={session.user.id}
+              initialNoteId={deepLinkedNoteId ?? null}
+            />
+            <InvoiceActionsMenu
+              invoiceId={invoice.id}
+              status={invoice.status}
+              validatedAt={invoice.validatedAt}
+              assignedToId={invoice.assignedToId}
+              currentUserId={session.user.id}
+              currentUserRole={session.user.role}
+              inTrash={inTrash}
+              vendorName={invoice.vendorName ?? invoice.originalFileName}
+              sourceType={invoice.sourceType}
+              currency={invoice.currency ?? "AUD"}
+              reprocessAttachments={sourceAttachments.map((attachment) => ({
+                id: attachment.key,
+                fileName: attachment.fileName,
+                mimeType: attachment.mimeType,
+                isPrimary: attachment.isPrimary,
+              }))}
+            />
           </div>
         </div>
 
@@ -475,9 +552,12 @@ export default async function InvoiceDetailPage({ params }: PageProps) {
           </div>
         )}
 
-        {!awaitingValidation || inTrash ? (
-          <InvoiceAttachmentPreviews attachments={sourceAttachments} />
-        ) : null}
+        <InvoiceDocumentsCard
+          invoiceId={invoice.id}
+          originals={originalItems}
+          documents={documentItems}
+          canModify={!inTrash}
+        />
 
         <InvoiceCreditsSection
           invoiceId={invoice.id}

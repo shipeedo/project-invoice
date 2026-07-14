@@ -1,4 +1,4 @@
-import { callAiChatCompletion } from "@/lib/ai-chat";
+import { callAiChatCompletion, type AiUsage } from "@/lib/ai-chat";
 import { extractTextFromDocument } from "@/lib/document-text";
 import {
   buildInvoiceExtractionFromEmailUserPrompt,
@@ -35,6 +35,7 @@ export type ExtractedInvoice = {
   subtotal?: number;
   taxAmount?: number;
   currency?: string;
+  accountReference?: string;
   confidence?: string;
   notes?: string;
 };
@@ -46,22 +47,27 @@ export type ExtractionDocumentText = {
   text: string;
 };
 
+export type ExtractionResult = {
+  data: ExtractedInvoice | null;
+  raw: unknown;
+  usage?: AiUsage | null;
+  model?: string | null;
+  error?: string;
+};
+
 export async function extractTextFromPdf(filePath: string): Promise<string> {
   const { text } = await extractTextFromDocument(filePath, "invoice.pdf", "application/pdf");
   return text;
 }
 
 export async function extractInvoiceFromDocument(
+  organizationId: string,
   filePath: string,
   fileName: string,
   mimeType: string,
   supplierContext?: SupplierExtractionContext | null,
   emailContext?: EmailExtractionContext | null,
-): Promise<{
-  data: ExtractedInvoice | null;
-  raw: unknown;
-  error?: string;
-}> {
+): Promise<ExtractionResult> {
   let text: string;
   try {
     const extracted = await extractTextFromDocument(filePath, fileName, mimeType);
@@ -83,6 +89,7 @@ export async function extractInvoiceFromDocument(
   }
 
   return extractInvoiceFromDocumentText(
+    organizationId,
     fileName,
     text,
     supplierContext,
@@ -96,14 +103,11 @@ export async function extractInvoiceFromDocument(
  * AI call, so the model reconciles header fields and totals across documents.
  */
 export async function extractInvoiceFromDocumentTexts(
+  organizationId: string,
   documents: ExtractionDocumentText[],
   supplierContext?: SupplierExtractionContext | null,
   emailContext?: EmailExtractionContext | null,
-): Promise<{
-  data: ExtractedInvoice | null;
-  raw: unknown;
-  error?: string;
-}> {
+): Promise<ExtractionResult> {
   const usableDocuments = documents
     .map((document) => ({
       fileName: document.fileName,
@@ -125,20 +129,18 @@ export async function extractInvoiceFromDocumentTexts(
     emailContext ?? undefined,
   );
 
-  return callExtractionAI({ systemPrompt, userPrompt });
+  return callExtractionAI({ organizationId, systemPrompt, userPrompt });
 }
 
 export async function extractInvoiceFromDocumentText(
+  organizationId: string,
   fileName: string,
   text: string,
   supplierContext?: SupplierExtractionContext | null,
   emailContext?: EmailExtractionContext | null,
-): Promise<{
-  data: ExtractedInvoice | null;
-  raw: unknown;
-  error?: string;
-}> {
+): Promise<ExtractionResult> {
   return extractInvoiceFromDocumentTexts(
+    organizationId,
     [{ fileName, text }],
     supplierContext,
     emailContext,
@@ -146,16 +148,14 @@ export async function extractInvoiceFromDocumentText(
 }
 
 export async function extractInvoiceFromPdf(
+  organizationId: string,
   filePath: string,
   fileName: string,
   supplierContext?: SupplierExtractionContext | null,
   emailContext?: EmailExtractionContext | null,
-): Promise<{
-  data: ExtractedInvoice | null;
-  raw: unknown;
-  error?: string;
-}> {
+): Promise<ExtractionResult> {
   return extractInvoiceFromDocument(
+    organizationId,
     filePath,
     fileName,
     "application/pdf",
@@ -165,6 +165,7 @@ export async function extractInvoiceFromPdf(
 }
 
 export async function extractInvoiceFromEmailBody(
+  organizationId: string,
   params: {
     subject?: string | null;
     fromEmail?: string | null;
@@ -173,11 +174,7 @@ export async function extractInvoiceFromEmailBody(
     attachmentNames?: string[];
   },
   supplierContext?: SupplierExtractionContext | null,
-): Promise<{
-  data: ExtractedInvoice | null;
-  raw: unknown;
-  error?: string;
-}> {
+): Promise<ExtractionResult> {
   const trimmedBody = params.bodyText.trim();
   if (!trimmedBody) {
     return {
@@ -196,17 +193,14 @@ export async function extractInvoiceFromEmailBody(
     attachmentNames: params.attachmentNames,
   });
 
-  return callExtractionAI({ systemPrompt, userPrompt });
+  return callExtractionAI({ organizationId, systemPrompt, userPrompt });
 }
 
 async function callExtractionAI(params: {
+  organizationId: string;
   systemPrompt: string;
   userPrompt: string;
-}): Promise<{
-  data: ExtractedInvoice | null;
-  raw: unknown;
-  error?: string;
-}> {
+}): Promise<ExtractionResult> {
   try {
     const result = await callAiChatCompletion(params);
     if ("error" in result) {
@@ -224,6 +218,8 @@ async function callExtractionAI(params: {
     return {
       data: parsed,
       raw: result.raw,
+      usage: result.usage,
+      model: result.model,
     };
   } catch (error) {
     return {
@@ -272,6 +268,20 @@ function normalizeDocumentType(value: unknown): ExtractedDocumentType | undefine
     : undefined;
 }
 
+const MAX_ACCOUNT_REFERENCE_CHARS = 200;
+
+// The model occasionally returns numeric account identifiers as JSON numbers.
+function normalizeAccountReference(value: unknown): string | undefined {
+  const text =
+    typeof value === "string"
+      ? value
+      : typeof value === "number" && Number.isFinite(value)
+        ? String(value)
+        : "";
+  const trimmed = text.trim().slice(0, MAX_ACCOUNT_REFERENCE_CHARS).trim();
+  return trimmed || undefined;
+}
+
 export function normalizeExtractedInvoice(raw: ExtractedInvoice): ExtractedInvoice {
   return {
     documentType: normalizeDocumentType(raw.documentType),
@@ -285,6 +295,7 @@ export function normalizeExtractedInvoice(raw: ExtractedInvoice): ExtractedInvoi
     subtotal: toNumber(raw.subtotal),
     taxAmount: toNumber(raw.taxAmount),
     currency: raw.currency?.trim().toUpperCase() || "AUD",
+    accountReference: normalizeAccountReference(raw.accountReference),
     confidence: raw.confidence ?? undefined,
     notes: raw.notes?.trim() || undefined,
   };

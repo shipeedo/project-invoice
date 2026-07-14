@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   AlertTriangleIcon,
@@ -11,13 +12,12 @@ import {
   ListChecksIcon,
   MailIcon,
   PencilIcon,
-  PlugIcon,
   ReceiptIcon,
   RouteIcon,
+  Settings2Icon,
   Trash2Icon,
   TruckIcon,
   UserIcon,
-  UsersIcon,
 } from "lucide-react";
 import type { UserRole } from "@/lib/db/types";
 import type { InvoiceFilterCounts, NavCounts } from "@/lib/nav-counts";
@@ -29,9 +29,14 @@ import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
+  SidebarGroup,
   SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
   SidebarRail,
 } from "@/components/ui/sidebar";
+import { cn } from "@/lib/utils";
 
 type AppSidebarProps = React.ComponentProps<typeof Sidebar> & {
   user: {
@@ -44,6 +49,9 @@ type AppSidebarProps = React.ComponentProps<typeof Sidebar> & {
   mailboxConnection?: {
     email: string;
     lastSyncedLabel: string | null;
+  } | null;
+  aiBalanceWarning?: {
+    balance: number;
   } | null;
 };
 
@@ -71,6 +79,7 @@ export function AppSidebar({
   activePath,
   navCounts,
   mailboxConnection,
+  aiBalanceWarning,
   ...props
 }: AppSidebarProps) {
   const isAdmin = user.role === "ADMIN";
@@ -112,6 +121,18 @@ export function AppSidebar({
       isActive: activePath === "/credits",
       badge: navCounts?.credits,
     },
+    {
+      title: "Routing rules",
+      url: "/routing-rules",
+      icon: <RouteIcon />,
+      isActive: activePath === "/routing-rules",
+    },
+    {
+      title: "Suppliers",
+      url: "/suppliers",
+      icon: <TruckIcon />,
+      isActive: activePath === "/suppliers",
+    },
     ...(isAdmin
       ? [
           {
@@ -121,48 +142,34 @@ export function AppSidebar({
             isActive: activePath === "/processing",
             badge: navCounts?.processing,
           },
-          {
-            title: "Routing rules",
-            url: "/admin/routing-rules",
-            icon: <RouteIcon />,
-            isActive: activePath === "/admin/routing-rules",
-          },
-          {
-            title: "Suppliers",
-            url: "/admin/suppliers",
-            icon: <TruckIcon />,
-            isActive: activePath === "/admin/suppliers",
-          },
-          {
-            title: "Users",
-            url: "/admin/users",
-            icon: <UsersIcon />,
-            isActive: activePath === "/admin/users",
-          },
         ]
       : []),
   ];
 
+  // The connected mailbox card, pinned above Invoices for admins.
+  const mailboxProjects =
+    isAdmin && mailboxConnection
+      ? [
+          {
+            name: mailboxConnection.email,
+            subtitle: mailboxConnection.lastSyncedLabel
+              ? `Synced ${mailboxConnection.lastSyncedLabel}`
+              : "Not synced yet",
+            url: "/admin/o365",
+            icon: <MailIcon />,
+            isActive: activePath === "/admin/o365",
+          },
+        ]
+      : [];
+
   const adminProjects = isAdmin
     ? [
-        mailboxConnection
-          ? {
-              name: mailboxConnection.email,
-              subtitle: mailboxConnection.lastSyncedLabel
-                ? `Synced ${mailboxConnection.lastSyncedLabel}`
-                : "Not synced yet",
-              url: "/admin/o365",
-              icon: <MailIcon />,
-              isActive: activePath === "/admin/o365",
-            }
-          : {
-              name: "Connections",
-              url: "/admin/connections",
-              icon: <PlugIcon />,
-              isActive:
-                activePath === "/admin/connections" ||
-                activePath === "/admin/o365",
-            },
+        {
+          name: "Settings",
+          url: "/admin/settings",
+          icon: <Settings2Icon />,
+          isActive: activePath === "/admin/settings",
+        },
       ]
     : [];
 
@@ -180,9 +187,16 @@ export function AppSidebar({
         />
       </SidebarHeader>
       <SidebarContent>
+        <NavProjects projects={mailboxProjects} label="" />
         <NavMain items={invoiceItems} label="Invoices" />
         <NavMain items={navItems} label="Workspace" />
         <NavProjects projects={adminProjects} label="Admin" />
+        {aiBalanceWarning ? (
+          <AiLowBalanceWarning
+            balance={aiBalanceWarning.balance}
+            isAdmin={isAdmin}
+          />
+        ) : null}
       </SidebarContent>
       <SidebarFooter>
         <NavUser
@@ -195,5 +209,46 @@ export function AppSidebar({
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>
+  );
+}
+
+// Low AI-credit warning shown to every user. Admins can act on it (links to the
+// AI settings page); other users just see the informational notice.
+function AiLowBalanceWarning({
+  balance,
+  isAdmin,
+}: {
+  balance: number;
+  isAdmin: boolean;
+}) {
+  const label = `AI credits low: $${balance.toFixed(2)}`;
+  const className =
+    "text-amber-600 hover:text-amber-600 dark:text-amber-500 dark:hover:text-amber-500";
+
+  return (
+    <SidebarGroup className="mt-auto">
+      <SidebarMenu>
+        <SidebarMenuItem>
+          {isAdmin ? (
+            <SidebarMenuButton
+              tooltip={label}
+              className={className}
+              render={<Link href="/admin/settings#ai-provider" />}
+            >
+              <AlertTriangleIcon />
+              <span>{label}</span>
+            </SidebarMenuButton>
+          ) : (
+            <SidebarMenuButton
+              tooltip={label}
+              className={cn(className, "cursor-default")}
+            >
+              <AlertTriangleIcon />
+              <span>{label}</span>
+            </SidebarMenuButton>
+          )}
+        </SidebarMenuItem>
+      </SidebarMenu>
+    </SidebarGroup>
   );
 }

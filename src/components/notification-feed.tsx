@@ -13,6 +13,7 @@ export type NotificationItem = {
   type: string;
   title: string;
   body: string;
+  url: string | null;
   readAt: string | null;
   createdAt: string;
 };
@@ -88,7 +89,9 @@ export function NotificationFeedList({
           type="button"
           onClick={() => {
             onNavigate?.();
-            if (item.invoiceId) {
+            if (item.url) {
+              router.push(item.url);
+            } else if (item.invoiceId) {
               router.push(`/invoices/${item.invoiceId}`);
             }
           }}

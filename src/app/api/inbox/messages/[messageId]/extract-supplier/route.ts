@@ -36,6 +36,7 @@ export async function POST(_request: Request, context: RouteContext) {
   });
 
   const extraction = await extractSupplierFromEmailThread({
+    organizationId: session.user.organizationId,
     messages: threadMessages,
     focusMessageId: message.id,
   });

@@ -1,4 +1,5 @@
 import { ExternalLinkIcon, FileTextIcon } from "lucide-react";
+import { SpreadsheetPreviewGrid } from "@/components/spreadsheet-preview-grid";
 import { readSpreadsheetPreview } from "@/lib/attachment-preview";
 import { classifyAttachment, isInvoiceLikeAttachment } from "@/lib/attachment-types";
 
@@ -64,59 +65,7 @@ async function SpreadsheetPreviewBlock({
     return <FallbackRow attachment={attachment} />;
   }
 
-  return (
-    <div className="space-y-3">
-      {preview.sheets.map((sheet) => (
-        <div key={sheet.name} className="overflow-hidden rounded-lg border">
-          {/* Plain table (not the shadcn Table wrapper): the wrapper's own
-              overflow container would break position:sticky against this
-              scroll area, and border-separate keeps the header's borders
-              attached while the body scrolls underneath. */}
-          <div className="max-h-[60vh] overflow-auto">
-            <table className="w-full border-separate border-spacing-0 text-sm">
-              {sheet.rows.length > 0 ? (
-                <thead>
-                  <tr>
-                    {sheet.rows[0].map((cell, cellIndex) => (
-                      <th
-                        key={cellIndex}
-                        className="sticky top-0 z-10 border-r border-b bg-muted px-2.5 py-2 text-left text-xs font-semibold whitespace-nowrap last:border-r-0"
-                      >
-                        {cell}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-              ) : null}
-              <tbody className="[&>tr:last-child>td]:border-b-0">
-                {sheet.rows.slice(1).map((row, rowIndex) => (
-                  <tr key={rowIndex} className="hover:bg-muted/30">
-                    {row.map((cell, cellIndex) => (
-                      <td
-                        key={cellIndex}
-                        className="border-r border-b px-2.5 py-1.5 whitespace-nowrap tabular-nums last:border-r-0"
-                      >
-                        {cell}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {sheet.truncated || preview.sheets.length > 1 ? (
-            <p className="border-t bg-muted/50 px-3 py-1.5 text-xs text-muted-foreground">
-              {preview.sheets.length > 1 ? `Sheet: ${sheet.name}` : null}
-              {preview.sheets.length > 1 && sheet.truncated ? " · " : null}
-              {sheet.truncated
-                ? "Preview truncated — open the file for the full data."
-                : null}
-            </p>
-          ) : null}
-        </div>
-      ))}
-    </div>
-  );
+  return <SpreadsheetPreviewGrid preview={preview} />;
 }
 
 function AttachmentPreview({ attachment }: { attachment: PreviewAttachment }) {

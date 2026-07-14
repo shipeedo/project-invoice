@@ -8,6 +8,7 @@ import {
   type ProcessingJob,
 } from "@/lib/db";
 import type { ProcessingJobStatus } from "@/lib/db/types";
+import { getAiCallCostUsd, refreshAiCredits } from "@/lib/ai-connector";
 import { emailHasProcessableInvoiceSource } from "@/lib/invoice-portals";
 import { processStoredMailboxMessage } from "@/lib/o365/process-email";
 
@@ -154,6 +155,10 @@ async function finalizeJob(
     outcome?: string | null;
     invoiceId?: string | null;
     lastError?: string | null;
+    aiModel?: string | null;
+    promptTokens?: number | null;
+    completionTokens?: number | null;
+    costUsd?: number | null;
   },
 ) {
   await db
@@ -163,6 +168,10 @@ async function finalizeJob(
       outcome: fields.outcome ?? null,
       invoiceId: fields.invoiceId ?? null,
       lastError: fields.lastError ?? null,
+      aiModel: fields.aiModel ?? null,
+      promptTokens: fields.promptTokens ?? null,
+      completionTokens: fields.completionTokens ?? null,
+      costUsd: fields.costUsd ?? null,
       finishedAt: fields.status === "PENDING" ? null : new Date(),
       updatedAt: new Date(),
     })
@@ -198,10 +207,16 @@ async function processJob(job: ProcessingJob): Promise<boolean> {
       return true;
     }
 
+    const usage = result.outcome.usage;
+    const costUsd = await getAiCallCostUsd(job.organizationId, usage);
     await finalizeJob(job.id, {
       status: "COMPLETED",
       outcome: "invoice_created",
       invoiceId: result.outcome.invoice.id,
+      aiModel: result.outcome.model ?? null,
+      promptTokens: usage?.promptTokens ?? null,
+      completionTokens: usage?.completionTokens ?? null,
+      costUsd,
     });
     return true;
   } catch (error) {
@@ -237,6 +252,7 @@ export async function runProcessingQueue(): Promise<ProcessingQueueRun> {
 
     const concurrency = resolveProcessingConcurrency();
     const attemptedIds = new Set<string>();
+    const touchedOrgIds = new Set<string>();
 
     await Promise.all(
       Array.from({ length: concurrency }, async () => {
@@ -244,6 +260,7 @@ export async function runProcessingQueue(): Promise<ProcessingQueueRun> {
           const job = claimNextJob(attemptedIds);
           if (!job) break;
           attemptedIds.add(job.id);
+          touchedOrgIds.add(job.organizationId);
           const succeeded = await processJob(job);
           if (succeeded) {
             stats.processed += 1;
@@ -253,6 +270,12 @@ export async function runProcessingQueue(): Promise<ProcessingQueueRun> {
         }
       }),
     );
+
+    // Keep the cached gateway balance (used by the sidebar warning) reasonably
+    // fresh without paying for a network call on every page render.
+    for (const orgId of touchedOrgIds) {
+      await refreshAiCredits(orgId);
+    }
 
     return stats;
   } finally {

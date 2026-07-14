@@ -99,6 +99,10 @@ export const invoices = sqliteTable("invoices", {
   subtotalAmount: real("subtotal_amount"),
   taxAmount: real("tax_amount"),
   currency: text("currency").default("AUD"),
+  // The customer/account identifier printed on the invoice. Suppliers label it
+  // differently (Account, Cost centre, Reference, Department); extraction
+  // normalizes whichever appears into this one field for routing.
+  accountReference: text("account_reference"),
   extractionRaw: text("extraction_raw"),
   parseError: text("parse_error"),
   supplierId: text("supplier_id").references(() => suppliers.id, {
@@ -133,15 +137,78 @@ export const invoices = sqliteTable("invoices", {
   updatedAt: updatedAt(),
 });
 
+// A note attaches to exactly one of invoiceId/supplierId (enforced in the API,
+// not the schema). documentId additionally links a note to an uploaded document
+// on the same invoice.
 export const notes = sqliteTable("notes", {
   id: text("id")
     .primaryKey()
     .$defaultFn(() => createId()),
+  invoiceId: text("invoice_id").references(() => invoices.id, {
+    onDelete: "cascade",
+  }),
+  supplierId: text("supplier_id").references(() => suppliers.id, {
+    onDelete: "cascade",
+  }),
+  documentId: text("document_id").references(() => invoiceDocuments.id, {
+    onDelete: "set null",
+  }),
+  userId: text("user_id"),
+  content: text("content").notNull(),
+  createdAt: timestamp(),
+});
+
+// A rebill passes an invoice's charges on to a customer; the accounts team
+// raises the sales invoice in the accounting system from the attached documents.
+export const rebills = sqliteTable("rebills", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => createId()),
+  organizationId: text("organization_id")
+    .notNull()
+    .references(() => organizations.id, { onDelete: "cascade" }),
   invoiceId: text("invoice_id")
     .notNull()
     .references(() => invoices.id, { onDelete: "cascade" }),
-  userId: text("user_id"),
-  content: text("content").notNull(),
+  customerName: text("customer_name").notNull(),
+  // Optional customer/account reference quoted on the sales invoice.
+  reference: text("reference"),
+  createdById: text("created_by_id").references(() => users.id, {
+    onDelete: "set null",
+  }),
+  createdAt: timestamp(),
+});
+
+// User-uploaded documents on an invoice (distinct from invoiceAttachments,
+// which are the source files that arrived with the invoice itself).
+export const invoiceDocuments = sqliteTable("invoice_documents", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => createId()),
+  organizationId: text("organization_id")
+    .notNull()
+    .references(() => organizations.id, { onDelete: "cascade" }),
+  invoiceId: text("invoice_id")
+    .notNull()
+    .references(() => invoices.id, { onDelete: "cascade" }),
+  // Set when the document was uploaded as part of a rebill.
+  rebillId: text("rebill_id").references(() => rebills.id, {
+    onDelete: "set null",
+  }),
+  // Set when the document arrived via the credit request workflow.
+  creditRequestId: text("credit_request_id").references(() => creditRequests.id, {
+    onDelete: "set null",
+  }),
+  uploadedById: text("uploaded_by_id").references(() => users.id, {
+    onDelete: "set null",
+  }),
+  fileName: text("file_name").notNull(),
+  filePath: text("file_path").notNull(),
+  mimeType: text("mime_type"),
+  size: integer("size"),
+  kind: text("kind", { enum: ["GENERAL", "REBILL", "CREDIT"] })
+    .notNull()
+    .default("GENERAL"),
   createdAt: timestamp(),
 });
 
@@ -154,8 +221,17 @@ export const routingRules = sqliteTable("routing_rules", {
     .references(() => organizations.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   priority: integer("priority").notNull(),
+  // COMBO rules AND together several conditions; their condition JSON holds a
+  // `conditions` array. The other types are legacy single-condition shapes.
   type: text("type", {
-    enum: ["SUPPLIER", "SENDER_EMAIL", "AMOUNT_THRESHOLD", "PARSE_FAILURE", "DEFAULT"],
+    enum: [
+      "SUPPLIER",
+      "SENDER_EMAIL",
+      "AMOUNT_THRESHOLD",
+      "PARSE_FAILURE",
+      "COMBO",
+      "DEFAULT",
+    ],
   }).notNull(),
   condition: text("condition").notNull(),
   approverId: text("approver_id").references(() => users.id, {
@@ -243,6 +319,41 @@ export const o365Connections = sqliteTable("o365_connections", {
     onDelete: "set null",
   }),
   connectedAt: integer("connected_at", { mode: "timestamp_ms" }),
+  createdAt: timestamp(),
+  updatedAt: updatedAt(),
+});
+
+export const aiConnectors = sqliteTable("ai_connectors", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => createId()),
+  organizationId: text("organization_id")
+    .notNull()
+    .unique()
+    .references(() => organizations.id, { onDelete: "cascade" }),
+  connectorType: text("connector_type", {
+    enum: ["AI_GATEWAY", "OPENAI_COMPATIBLE"],
+  })
+    .notNull()
+    .default("OPENAI_COMPATIBLE"),
+  // Encrypted with the shared AUTH_SECRET-derived key. Never returned by the API.
+  apiKeyEncrypted: text("api_key_encrypted"),
+  // Required for OPENAI_COMPATIBLE (e.g. http://127.0.0.1:8000/v1). Null for the
+  // AI Gateway, which uses its fixed hosted URL.
+  baseUrl: text("base_url"),
+  // Gateway model id (e.g. openai/gpt-4o-mini) or a manual model name.
+  model: text("model"),
+  // Per-token USD pricing snapshotted from the gateway /v1/models list when the
+  // model is selected, so per-call cost is computed without a network round-trip.
+  modelInputPrice: real("model_input_price"),
+  modelOutputPrice: real("model_output_price"),
+  // Cached gateway credit balance for the sidebar low-balance warning, refreshed
+  // opportunistically so it is never fetched during a page render.
+  creditsBalance: real("credits_balance"),
+  creditsCheckedAt: integer("credits_checked_at", { mode: "timestamp_ms" }),
+  configuredById: text("configured_by_id").references(() => users.id, {
+    onDelete: "set null",
+  }),
   createdAt: timestamp(),
   updatedAt: updatedAt(),
 });
@@ -398,6 +509,12 @@ export const processingJobs = sqliteTable(
     invoiceId: text("invoice_id").references(() => invoices.id, {
       onDelete: "set null",
     }),
+    // AI usage/cost snapshot captured when the extraction ran. costUsd is only
+    // populated for AI Gateway connectors, where per-token pricing is known.
+    aiModel: text("ai_model"),
+    promptTokens: integer("prompt_tokens"),
+    completionTokens: integer("completion_tokens"),
+    costUsd: real("cost_usd"),
     startedAt: integer("started_at", { mode: "timestamp_ms" }),
     finishedAt: integer("finished_at", { mode: "timestamp_ms" }),
     createdAt: timestamp(),
@@ -513,10 +630,13 @@ export const notifications = sqliteTable(
       onDelete: "cascade",
     }),
     type: text("type", {
-      enum: ["INVOICE_ASSIGNED", "INVOICE_REMINDER", "TEST"],
+      enum: ["INVOICE_ASSIGNED", "INVOICE_REMINDER", "NOTE_MENTION", "TEST"],
     }).notNull(),
     title: text("title").notNull(),
     body: text("body").notNull(),
+    // Deep link opened when the notification is clicked; falls back to the
+    // invoice page (or home) when null.
+    url: text("url"),
     readAt: integer("read_at", { mode: "timestamp_ms" }),
     createdAt: timestamp(),
   },
@@ -591,6 +711,8 @@ export const invoicesRelations = relations(invoices, ({ one, many }) => ({
   creditDrafts: many(creditDrafts),
   creditRequests: many(creditRequests),
   attachments: many(invoiceAttachments),
+  documents: many(invoiceDocuments),
+  rebills: many(rebills),
   mailboxMessages: many(mailboxMessages),
 }));
 
@@ -601,6 +723,17 @@ export const o365ConnectionsRelations = relations(o365Connections, ({ one }) => 
   }),
   connectedBy: one(users, {
     fields: [o365Connections.connectedById],
+    references: [users.id],
+  }),
+}));
+
+export const aiConnectorsRelations = relations(aiConnectors, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [aiConnectors.organizationId],
+    references: [organizations.id],
+  }),
+  configuredBy: one(users, {
+    fields: [aiConnectors.configuredById],
     references: [users.id],
   }),
 }));
@@ -634,7 +767,64 @@ export const notesRelations = relations(notes, ({ one }) => ({
     fields: [notes.invoiceId],
     references: [invoices.id],
   }),
+  supplier: one(suppliers, {
+    fields: [notes.supplierId],
+    references: [suppliers.id],
+  }),
+  document: one(invoiceDocuments, {
+    fields: [notes.documentId],
+    references: [invoiceDocuments.id],
+  }),
+  // notes.userId predates FK discipline (plain text column); the relation still
+  // resolves author names for display.
+  user: one(users, {
+    fields: [notes.userId],
+    references: [users.id],
+  }),
 }));
+
+export const rebillsRelations = relations(rebills, ({ one, many }) => ({
+  organization: one(organizations, {
+    fields: [rebills.organizationId],
+    references: [organizations.id],
+  }),
+  invoice: one(invoices, {
+    fields: [rebills.invoiceId],
+    references: [invoices.id],
+  }),
+  createdBy: one(users, {
+    fields: [rebills.createdById],
+    references: [users.id],
+  }),
+  documents: many(invoiceDocuments),
+}));
+
+export const invoiceDocumentsRelations = relations(
+  invoiceDocuments,
+  ({ one, many }) => ({
+    organization: one(organizations, {
+      fields: [invoiceDocuments.organizationId],
+      references: [organizations.id],
+    }),
+    invoice: one(invoices, {
+      fields: [invoiceDocuments.invoiceId],
+      references: [invoices.id],
+    }),
+    rebill: one(rebills, {
+      fields: [invoiceDocuments.rebillId],
+      references: [rebills.id],
+    }),
+    creditRequest: one(creditRequests, {
+      fields: [invoiceDocuments.creditRequestId],
+      references: [creditRequests.id],
+    }),
+    uploadedBy: one(users, {
+      fields: [invoiceDocuments.uploadedById],
+      references: [users.id],
+    }),
+    notes: many(notes),
+  }),
+);
 
 export const routingRulesRelations = relations(routingRules, ({ one }) => ({
   organization: one(organizations, {
@@ -668,6 +858,7 @@ export const suppliersRelations = relations(suppliers, ({ one, many }) => ({
     references: [organizations.id],
   }),
   invoices: many(invoices),
+  notes: many(notes),
   emailThreads: many(emailThreads),
   mailboxMessages: many(mailboxMessages),
   emailContacts: many(emailContacts),
@@ -829,6 +1020,8 @@ export type Supplier = typeof suppliers.$inferSelect;
 export type AuditEvent = typeof auditEvents.$inferSelect;
 export type CreditDraft = typeof creditDrafts.$inferSelect;
 export type Note = typeof notes.$inferSelect;
+export type Rebill = typeof rebills.$inferSelect;
+export type InvoiceDocument = typeof invoiceDocuments.$inferSelect;
 export type O365Connection = typeof o365Connections.$inferSelect;
 export type InvoiceAttachment = typeof invoiceAttachments.$inferSelect;
 export type ProcessedO365Message = typeof processedO365Messages.$inferSelect;

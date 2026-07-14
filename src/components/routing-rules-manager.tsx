@@ -2,15 +2,13 @@
 
 import {
   ArrowRightIcon,
-  AtSignIcon,
-  BanknoteIcon,
   ChevronDownIcon,
   ChevronUpIcon,
   ClockIcon,
-  FileWarningIcon,
   InboxIcon,
   MoreHorizontalIcon,
   PlusIcon,
+  XIcon,
 } from "lucide-react";
 import { useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -55,12 +53,15 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import type { RoutingRuleType } from "@/lib/db/types";
 import { formatCurrency } from "@/lib/format";
 import {
-  buildRuleCondition,
-  conditionFieldsFromRule,
+  buildRuleConditionsPayload,
+  CONDITION_KIND_INFO,
+  conditionRowsFromRule,
+  EMPTY_CONDITION_ROW_FIELDS,
   formatRuleCondition,
+  type ConditionKind,
+  type ConditionRowFields,
 } from "@/lib/routing-rule-display";
 import { cn } from "@/lib/utils";
 
@@ -151,80 +152,118 @@ function userSelectLabels(users: UserOption[]): Record<string, string> {
 // Routing rule form
 // ---------------------------------------------------------------------------
 
+type ConditionRow = ConditionRowFields & { key: number };
+
 type RuleFormState = {
   name: string;
   nameEdited: boolean;
-  type: RoutingRuleType;
   approverId: string;
-  supplierId: string;
-  senderEmail: string;
-  senderDomain: string;
-  minAmount: string;
+  conditions: ConditionRow[];
 };
 
 const EMPTY_RULE_FORM: RuleFormState = {
   name: "",
   nameEdited: false,
-  type: "SUPPLIER",
   approverId: "",
-  supplierId: "",
-  senderEmail: "",
-  senderDomain: "",
-  minAmount: "",
+  conditions: [],
 };
 
-const CONDITION_CHOICES: Array<{
-  type: RoutingRuleType;
-  title: string;
-  blurb: string;
-  icon: typeof AtSignIcon;
-}> = [
-  {
-    type: "SUPPLIER",
-    title: "From a supplier",
-    blurb: "Route every invoice from one of your suppliers",
-    icon: AtSignIcon,
-  },
-  {
-    type: "AMOUNT_THRESHOLD",
-    title: "Over an amount",
-    blurb: "Match invoices above a dollar amount",
-    icon: BanknoteIcon,
-  },
-  {
-    type: "PARSE_FAILURE",
-    title: "Couldn't be read",
-    blurb: "Match invoices that failed automatic extraction",
-    icon: FileWarningIcon,
-  },
+// React keys for condition rows, stable across removals and reorders.
+let conditionRowKeyCounter = 0;
+
+function newConditionRow(kind: ConditionKind): ConditionRow {
+  conditionRowKeyCounter += 1;
+  return { key: conditionRowKeyCounter, kind, ...EMPTY_CONDITION_ROW_FIELDS };
+}
+
+const CONDITION_KIND_ORDER: ConditionKind[] = [
+  "SUPPLIER",
+  "SENDER_EMAIL",
+  "AMOUNT_THRESHOLD",
+  "ACCOUNT_REFERENCE",
+  "PARSE_FAILURE",
 ];
+
+const ACCOUNT_MATCH_LABELS: Record<"equals" | "contains", string> = {
+  equals: "is exactly",
+  contains: "contains",
+};
 
 function supplierName(suppliers: SupplierOption[], id: string): string | null {
   return suppliers.find((supplier) => supplier.id === id)?.name ?? null;
 }
 
-function suggestRuleName(form: RuleFormState, suppliers: SupplierOption[]): string {
-  switch (form.type) {
+function conditionNameFragment(
+  row: ConditionRow,
+  suppliers: SupplierOption[],
+): string | null {
+  switch (row.kind) {
     case "SUPPLIER": {
-      const name = supplierName(suppliers, form.supplierId);
-      return name ? `Invoices from ${name}` : "";
+      const name = supplierName(suppliers, row.supplierId);
+      return name ? `from ${name}` : null;
     }
     case "SENDER_EMAIL": {
-      const email = form.senderEmail.trim();
-      if (email) return `Invoices from ${email}`;
-      const domain = form.senderDomain.trim();
-      return domain ? `Invoices from @${domain}` : "";
+      const email = row.senderEmail.trim();
+      if (email) return `from ${email}`;
+      const domain = row.senderDomain.trim();
+      return domain ? `from @${domain}` : null;
     }
     case "AMOUNT_THRESHOLD": {
-      const amount = Number(form.minAmount);
-      return form.minAmount.trim() && !Number.isNaN(amount)
-        ? `Over ${formatCurrency(amount)}`
-        : "";
+      const amount = Number(row.minAmount);
+      return row.minAmount.trim() && !Number.isNaN(amount)
+        ? `over ${formatCurrency(amount)}`
+        : null;
+    }
+    case "ACCOUNT_REFERENCE": {
+      const value = row.accountValue.trim();
+      return value ? `for account ${value}` : null;
     }
     case "PARSE_FAILURE":
-      return "Unreadable invoices";
-    case "DEFAULT":
-      return "Everything else";
+      return "that can't be read";
+  }
+}
+
+function suggestRuleName(form: RuleFormState, suppliers: SupplierOption[]): string {
+  if (form.conditions.length === 1 && form.conditions[0].kind === "PARSE_FAILURE") {
+    return "Unreadable invoices";
+  }
+  const fragments = form.conditions.map((row) => conditionNameFragment(row, suppliers));
+  if (fragments.length === 0 || fragments.some((fragment) => fragment == null)) {
+    return "";
+  }
+  return `Invoices ${fragments.join(" ")}`;
+}
+
+function describeConditionRow(
+  row: ConditionRow,
+  suppliers: SupplierOption[],
+): string | null {
+  switch (row.kind) {
+    case "SUPPLIER": {
+      const name = supplierName(suppliers, row.supplierId);
+      return name ? `from ${name}` : null;
+    }
+    case "SENDER_EMAIL": {
+      const email = row.senderEmail.trim();
+      const domain = row.senderDomain.trim();
+      if (email) return `from ${email}`;
+      if (domain) return `from anyone @${domain}`;
+      return null;
+    }
+    case "AMOUNT_THRESHOLD": {
+      const amount = Number(row.minAmount);
+      if (!row.minAmount.trim() || Number.isNaN(amount)) return null;
+      return `over ${formatCurrency(amount)}`;
+    }
+    case "ACCOUNT_REFERENCE": {
+      const value = row.accountValue.trim();
+      if (!value) return null;
+      return row.accountMatch === "equals"
+        ? `with account reference '${value}'`
+        : `whose account reference contains '${value}'`;
+    }
+    case "PARSE_FAILURE":
+      return "that can't be read automatically";
   }
 }
 
@@ -232,28 +271,10 @@ function describeRuleCondition(
   form: RuleFormState,
   suppliers: SupplierOption[],
 ): string | null {
-  switch (form.type) {
-    case "SUPPLIER": {
-      const name = supplierName(suppliers, form.supplierId);
-      return name ? `from ${name}` : null;
-    }
-    case "SENDER_EMAIL": {
-      const email = form.senderEmail.trim();
-      const domain = form.senderDomain.trim();
-      if (email) return `from ${email}`;
-      if (domain) return `from anyone @${domain}`;
-      return null;
-    }
-    case "AMOUNT_THRESHOLD": {
-      const amount = Number(form.minAmount);
-      if (!form.minAmount.trim() || Number.isNaN(amount)) return null;
-      return `over ${formatCurrency(amount)}`;
-    }
-    case "PARSE_FAILURE":
-      return "that can't be read automatically";
-    case "DEFAULT":
-      return "that match no other rule";
-  }
+  if (form.conditions.length === 0) return null;
+  const parts = form.conditions.map((row) => describeConditionRow(row, suppliers));
+  if (parts.some((part) => part == null)) return null;
+  return parts.join(" and ");
 }
 
 function RulePreview({
@@ -377,7 +398,7 @@ export function RoutingRulesManager({
   // -- routing rules ---------------------------------------------------------
 
   async function refreshRules() {
-    const response = await fetch("/api/admin/routing-rules");
+    const response = await fetch("/api/routing-rules");
     if (!response.ok) {
       setPageError("Couldn't refresh routing rules. Reload the page to see the latest.");
       return;
@@ -400,7 +421,7 @@ export function RoutingRulesManager({
       ...rules.filter((rule) => rule.isDefault).map((rule) => rule.id),
     ];
 
-    const response = await fetch("/api/admin/routing-rules/reorder", {
+    const response = await fetch("/api/routing-rules/reorder", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ orderedIds }),
@@ -415,7 +436,7 @@ export function RoutingRulesManager({
   }
 
   async function toggleRuleEnabled(rule: RoutingRule) {
-    const response = await fetch(`/api/admin/routing-rules/${rule.id}`, {
+    const response = await fetch(`/api/routing-rules/${rule.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ enabled: !rule.enabled }),
@@ -433,7 +454,7 @@ export function RoutingRulesManager({
     if (rule.isDefault) return;
     if (!window.confirm(`Delete the rule "${rule.name}"?`)) return;
 
-    const response = await fetch(`/api/admin/routing-rules/${rule.id}`, {
+    const response = await fetch(`/api/routing-rules/${rule.id}`, {
       method: "DELETE",
     });
 
@@ -445,25 +466,35 @@ export function RoutingRulesManager({
     await refreshRules();
   }
 
+  function defaultConditionKind(): ConditionKind {
+    return suppliers.length > 0 ? "SUPPLIER" : "SENDER_EMAIL";
+  }
+
   function openCreateRule(catchAll = false) {
     setRuleSheet({ mode: "create", catchAll });
     setRuleForm({
       ...EMPTY_RULE_FORM,
-      type: catchAll ? "DEFAULT" : suppliers.length > 0 ? "SUPPLIER" : "SENDER_EMAIL",
       name: catchAll ? "Everything else" : "",
+      conditions: catchAll ? [] : [newConditionRow(defaultConditionKind())],
     });
     setFormError(null);
   }
 
   function openEditRule(rule: RoutingRule) {
-    const fields = conditionFieldsFromRule(rule.type as RoutingRuleType, rule.condition);
+    const rows = conditionRowsFromRule(rule.type, rule.condition).map((fields) => ({
+      ...newConditionRow(fields.kind),
+      ...fields,
+    }));
     setRuleSheet({ mode: "edit", rule });
     setRuleForm({
       name: rule.name,
       nameEdited: true,
-      type: rule.type as RoutingRuleType,
       approverId: rule.approver?.id ?? "",
-      ...fields,
+      conditions: rule.isDefault
+        ? []
+        : rows.length > 0
+          ? rows
+          : [newConditionRow(defaultConditionKind())],
     });
     setFormError(null);
   }
@@ -478,8 +509,37 @@ export function RoutingRulesManager({
     });
   }
 
+  function updateConditionRow(key: number, patch: Partial<ConditionRowFields>) {
+    setRuleForm((current) => {
+      const next = {
+        ...current,
+        conditions: current.conditions.map((row) =>
+          row.key === key ? { ...row, ...patch } : row,
+        ),
+      };
+      if (!next.nameEdited) {
+        next.name = suggestRuleName(next, suppliers);
+      }
+      return next;
+    });
+  }
+
+  function addConditionRow() {
+    updateRuleForm({
+      conditions: [...ruleForm.conditions, newConditionRow(defaultConditionKind())],
+    });
+  }
+
+  function removeConditionRow(key: number) {
+    updateRuleForm({
+      conditions: ruleForm.conditions.filter((row) => row.key !== key),
+    });
+  }
+
   async function saveRule() {
     if (!ruleSheet) return;
+    const isCatchAll =
+      ruleSheet.mode === "create" ? ruleSheet.catchAll : ruleSheet.rule.isDefault;
     const trimmedName = ruleForm.name.trim() || suggestRuleName(ruleForm, suppliers);
 
     if (!ruleForm.approverId) {
@@ -487,17 +547,19 @@ export function RoutingRulesManager({
       return;
     }
 
-    const { condition, error: conditionError } = buildRuleCondition(ruleForm.type, {
-      supplierId: ruleForm.supplierId,
-      supplierName: supplierName(suppliers, ruleForm.supplierId) ?? undefined,
-      senderEmail: ruleForm.senderEmail,
-      senderDomain: ruleForm.senderDomain,
-      minAmount: ruleForm.minAmount,
-    });
-
-    if (conditionError) {
-      setFormError(conditionError);
-      return;
+    let type: string;
+    let condition: Record<string, unknown>;
+    if (isCatchAll) {
+      type = "DEFAULT";
+      condition = {};
+    } else {
+      const payload = buildRuleConditionsPayload(ruleForm.conditions, suppliers);
+      if ("error" in payload) {
+        setFormError(payload.error);
+        return;
+      }
+      type = payload.type;
+      condition = payload.condition;
     }
 
     if (!trimmedName) {
@@ -513,38 +575,44 @@ export function RoutingRulesManager({
         const lowestPriority =
           rules.length > 0 ? Math.min(...rules.map((rule) => rule.priority)) - 10 : 10;
 
-        const response = await fetch("/api/admin/routing-rules", {
+        const response = await fetch("/api/routing-rules", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             name: trimmedName,
-            priority: ruleForm.type === "DEFAULT" ? lowestPriority - 10 : lowestPriority,
-            type: ruleForm.type,
+            priority: isCatchAll ? lowestPriority - 10 : lowestPriority,
+            type,
             condition,
             approverId: ruleForm.approverId,
-            isDefault: ruleForm.type === "DEFAULT",
+            isDefault: isCatchAll,
           }),
         });
 
         if (!response.ok) {
-          setFormError("Couldn't create the rule. Try again.");
+          const body = (await response.json().catch(() => null)) as {
+            error?: string;
+          } | null;
+          setFormError(body?.error ?? "Couldn't create the rule. Try again.");
           return;
         }
       } else {
-        const response = await fetch(`/api/admin/routing-rules/${ruleSheet.rule.id}`, {
+        const response = await fetch(`/api/routing-rules/${ruleSheet.rule.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             name: trimmedName,
-            type: ruleForm.type,
+            type,
             condition,
             approverId: ruleForm.approverId,
-            isDefault: ruleForm.type === "DEFAULT",
+            isDefault: isCatchAll,
           }),
         });
 
         if (!response.ok) {
-          setFormError("Couldn't save the rule. Try again.");
+          const body = (await response.json().catch(() => null)) as {
+            error?: string;
+          } | null;
+          setFormError(body?.error ?? "Couldn't save the rule. Try again.");
           return;
         }
       }
@@ -559,7 +627,7 @@ export function RoutingRulesManager({
   // -- escalation rules ------------------------------------------------------
 
   async function refreshEscalations() {
-    const response = await fetch("/api/admin/escalation-rules");
+    const response = await fetch("/api/escalation-rules");
     if (!response.ok) {
       setPageError(
         "Couldn't refresh escalation rules. Reload the page to see the latest.",
@@ -570,7 +638,7 @@ export function RoutingRulesManager({
   }
 
   async function toggleEscalationEnabled(rule: EscalationRule) {
-    const response = await fetch(`/api/admin/escalation-rules/${rule.id}`, {
+    const response = await fetch(`/api/escalation-rules/${rule.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ enabled: !rule.enabled }),
@@ -589,7 +657,7 @@ export function RoutingRulesManager({
   async function deleteEscalation(rule: EscalationRule) {
     if (!window.confirm("Delete this escalation?")) return;
 
-    const response = await fetch(`/api/admin/escalation-rules/${rule.id}`, {
+    const response = await fetch(`/api/escalation-rules/${rule.id}`, {
       method: "DELETE",
     });
 
@@ -652,12 +720,12 @@ export function RoutingRulesManager({
     try {
       const response =
         escalationSheet.mode === "create"
-          ? await fetch("/api/admin/escalation-rules", {
+          ? await fetch("/api/escalation-rules", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(payload),
             })
-          : await fetch(`/api/admin/escalation-rules/${escalationSheet.rule.id}`, {
+          : await fetch(`/api/escalation-rules/${escalationSheet.rule.id}`, {
               method: "PATCH",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(payload),
@@ -687,6 +755,12 @@ export function RoutingRulesManager({
   const userLabels = userSelectLabels(users);
   const supplierLabels = Object.fromEntries(
     suppliers.map((supplier) => [supplier.id, supplier.name]),
+  );
+  const availableConditionKinds = CONDITION_KIND_ORDER.filter(
+    (kind) => kind !== "SUPPLIER" || suppliers.length > 0,
+  );
+  const conditionKindLabels = Object.fromEntries(
+    availableConditionKinds.map((kind) => [kind, CONDITION_KIND_INFO[kind].label]),
   );
 
   return (
@@ -998,158 +1072,217 @@ export function RoutingRulesManager({
             {!isCatchAllSheet ? (
               <div className="space-y-3">
                 <Label>When an invoice is…</Label>
-                <div className="grid gap-2" role="radiogroup" aria-label="Rule condition">
-                  {CONDITION_CHOICES.map((choice) => {
-                    // Manual email/domain matching lives behind the supplier card.
-                    const selected =
-                      ruleForm.type === choice.type ||
-                      (choice.type === "SUPPLIER" && ruleForm.type === "SENDER_EMAIL");
-                    const Icon = choice.icon;
-                    return (
-                      <button
-                        key={choice.type}
-                        type="button"
-                        role="radio"
-                        aria-checked={selected}
-                        onClick={() =>
-                          updateRuleForm({
-                            type:
-                              choice.type === "SUPPLIER" && suppliers.length === 0
-                                ? "SENDER_EMAIL"
-                                : choice.type,
-                          })
-                        }
-                        className={cn(
-                          "flex items-start gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors",
-                          selected
-                            ? "border-primary bg-primary/5"
-                            : "hover:bg-muted/50",
-                        )}
-                      >
-                        <Icon
-                          className={cn(
-                            "mt-0.5 size-4 shrink-0",
-                            selected ? "text-primary" : "text-muted-foreground",
-                          )}
-                        />
-                        <span className="min-w-0">
-                          <span className="block text-sm font-medium">
-                            {choice.title}
-                          </span>
-                          <span className="block text-xs text-muted-foreground">
-                            {choice.blurb}
-                          </span>
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
 
-                {ruleForm.type === "SUPPLIER" ? (
-                  <div className="space-y-2 rounded-lg border bg-muted/30 p-3">
-                    <Label htmlFor="rule-supplier">Supplier</Label>
-                    <Select
-                      items={supplierLabels}
-                      value={ruleForm.supplierId || null}
-                      onValueChange={(next) =>
-                        next && updateRuleForm({ supplierId: next })
-                      }
-                    >
-                      <SelectTrigger id="rule-supplier" className="w-full">
-                        <SelectValue placeholder="Choose a supplier" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {suppliers.map((supplier) => (
-                          <SelectItem key={supplier.id} value={supplier.id}>
-                            {supplier.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <p className="text-xs text-muted-foreground">
-                      Matches every invoice linked to this supplier, whichever
-                      address they send from.
-                    </p>
-                    <Button
-                      type="button"
-                      variant="link"
-                      size="sm"
-                      className="h-auto px-0 text-xs"
-                      onClick={() => updateRuleForm({ type: "SENDER_EMAIL" })}
-                    >
-                      Match an email or domain instead
-                    </Button>
-                  </div>
-                ) : null}
-
-                {ruleForm.type === "SENDER_EMAIL" ? (
-                  <div className="space-y-4 rounded-lg border bg-muted/30 p-3">
-                    <div className="space-y-2">
-                      <Label htmlFor="rule-sender-email">Supplier email</Label>
-                      <Input
-                        id="rule-sender-email"
-                        value={ruleForm.senderEmail}
-                        onChange={(event) =>
-                          updateRuleForm({ senderEmail: event.target.value })
-                        }
-                        placeholder="billing@acme.com"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="rule-sender-domain">
-                        …or a whole domain
-                      </Label>
-                      <Input
-                        id="rule-sender-domain"
-                        value={ruleForm.senderDomain}
-                        onChange={(event) =>
-                          updateRuleForm({ senderDomain: event.target.value })
-                        }
-                        placeholder="acme.com"
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        Matches every address ending in @acme.com. Fill in either
-                        field — the exact email wins if both are set.
+                {ruleForm.conditions.map((row, index) => (
+                  <div key={row.key} className="space-y-1.5">
+                    {index > 0 ? (
+                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                        and
                       </p>
-                    </div>
-                    {suppliers.length > 0 ? (
-                      <Button
-                        type="button"
-                        variant="link"
-                        size="sm"
-                        className="h-auto px-0 text-xs"
-                        onClick={() => updateRuleForm({ type: "SUPPLIER" })}
-                      >
-                        Choose a supplier instead
-                      </Button>
                     ) : null}
-                  </div>
-                ) : null}
+                    <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
+                      <div className="flex items-center gap-2">
+                        <Select
+                          items={conditionKindLabels}
+                          value={row.kind}
+                          onValueChange={(next) =>
+                            next &&
+                            updateConditionRow(row.key, {
+                              kind: next as ConditionKind,
+                            })
+                          }
+                        >
+                          <SelectTrigger
+                            className="w-full flex-1"
+                            aria-label={`Condition ${index + 1} type`}
+                          >
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {availableConditionKinds.map((kind) => (
+                              <SelectItem key={kind} value={kind}>
+                                {CONDITION_KIND_INFO[kind].label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {ruleForm.conditions.length > 1 ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="shrink-0 text-muted-foreground"
+                            onClick={() => removeConditionRow(row.key)}
+                            aria-label={`Remove condition ${index + 1}`}
+                          >
+                            <XIcon className="size-4" />
+                          </Button>
+                        ) : null}
+                      </div>
 
-                {ruleForm.type === "AMOUNT_THRESHOLD" ? (
-                  <div className="space-y-2 rounded-lg border bg-muted/30 p-3">
-                    <Label htmlFor="rule-min-amount">Amount above</Label>
-                    <InputGroup>
-                      <InputGroupAddon>
-                        <InputGroupText>$</InputGroupText>
-                      </InputGroupAddon>
-                      <InputGroupInput
-                        id="rule-min-amount"
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={ruleForm.minAmount}
-                        onChange={(event) =>
-                          updateRuleForm({ minAmount: event.target.value })
-                        }
-                        placeholder="10000"
-                      />
-                    </InputGroup>
-                    <p className="text-xs text-muted-foreground">
-                      Matches invoices with a total greater than this amount.
-                    </p>
+                      {row.kind === "SUPPLIER" ? (
+                        <div className="space-y-2">
+                          <Select
+                            items={supplierLabels}
+                            value={row.supplierId || null}
+                            onValueChange={(next) =>
+                              next && updateConditionRow(row.key, { supplierId: next })
+                            }
+                          >
+                            <SelectTrigger
+                              className="w-full"
+                              aria-label="Supplier"
+                            >
+                              <SelectValue placeholder="Choose a supplier" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {suppliers.map((supplier) => (
+                                <SelectItem key={supplier.id} value={supplier.id}>
+                                  {supplier.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <p className="text-xs text-muted-foreground">
+                            {CONDITION_KIND_INFO.SUPPLIER.helper}
+                          </p>
+                        </div>
+                      ) : null}
+
+                      {row.kind === "SENDER_EMAIL" ? (
+                        <div className="space-y-3">
+                          <div className="space-y-2">
+                            <Label htmlFor={`rule-sender-email-${row.key}`}>
+                              Supplier email
+                            </Label>
+                            <Input
+                              id={`rule-sender-email-${row.key}`}
+                              value={row.senderEmail}
+                              onChange={(event) =>
+                                updateConditionRow(row.key, {
+                                  senderEmail: event.target.value,
+                                })
+                              }
+                              placeholder="billing@acme.com"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor={`rule-sender-domain-${row.key}`}>
+                              …or a whole domain
+                            </Label>
+                            <Input
+                              id={`rule-sender-domain-${row.key}`}
+                              value={row.senderDomain}
+                              onChange={(event) =>
+                                updateConditionRow(row.key, {
+                                  senderDomain: event.target.value,
+                                })
+                              }
+                              placeholder="acme.com"
+                            />
+                            <p className="text-xs text-muted-foreground">
+                              Matches every address ending in @acme.com. Fill in
+                              either field — the exact email wins if both are set.
+                            </p>
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {row.kind === "AMOUNT_THRESHOLD" ? (
+                        <div className="space-y-2">
+                          <Label htmlFor={`rule-min-amount-${row.key}`}>
+                            Amount above
+                          </Label>
+                          <InputGroup>
+                            <InputGroupAddon>
+                              <InputGroupText>$</InputGroupText>
+                            </InputGroupAddon>
+                            <InputGroupInput
+                              id={`rule-min-amount-${row.key}`}
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={row.minAmount}
+                              onChange={(event) =>
+                                updateConditionRow(row.key, {
+                                  minAmount: event.target.value,
+                                })
+                              }
+                              placeholder="10000"
+                            />
+                          </InputGroup>
+                          <p className="text-xs text-muted-foreground">
+                            {CONDITION_KIND_INFO.AMOUNT_THRESHOLD.helper}
+                          </p>
+                        </div>
+                      ) : null}
+
+                      {row.kind === "ACCOUNT_REFERENCE" ? (
+                        <div className="space-y-2">
+                          <div className="flex gap-2">
+                            <Select
+                              items={ACCOUNT_MATCH_LABELS}
+                              value={row.accountMatch}
+                              onValueChange={(next) =>
+                                next &&
+                                updateConditionRow(row.key, {
+                                  accountMatch: next as "equals" | "contains",
+                                })
+                              }
+                            >
+                              <SelectTrigger
+                                className="w-32 shrink-0"
+                                aria-label="Account reference match"
+                              >
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="equals">
+                                  {ACCOUNT_MATCH_LABELS.equals}
+                                </SelectItem>
+                                <SelectItem value="contains">
+                                  {ACCOUNT_MATCH_LABELS.contains}
+                                </SelectItem>
+                              </SelectContent>
+                            </Select>
+                            <Input
+                              value={row.accountValue}
+                              onChange={(event) =>
+                                updateConditionRow(row.key, {
+                                  accountValue: event.target.value,
+                                })
+                              }
+                              placeholder="Chill Chair"
+                              aria-label="Account reference value"
+                            />
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            {CONDITION_KIND_INFO.ACCOUNT_REFERENCE.helper}
+                          </p>
+                        </div>
+                      ) : null}
+
+                      {row.kind === "PARSE_FAILURE" ? (
+                        <p className="text-xs text-muted-foreground">
+                          {CONDITION_KIND_INFO.PARSE_FAILURE.helper}
+                        </p>
+                      ) : null}
+                    </div>
                   </div>
-                ) : null}
+                ))}
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={addConditionRow}
+                >
+                  <PlusIcon />
+                  Add condition
+                </Button>
+                <p className="text-xs text-muted-foreground">
+                  Invoices must match every condition for this rule to apply.
+                </p>
               </div>
             ) : null}
 

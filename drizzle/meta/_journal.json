@@ -71,6 +71,34 @@
       "when": 1783889654865,
       "tag": "0009_bouncy_harpoon",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1783979750808,
+      "tag": "0010_stiff_annihilus",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1783992468869,
+      "tag": "0011_boring_terror",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1783994911086,
+      "tag": "0012_misty_kate_bishop",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1783996949058,
+      "tag": "0013_rich_miek",
+      "breakpoints": true
     }
   ]
 }

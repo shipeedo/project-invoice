@@ -133,4 +133,18 @@ describe("describeAuditEvent", () => {
     ).toBe("Reason: Wrong supplier");
     expect(describeAuditEvent("invoice.restored", null).label).toBe("Restored from trash");
   });
+
+  it("lists attached credit note files on credit request updates", () => {
+    const result = describeAuditEvent(
+      "credit_request.updated",
+      JSON.stringify({
+        status: "APPROVED",
+        approvedAmount: 40,
+        fileNames: ["credit-note.pdf", "detail.csv"],
+      }),
+    );
+    expect(result.label).toBe("Credit request updated");
+    expect(result.description).toContain("Status: Approved");
+    expect(result.description).toContain("Credit note: credit-note.pdf, detail.csv");
+  });
 });

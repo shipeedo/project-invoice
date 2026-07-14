@@ -1,54 +1,95 @@
-const DEFAULT_GATEWAY_URL = "https://ai-gateway.vercel.sh/v1/chat/completions";
-const DEFAULT_GATEWAY_MODEL = "openai/gpt-4o-mini";
+import { eq } from "drizzle-orm";
+import { aiConnectors, db } from "@/lib/db";
+import type { AiConnectorType } from "@/lib/db/types";
+import { decryptSecret } from "@/lib/crypto";
+
+export const AI_GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh/v1";
+export const AI_GATEWAY_CHAT_COMPLETIONS_URL = `${AI_GATEWAY_BASE_URL}/chat/completions`;
 
 export type AiConfig = {
   apiKey: string;
   chatCompletionsUrl: string;
   model: string;
   providerLabel: string;
+  connectorType: AiConnectorType;
+  /**
+   * Per-token USD pricing when configured — snapshotted from the gateway for
+   * AI_GATEWAY, entered manually for OPENAI_COMPATIBLE.
+   */
+  pricing: { input: number; output: number } | null;
 };
 
-export function getAiConfig(): AiConfig | { error: string } {
-  const localBaseUrl = process.env.AI_BASE_URL?.trim();
+/**
+ * Resolves the AI extraction config for an organization from the database.
+ * The database is the sole source of truth — there is no environment fallback.
+ */
+export async function resolveAiConfig(
+  organizationId: string,
+): Promise<AiConfig | { error: string }> {
+  const connector = await db.query.aiConnectors.findFirst({
+    where: eq(aiConnectors.organizationId, organizationId),
+  });
 
-  if (localBaseUrl) {
-    const apiKey = process.env.AI_API_KEY?.trim();
-    if (!apiKey) {
-      return { error: "AI_API_KEY is not configured (required when AI_BASE_URL is set)" };
-    }
+  if (!connector) {
+    return { error: "AI extraction is not configured" };
+  }
 
-    const model = process.env.AI_MODEL?.trim();
-    if (!model) {
-      return { error: "AI_MODEL is not configured (required when AI_BASE_URL is set)" };
-    }
+  if (!connector.apiKeyEncrypted) {
+    return { error: "AI extraction API key is not configured" };
+  }
+  if (!connector.model) {
+    return { error: "AI extraction model is not configured" };
+  }
 
+  let apiKey: string;
+  try {
+    apiKey = decryptSecret(connector.apiKeyEncrypted);
+  } catch {
+    return { error: "AI extraction API key could not be decrypted" };
+  }
+
+  if (connector.connectorType === "AI_GATEWAY") {
     return {
       apiKey,
-      chatCompletionsUrl: `${localBaseUrl.replace(/\/$/, "")}/chat/completions`,
-      model,
-      providerLabel: "Local AI",
+      chatCompletionsUrl: AI_GATEWAY_CHAT_COMPLETIONS_URL,
+      model: connector.model,
+      providerLabel: "AI Gateway",
+      connectorType: "AI_GATEWAY",
+      pricing:
+        connector.modelInputPrice != null && connector.modelOutputPrice != null
+          ? {
+              input: connector.modelInputPrice,
+              output: connector.modelOutputPrice,
+            }
+          : null,
     };
   }
 
-  const apiKey = process.env.AI_GATEWAY_API_KEY?.trim();
-  if (!apiKey) {
-    return { error: "AI_GATEWAY_API_KEY is not configured" };
+  const baseUrl = connector.baseUrl?.trim();
+  if (!baseUrl) {
+    return { error: "AI extraction base URL is not configured" };
   }
-
-  const chatCompletionsUrl = process.env.AI_GATEWAY_URL ?? DEFAULT_GATEWAY_URL;
-  const model =
-    process.env.AI_MODEL?.trim() ??
-    process.env.AI_GATEWAY_MODEL?.trim() ??
-    DEFAULT_GATEWAY_MODEL;
 
   return {
     apiKey,
-    chatCompletionsUrl,
-    model,
-    providerLabel: "AI Gateway",
+    chatCompletionsUrl: `${baseUrl.replace(/\/$/, "")}/chat/completions`,
+    model: connector.model,
+    providerLabel: "Local AI",
+    connectorType: "OPENAI_COMPATIBLE",
+    pricing:
+      connector.modelInputPrice != null && connector.modelOutputPrice != null
+        ? {
+            input: connector.modelInputPrice,
+            output: connector.modelOutputPrice,
+          }
+        : null,
   };
 }
 
-export function shouldUseJsonResponseFormat(chatCompletionsUrl: string): boolean {
-  return !chatCompletionsUrl.includes("ai-gateway.vercel.sh");
+export function shouldUseJsonResponseFormat(
+  connectorType: AiConnectorType,
+): boolean {
+  // The Vercel AI Gateway rejects response_format for some upstream providers,
+  // so only OpenAI-compatible endpoints get the JSON response-format hint.
+  return connectorType === "OPENAI_COMPATIBLE";
 }

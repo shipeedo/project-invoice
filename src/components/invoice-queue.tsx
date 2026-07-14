@@ -8,9 +8,14 @@ import {
   ArrowUpIcon,
   ChevronDownIcon,
   ChevronsUpDownIcon,
+  MessageSquareTextIcon,
   SearchIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  InvoiceNotesSheet,
+  type InvoiceNoteItem,
+} from "@/components/invoice-notes-sheet";
 import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -67,6 +72,7 @@ export type InvoiceQueueRow = {
   supplierId: string | null;
   assignedTo: { id: string; name: string | null; email: string } | null;
   supplier: { id: string; name: string } | null;
+  notes: InvoiceNoteItem[];
 };
 
 type InvoiceQueueProps = {
@@ -279,6 +285,11 @@ export function InvoiceQueue({
   // The search box stays local while typing and syncs to ?q= debounced.
   const [search, setSearch] = useState(urlSearch);
   const lastAppliedSearch = useRef(urlSearch);
+
+  const [notesInvoiceId, setNotesInvoiceId] = useState<string | null>(null);
+  const notesInvoice = notesInvoiceId
+    ? (invoices.find((invoice) => invoice.id === notesInvoiceId) ?? null)
+    : null;
 
   const setParams = useCallback(
     (updates: Record<string, string | string[] | null>) => {
@@ -589,13 +600,14 @@ export function InvoiceQueue({
                 <TableHead>Respond by</TableHead>
                 <TableHead>Due</TableHead>
                 <TableHead>Alerts</TableHead>
+                <TableHead>Notes</TableHead>
                 <TableHead>Received</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filteredInvoices.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={8} className="text-center text-muted-foreground">
+                  <TableCell colSpan={9} className="text-center text-muted-foreground">
                     {hasActiveFilters
                       ? "No invoices match your search or filters."
                       : "No invoices yet. Upload a PDF to start the pilot flow."}
@@ -665,6 +677,22 @@ export function InvoiceQueue({
                       <TableCell>
                         <DeadlineBadges signals={signals} />
                       </TableCell>
+                      <TableCell>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className={cn(
+                            "h-auto gap-1 px-2 py-1",
+                            invoice.notes.length === 0 && "text-muted-foreground",
+                          )}
+                          aria-label={`Open notes for ${supplierLabel(invoice)} (${invoice.notes.length})`}
+                          onClick={() => setNotesInvoiceId(invoice.id)}
+                        >
+                          <MessageSquareTextIcon className="size-3.5" />
+                          {invoice.notes.length}
+                        </Button>
+                      </TableCell>
                       <TableCell>{formatDateOnly(invoice.createdAt)}</TableCell>
                     </TableRow>
                   );
@@ -674,6 +702,19 @@ export function InvoiceQueue({
           </Table>
         </CardContent>
       </Card>
+
+      {notesInvoice ? (
+        <InvoiceNotesSheet
+          invoiceId={notesInvoice.id}
+          notes={notesInvoice.notes}
+          canCompose
+          currentUserId={currentUserId}
+          open
+          onOpenChange={(open) => {
+            if (!open) setNotesInvoiceId(null);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

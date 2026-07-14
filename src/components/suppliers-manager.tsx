@@ -1,7 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { ChevronDownIcon, PlusIcon, TrashIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  MessageSquareTextIcon,
+  PlusIcon,
+  TrashIcon,
+} from "lucide-react";
 import { useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -58,6 +63,14 @@ type Supplier = {
   extractionPrompt: string | null;
   invoiceCount: number;
   lastInvoiceAt: string | Date | null;
+  noteCount: number;
+};
+
+type SupplierNote = {
+  id: string;
+  content: string;
+  createdAt: string;
+  authorName: string | null;
 };
 
 type SupplierSuggestion = {
@@ -319,9 +332,13 @@ export function SuppliersManager({
   const [saving, setSaving] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [supplierNotes, setSupplierNotes] = useState<SupplierNote[] | null>(null);
+  const [notesError, setNotesError] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [addingNote, setAddingNote] = useState(false);
 
   async function refreshSuppliers() {
-    const response = await fetch("/api/admin/suppliers");
+    const response = await fetch("/api/suppliers");
     if (!response.ok) {
       setError("Failed to load suppliers");
       return;
@@ -356,6 +373,52 @@ export function SuppliersManager({
     setEditPrompt(prompt);
     setOriginalPrompt(prompt);
     setError(null);
+    setSupplierNotes(null);
+    setNotesError(null);
+    setNoteDraft("");
+    void loadNotes(supplier.id);
+  }
+
+  async function loadNotes(supplierId: string) {
+    const response = await fetch(`/api/suppliers/${supplierId}/notes`);
+    if (!response.ok) {
+      setNotesError("Failed to load notes");
+      return;
+    }
+    setSupplierNotes((await response.json()) as SupplierNote[]);
+  }
+
+  async function addNote() {
+    if (!editingSupplier) return;
+    const content = noteDraft.trim();
+    if (!content) return;
+
+    setAddingNote(true);
+    setNotesError(null);
+
+    const response = await fetch(`/api/suppliers/${editingSupplier.id}/notes`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    });
+
+    setAddingNote(false);
+
+    if (!response.ok) {
+      setNotesError("Failed to add note");
+      return;
+    }
+
+    const note = (await response.json()) as SupplierNote;
+    setSupplierNotes((current) => [note, ...(current ?? [])]);
+    setNoteDraft("");
+    setSuppliers((current) =>
+      current.map((supplier) =>
+        supplier.id === editingSupplier.id
+          ? { ...supplier, noteCount: supplier.noteCount + 1 }
+          : supplier,
+      ),
+    );
   }
 
   function closeEditor() {
@@ -372,7 +435,7 @@ export function SuppliersManager({
     setDeleting(true);
     setError(null);
 
-    const response = await fetch(`/api/admin/suppliers/${editingSupplier.id}`, {
+    const response = await fetch(`/api/suppliers/${editingSupplier.id}`, {
       method: "DELETE",
     });
 
@@ -403,7 +466,7 @@ export function SuppliersManager({
     setCreating(true);
     setError(null);
 
-    const response = await fetch("/api/admin/suppliers", {
+    const response = await fetch("/api/suppliers", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -467,7 +530,7 @@ export function SuppliersManager({
       .map((value) => value.trim())
       .filter(Boolean);
 
-    const response = await fetch(`/api/admin/suppliers/${editingSupplier.id}`, {
+    const response = await fetch(`/api/suppliers/${editingSupplier.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -494,6 +557,7 @@ export function SuppliersManager({
               ...updated,
               invoiceCount: supplier.invoiceCount,
               lastInvoiceAt: supplier.lastInvoiceAt,
+              noteCount: supplier.noteCount,
             }
           : supplier,
       ),
@@ -526,12 +590,13 @@ export function SuppliersManager({
                 <TableHead>Emails</TableHead>
                 <TableHead className="text-right">Invoices</TableHead>
                 <TableHead>Last invoice</TableHead>
+                <TableHead className="text-right">Notes</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {suppliers.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={4} className="text-muted-foreground">
+                  <TableCell colSpan={5} className="text-muted-foreground">
                     No suppliers yet. Create one to start linking inbox senders and invoices.
                   </TableCell>
                 </TableRow>
@@ -561,6 +626,16 @@ export function SuppliersManager({
                       )}
                     </TableCell>
                     <TableCell>{formatDate(supplier.lastInvoiceAt)}</TableCell>
+                    <TableCell className="text-right">
+                      {supplier.noteCount > 0 ? (
+                        <span className="inline-flex items-center gap-1 text-muted-foreground">
+                          <MessageSquareTextIcon className="size-3.5" />
+                          <span className="tabular-nums">{supplier.noteCount}</span>
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
                   </TableRow>
                 ))
               )}
@@ -700,6 +775,65 @@ export function SuppliersManager({
                   </div>
                 </CollapsibleContent>
               </Collapsible>
+
+              <Separator />
+
+              <div className="flex flex-col gap-3">
+                <p className="flex items-center gap-1.5 text-sm font-medium">
+                  <MessageSquareTextIcon className="size-4" />
+                  Notes
+                </p>
+
+                {notesError ? (
+                  <p className="text-sm text-destructive">{notesError}</p>
+                ) : null}
+
+                <div className="flex flex-col gap-2">
+                  <Textarea
+                    value={noteDraft}
+                    onChange={(event) => setNoteDraft(event.target.value)}
+                    placeholder="Add a note about this supplier"
+                    disabled={addingNote}
+                  />
+                  <div className="flex justify-end">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => void addNote()}
+                      disabled={addingNote || !noteDraft.trim()}
+                    >
+                      {addingNote ? "Adding..." : "Add note"}
+                    </Button>
+                  </div>
+                </div>
+
+                {supplierNotes == null && !notesError ? (
+                  <p className="text-sm text-muted-foreground">Loading notes...</p>
+                ) : supplierNotes != null && supplierNotes.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No notes yet.</p>
+                ) : supplierNotes != null ? (
+                  <div className="flex flex-col gap-3">
+                    {supplierNotes.map((note) => (
+                      <div
+                        key={note.id}
+                        className="space-y-1 border-b pb-3 last:border-0"
+                      >
+                        <p className="text-sm">
+                          <span className="font-medium">
+                            {note.authorName ?? "System"}
+                          </span>
+                          <span className="text-muted-foreground">
+                            {" · "}
+                            {formatDate(note.createdAt)}
+                          </span>
+                        </p>
+                        <p className="text-sm whitespace-pre-wrap">{note.content}</p>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
 
               <div className="flex gap-2">
                 <Button type="button" onClick={saveSupplier} disabled={saving || !editName.trim()}>

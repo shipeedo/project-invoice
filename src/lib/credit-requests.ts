@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { readFile } from "fs/promises";
 import { recordAuditEvent } from "@/lib/audit";
+import { addCreditDocuments } from "@/lib/credit-documents";
 import {
   createSupplierFromEmailContact,
   linkSupplierToThreadsAndMessages,
@@ -24,7 +25,7 @@ import {
 import { syncGraphMessage } from "@/lib/o365/sync-inbox";
 import { getUploadAbsolutePath } from "@/lib/uploads";
 
-type AttachmentInput = { name: string; path: string; mimeType: string };
+type AttachmentInput = { name: string; path: string; mimeType: string; size?: number };
 
 async function toGraphAttachments(
   attachments: AttachmentInput[],
@@ -162,6 +163,23 @@ export async function createAndSendCreditRequest(params: {
     })
     .returning();
 
+  // User-attached files also become CREDIT documents on the invoice, reusing
+  // the already-stored upload paths.
+  if (params.attachments?.length) {
+    await addCreditDocuments({
+      organizationId: params.organizationId,
+      invoiceId: params.invoiceId,
+      creditRequestId: creditRequest.id,
+      uploadedById: params.userId,
+      files: params.attachments.map((attachment) => ({
+        fileName: attachment.name,
+        filePath: attachment.path,
+        mimeType: attachment.mimeType,
+        size: attachment.size,
+      })),
+    });
+  }
+
   await recordAuditEvent({
     invoiceId: params.invoiceId,
     userId: params.userId,
@@ -170,6 +188,9 @@ export async function createAndSendCreditRequest(params: {
       creditRequestId: creditRequest.id,
       threadId,
       recipientEmail: params.recipientEmail,
+      ...(params.attachments?.length
+        ? { fileNames: params.attachments.map((attachment) => attachment.name) }
+        : {}),
     },
   });
 

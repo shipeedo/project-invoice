@@ -1,8 +1,14 @@
 "use client";
 
-import { BellRingIcon, CheckIcon, UserIcon } from "lucide-react";
+import {
+  BellRingIcon,
+  CheckIcon,
+  CommandIcon,
+  CornerDownLeftIcon,
+  UserIcon,
+} from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -60,6 +66,13 @@ export function InvoiceAssigneeControl({
   const [reminderNote, setReminderNote] = useState("");
   const [reminderError, setReminderError] = useState<string | null>(null);
   const [reminderSent, setReminderSent] = useState(false);
+  // Client-only platform sniff; the server snapshot must be stable (false) so
+  // hydration matches, then the client value takes over.
+  const isMac = useSyncExternalStore(
+    () => () => {},
+    () => /Mac|iPhone|iPad/.test(navigator.platform),
+    () => false,
+  );
 
   const disabled = status === "CANCELLED";
 
@@ -213,7 +226,14 @@ export function InvoiceAssigneeControl({
         open={reminderOpen}
         onOpenChange={(nextOpen) => !nextOpen && !reminding && setReminderOpen(false)}
       >
-        <DialogContent>
+        <DialogContent
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+              event.preventDefault();
+              if (!reminding) void remind();
+            }
+          }}
+        >
           <DialogHeader>
             <DialogTitle>
               {assignedToId === currentUserId
@@ -252,6 +272,14 @@ export function InvoiceAssigneeControl({
               disabled={reminding}
             >
               {reminding ? "Sending..." : "Send reminder"}
+              <kbd className="pointer-events-none inline-flex items-center gap-0.5 font-sans opacity-60">
+                {isMac ? (
+                  <CommandIcon className="size-3" />
+                ) : (
+                  <span className="text-xs leading-none">Ctrl</span>
+                )}
+                <CornerDownLeftIcon className="size-3" />
+              </kbd>
             </Button>
           </DialogFooter>
         </DialogContent>

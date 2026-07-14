@@ -1,4 +1,5 @@
 import { InboxPageShell } from "@/components/inbox-page-shell";
+import { getAiBalanceWarning } from "@/lib/ai-connector";
 import { loadInboxConnection, loadInboxThreads } from "@/lib/inbox-data";
 import { getNavCounts } from "@/lib/nav-counts";
 import { buildMailboxConnectionSummary } from "@/lib/o365/connection";
@@ -11,10 +12,11 @@ export default async function InboxRouteLayout({
 }) {
   const session = await requireSession();
 
-  const [threads, connection, navCounts] = await Promise.all([
+  const [threads, connection, navCounts, aiBalanceWarning] = await Promise.all([
     loadInboxThreads(session.user.organizationId),
     loadInboxConnection(session.user.organizationId),
     getNavCounts(session.user.organizationId, session.user.id),
+    getAiBalanceWarning(session.user.organizationId),
   ]);
 
   const canSync =
@@ -33,6 +35,7 @@ export default async function InboxRouteLayout({
       threads={threads}
       navCounts={navCounts}
       mailboxConnection={mailboxConnection}
+      aiBalanceWarning={aiBalanceWarning}
       sync={{
         canSync,
         lastSyncedAt: connection?.lastSyncedAt?.toISOString() ?? null,

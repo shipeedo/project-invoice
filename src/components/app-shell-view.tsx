@@ -29,6 +29,10 @@ export type MailboxConnectionSummary = {
   lastSyncedLabel: string | null;
 };
 
+export type AiBalanceWarning = {
+  balance: number;
+};
+
 export type AppShellViewProps = {
   children: React.ReactNode;
   user: {
@@ -42,6 +46,7 @@ export type AppShellViewProps = {
   breadcrumbs?: BreadcrumbEntry[];
   fillViewport?: boolean;
   mailboxConnection?: MailboxConnectionSummary | null;
+  aiBalanceWarning?: AiBalanceWarning | null;
 };
 
 // Presentational shell. Kept free of server-only imports so it can be rendered
@@ -55,6 +60,7 @@ export function AppShellView({
   breadcrumbs = [],
   fillViewport = false,
   mailboxConnection = null,
+  aiBalanceWarning = null,
 }: AppShellViewProps) {
   return (
     <SidebarProvider>
@@ -63,10 +69,13 @@ export function AppShellView({
         activePath={activePath}
         navCounts={navCounts}
         mailboxConnection={mailboxConnection}
+        aiBalanceWarning={aiBalanceWarning}
       />
       <SidebarInset
         className={cn(
-          "min-w-0 overflow-x-hidden",
+          // clip, not hidden: overflow-x-hidden would make this a scroll
+          // container and break position:sticky descendants (settings nav).
+          "min-w-0 overflow-x-clip",
           fillViewport && "h-svh min-h-0 overflow-hidden",
         )}
       >

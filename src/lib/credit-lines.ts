@@ -1,5 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { recordAuditEvent } from "@/lib/audit";
+import { addCreditDocuments, type CreditDocumentFile } from "@/lib/credit-documents";
 import {
   buildCreditRequestLineItems,
   computeGstCreditAmount,
@@ -103,6 +104,9 @@ export async function recordCreditRequestOutcome(params: {
   creditRequestId: string;
   outcome: "approved" | "denied";
   approvedAmount?: number | null;
+  /** Credit note files already saved to uploads; mirrored into invoice documents. */
+  attachments?: CreditDocumentFile[];
+  note?: string | null;
 }) {
   const request = await db.query.creditRequests.findFirst({
     where: and(
@@ -151,6 +155,18 @@ export async function recordCreditRequestOutcome(params: {
     .where(eq(creditRequests.id, request.id))
     .returning();
 
+  const attachments = params.attachments ?? [];
+  if (attachments.length > 0 || params.note?.trim()) {
+    await addCreditDocuments({
+      organizationId: params.organizationId,
+      invoiceId: request.invoiceId,
+      creditRequestId: request.id,
+      uploadedById: params.userId,
+      files: attachments,
+      note: params.note,
+    });
+  }
+
   await recordAuditEvent({
     invoiceId: request.invoiceId,
     userId: params.userId,
@@ -160,6 +176,9 @@ export async function recordCreditRequestOutcome(params: {
       status,
       carrierDecision,
       approvedAmount,
+      ...(attachments.length > 0
+        ? { fileNames: attachments.map((file) => file.fileName) }
+        : {}),
     },
   });
 

@@ -1,12 +1,28 @@
-import { getAiConfig, shouldUseJsonResponseFormat } from "@/lib/ai-config";
+import { resolveAiConfig, shouldUseJsonResponseFormat } from "@/lib/ai-config";
+
+export type AiUsage = {
+  promptTokens: number;
+  completionTokens: number;
+};
+
+export type AiChatSuccess = {
+  content: string;
+  raw: unknown;
+  usage: AiUsage | null;
+  model: string;
+};
+
+export type AiChatError = {
+  error: string;
+  raw: unknown | null;
+};
 
 export async function callAiChatCompletion(params: {
+  organizationId: string;
   systemPrompt: string;
   userPrompt: string;
-}): Promise<
-  { content: string; raw: unknown } | { error: string; raw: unknown | null }
-> {
-  const config = getAiConfig();
+}): Promise<AiChatSuccess | AiChatError> {
+  const config = await resolveAiConfig(params.organizationId);
   if ("error" in config) {
     return { error: config.error, raw: null };
   }
@@ -21,7 +37,7 @@ export async function callAiChatCompletion(params: {
       ],
     };
 
-    if (shouldUseJsonResponseFormat(config.chatCompletionsUrl)) {
+    if (shouldUseJsonResponseFormat(config.connectorType)) {
       requestBody.response_format = { type: "json_object" };
     }
 
@@ -44,6 +60,7 @@ export async function callAiChatCompletion(params: {
 
     const completion = (await response.json()) as {
       choices?: Array<{ message?: { content?: string } }>;
+      usage?: { prompt_tokens?: number; completion_tokens?: number };
     };
 
     const content = completion.choices?.[0]?.message?.content;
@@ -54,7 +71,16 @@ export async function callAiChatCompletion(params: {
       };
     }
 
-    return { content, raw: completion };
+    const usage =
+      typeof completion.usage?.prompt_tokens === "number" &&
+      typeof completion.usage?.completion_tokens === "number"
+        ? {
+            promptTokens: completion.usage.prompt_tokens,
+            completionTokens: completion.usage.completion_tokens,
+          }
+        : null;
+
+    return { content, raw: completion, usage, model: config.model };
   } catch (error) {
     return {
       error: error instanceof Error ? error.message : "AI request failed",

@@ -13,7 +13,13 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { formatDecimalAmount, parseDecimalAmount } from "@/lib/format";
+import {
+  CREDIT_NOTE_UPLOAD_ACCEPT,
+  CREDIT_NOTE_UPLOAD_EXTENSIONS,
+  hasAllowedExtension,
+} from "@/lib/invoice-documents";
 
 type CreditOutcomeDialogProps = {
   open: boolean;
@@ -31,6 +37,9 @@ export function CreditOutcomeDialog({
   const router = useRouter();
   const [outcome, setOutcome] = useState<"approved" | "denied">("approved");
   const [approvedAmountOverride, setApprovedAmountOverride] = useState<string | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
+  const [note, setNote] = useState("");
+  const [fileInputKey, setFileInputKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -45,38 +54,50 @@ export function CreditOutcomeDialog({
     if (!nextOpen) {
       setOutcome("approved");
       setApprovedAmountOverride(null);
+      setFiles([]);
+      setNote("");
+      setFileInputKey((key) => key + 1);
       setError(null);
     }
     onOpenChange(nextOpen);
   }
 
   async function handleSubmit() {
-    setLoading(true);
     setError(null);
 
-    const payload: {
-      action: "record_outcome";
-      outcome: "approved" | "denied";
-      approvedAmount?: number;
-    } = {
-      action: "record_outcome",
-      outcome,
-    };
+    const invalidFile = files.find(
+      (file) => !hasAllowedExtension(file.name, CREDIT_NOTE_UPLOAD_EXTENSIONS),
+    );
+    if (invalidFile) {
+      setError("Supported credit note uploads: PDF, CSV, XLSX, and XLS");
+      return;
+    }
+
+    const formData = new FormData();
+    formData.set("action", "record_outcome");
+    formData.set("outcome", outcome);
 
     if (outcome === "approved") {
       const amount = parseDecimalAmount(approvedAmount);
       if (amount == null || amount <= 0) {
-        setLoading(false);
         setError("Approved amount is required");
         return;
       }
-      payload.approvedAmount = amount;
+      formData.set("approvedAmount", String(amount));
     }
+
+    for (const file of files) {
+      formData.append("files", file);
+    }
+    if (note.trim()) {
+      formData.set("note", note.trim());
+    }
+
+    setLoading(true);
 
     const response = await fetch(`/api/credit-requests/${creditRequestId}`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: formData,
     });
 
     setLoading(false);
@@ -137,6 +158,39 @@ export function CreditOutcomeDialog({
             />
           </div>
         ) : null}
+
+        <div className="space-y-2">
+          <Label htmlFor="credit-note-files">
+            Credit note file(s){" "}
+            <span className="font-normal text-muted-foreground">(optional)</span>
+          </Label>
+          <Input
+            key={fileInputKey}
+            id="credit-note-files"
+            type="file"
+            multiple
+            accept={CREDIT_NOTE_UPLOAD_ACCEPT}
+            onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
+          />
+          <p className="text-xs text-muted-foreground">
+            Attach the credit note received from the carrier (PDF, CSV, XLSX, or
+            XLS). Files are added to the invoice documents.
+          </p>
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="credit-outcome-note">
+            Note{" "}
+            <span className="font-normal text-muted-foreground">(optional)</span>
+          </Label>
+          <Textarea
+            id="credit-outcome-note"
+            value={note}
+            onChange={(event) => setNote(event.target.value)}
+            placeholder="Optional note added to the invoice"
+            rows={3}
+          />
+        </div>
 
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
 

@@ -9,6 +9,7 @@ export const EXTRACTION_JSON_SCHEMA = `{
   "totalAmount": "number — invoice total / amount due (numeric only, no currency symbols)",
   "subtotal": "number or null — amount before tax if shown separately",
   "taxAmount": "number or null — GST/VAT/tax total if shown separately",
+  "accountReference": "string or null — the buyer/customer account identifier the supplier printed on the invoice. Labels vary: Account, Account No, Customer Account, Cost Centre, Reference, Your Reference, Department. Return the value only (never the label); null when no such identifier appears",
   "currency": "3-letter ISO code, default AUD",
   "confidence": "high | medium | low — your confidence in the extraction overall",
   "notes": "string or null — AP review notes: missing fields, total discrepancies between documents, unreadable sections"
@@ -34,6 +35,12 @@ You receive text extracted from one or more documents that together represent a 
 - vendorName is the party ISSUING the invoice (carrier, freight company, supplier). This is often in the letterhead, logo area, or "From" section.
 - Do NOT use the bill-to, ship-to, sold-to, or customer name as vendorName unless that party is clearly the invoice issuer.
 - When multiple company names appear, set vendorName to your best judgement of the issuer and mention the ambiguity in "notes".
+
+## Account reference
+- accountReference is the identifier the supplier uses for the CUSTOMER'S account on this invoice — the value printed next to labels like Account, Account No, Customer Account, Cost Centre, Reference, Your Reference, or Department.
+- Different suppliers use different labels for the same thing; normalize whichever appears into this one field.
+- Return the value only, never the label (e.g. "Chill Chair", not "Account: Chill Chair").
+- Do not confuse it with the invoice number, a purchase order number, or the supplier's own ABN/registration numbers. Null when no customer account identifier appears.
 
 ## Accounts payable review behaviour
 - Amounts must be numbers only (no $, commas, or currency codes).

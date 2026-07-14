@@ -142,6 +142,7 @@ export function classificationAllowsInvoiceProcessing(
  * garbage, so callers fail open and continue with extraction.
  */
 export async function classifyInboundEmail(params: {
+  organizationId: string;
   subject?: string | null;
   fromEmail?: string | null;
   fromName?: string | null;
@@ -163,6 +164,7 @@ export async function classifyInboundEmail(params: {
 
   try {
     const result = await callAiChatCompletion({
+      organizationId: params.organizationId,
       systemPrompt: EMAIL_CLASSIFICATION_SYSTEM_PROMPT,
       userPrompt,
     });

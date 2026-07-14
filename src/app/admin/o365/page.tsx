@@ -53,7 +53,7 @@ export default async function O365SettingsPage({ searchParams }: PageProps) {
       navCounts={navCounts}
       breadcrumbs={[
         { label: "Admin" },
-        { label: "Connections", href: "/admin/connections" },
+        { label: "Settings", href: "/admin/settings" },
         { label: "Office 365" },
       ]}
     >

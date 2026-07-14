@@ -275,6 +275,7 @@ export function normalizeExtractedSuppliersFromEmailThread(
 }
 
 export async function extractSupplierFromEmailThread(params: {
+  organizationId: string;
   messages: MailboxMessage[];
   focusMessageId?: string;
 }): Promise<{
@@ -298,6 +299,7 @@ export async function extractSupplierFromEmailThread(params: {
 
   try {
     const result = await callAiChatCompletion({
+      organizationId: params.organizationId,
       systemPrompt: SUPPLIER_FROM_EMAIL_SYSTEM_PROMPT,
       userPrompt,
     });
@@ -335,6 +337,7 @@ export async function extractSupplierFromEmailThread(params: {
 /** @deprecated Use extractSupplierFromEmailThread */
 export async function extractSupplierFromEmail(message: MailboxMessage) {
   const result = await extractSupplierFromEmailThread({
+    organizationId: message.organizationId,
     messages: [message],
     focusMessageId: message.id,
   });

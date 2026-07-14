@@ -311,12 +311,43 @@ export function describeAuditEvent(
           ? `To ${details.recipientEmail}`
           : null,
       };
+    case "invoice.documents_added": {
+      const fileNames = Array.isArray(details.fileNames)
+        ? details.fileNames.filter((name): name is string => typeof name === "string")
+        : [];
+      const kind = asString(details.kind);
+      return {
+        label: kind === "CREDIT" ? "Credit note attached" : "Documents added",
+        description: fileNames.length > 0 ? fileNames.join(", ") : null,
+      };
+    }
+    case "invoice.document_removed":
+      return {
+        label: "Document removed",
+        description: asString(details.fileName),
+      };
+    case "invoice.rebilled": {
+      const customer = asString(details.customerName);
+      const reference = asString(details.reference);
+      const parts = [
+        customer ? `Rebilled to ${customer}` : null,
+        reference ? `Reference: ${reference}` : null,
+      ].filter(Boolean);
+      return {
+        label: "Invoice rebilled",
+        description: parts.length > 0 ? parts.join(" · ") : null,
+      };
+    }
     case "credit_request.updated": {
       const status = asString(details.status);
       const approved = asNumber(details.approvedAmount);
+      const fileNames = Array.isArray(details.fileNames)
+        ? details.fileNames.filter((name): name is string => typeof name === "string")
+        : [];
       const parts = [
         status ? `Status: ${statusLabel(status)}` : null,
         approved != null ? `Approved ${formatCurrency(approved, currency)}` : null,
+        fileNames.length > 0 ? `Credit note: ${fileNames.join(", ")}` : null,
       ].filter(Boolean);
       return {
         label: "Credit request updated",

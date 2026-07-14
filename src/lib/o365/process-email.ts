@@ -273,6 +273,7 @@ export async function runInvoiceExtraction(params: {
         }
 
         extraction = await extractInvoiceFromDocumentTexts(
+          params.organizationId,
           documents,
           customSupplierContext,
           emailContextForPdf,
@@ -287,6 +288,7 @@ export async function runInvoiceExtraction(params: {
     }
   } else if (bodyText) {
     extraction = await extractInvoiceFromEmailBody(
+      params.organizationId,
       {
         subject: params.emailContext.subject,
         fromEmail: params.emailContext.fromEmail,
@@ -449,6 +451,7 @@ export async function processInboundEmailForInvoice(params: ProcessEmailOptions)
   let classification: Awaited<ReturnType<typeof classifyInboundEmail>> = null;
   if (!isManual) {
     classification = await classifyInboundEmail({
+      organizationId: params.organizationId,
       subject: emailContext.subject,
       fromEmail: emailContext.fromEmail,
       fromName: emailContext.fromName,
@@ -596,6 +599,7 @@ export async function processInboundEmailForInvoice(params: ProcessEmailOptions)
       subtotalAmount: extraction.data?.subtotal,
       taxAmount: extraction.data?.taxAmount,
       currency: extraction.data?.currency ?? "AUD",
+      accountReference: extraction.data?.accountReference ?? null,
       extractionRaw: extraction.raw ? JSON.stringify(extraction.raw) : null,
       parseError: extraction.error ?? portalFetchError ?? null,
       supplierId: resolvedSupplierId,
@@ -652,7 +656,12 @@ export async function processInboundEmailForInvoice(params: ProcessEmailOptions)
     with: { supplier: true, assignedTo: true, attachments: true },
   });
 
-  return { skipped: false as const, invoice: result ?? updatedInvoice };
+  return {
+    skipped: false as const,
+    invoice: result ?? updatedInvoice,
+    usage: extraction.usage ?? null,
+    model: extraction.model ?? null,
+  };
 }
 
 export async function processEmailInvoice(params: {

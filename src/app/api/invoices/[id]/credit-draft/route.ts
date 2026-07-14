@@ -3,6 +3,11 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { creditDrafts, db, invoices } from "@/lib/db";
 import { recordAuditEvent } from "@/lib/audit";
+import { addCreditDocuments } from "@/lib/credit-documents";
+import {
+  DOCUMENT_UPLOAD_EXTENSIONS,
+  hasAllowedExtension,
+} from "@/lib/invoice-documents";
 import { saveUploadedFile } from "@/lib/uploads";
 
 type RouteContext = {
@@ -11,7 +16,7 @@ type RouteContext = {
 
 export async function POST(request: Request, context: RouteContext) {
   const session = await auth();
-  if (!session?.user?.organizationId) {
+  if (!session?.user?.organizationId || !session.user.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -37,16 +42,33 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: "Message is required" }, { status: 400 });
   }
 
-  const attachmentMeta: Array<{ name: string; path: string; mimeType: string }> = [];
+  const attachmentFiles: File[] = [];
   for (const [key, value] of formData.entries()) {
     if (key.startsWith("attachment") && value instanceof File && value.size > 0) {
-      const saved = await saveUploadedFile(value);
-      attachmentMeta.push({
-        name: value.name,
-        path: saved.storedPath,
-        mimeType: saved.mimeType,
-      });
+      if (!hasAllowedExtension(value.name, DOCUMENT_UPLOAD_EXTENSIONS)) {
+        return NextResponse.json(
+          { error: "Supported uploads: PDF, CSV, XLSX, XLS, DOCX, PNG, and JPEG" },
+          { status: 400 },
+        );
+      }
+      attachmentFiles.push(value);
     }
+  }
+
+  const attachmentMeta: Array<{
+    name: string;
+    path: string;
+    mimeType: string;
+    size: number;
+  }> = [];
+  for (const file of attachmentFiles) {
+    const saved = await saveUploadedFile(file);
+    attachmentMeta.push({
+      name: file.name,
+      path: saved.storedPath,
+      mimeType: saved.mimeType,
+      size: saved.size,
+    });
   }
 
   const [draft] = await db
@@ -59,6 +81,23 @@ export async function POST(request: Request, context: RouteContext) {
       attachments: JSON.stringify(attachmentMeta),
     })
     .returning();
+
+  // Draft attachments still land on the invoice as CREDIT documents even
+  // though no credit request row exists yet.
+  if (attachmentMeta.length > 0) {
+    await addCreditDocuments({
+      organizationId: session.user.organizationId,
+      invoiceId: id,
+      creditRequestId: null,
+      uploadedById: session.user.id,
+      files: attachmentMeta.map((attachment) => ({
+        fileName: attachment.name,
+        filePath: attachment.path,
+        mimeType: attachment.mimeType,
+        size: attachment.size,
+      })),
+    });
+  }
 
   await recordAuditEvent({
     invoiceId: id,

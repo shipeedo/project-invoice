@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Card,
+  CardAction,
   CardContent,
   CardDescription,
   CardHeader,
@@ -275,29 +276,30 @@ export function UsersManager({ initialUsers, currentUserId }: UsersManagerProps)
   }
 
   return (
-    <div className="space-y-6">
-      {error ? (
-        <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      ) : null}
-
-      <div className="flex justify-end">
-        <Button type="button" onClick={openSheet}>
-          <PlusIcon />
-          Add user
-        </Button>
-      </div>
-
+    <>
       <Card>
-        <CardHeader>
-          <CardTitle>Users with access ({users.length})</CardTitle>
+        <CardHeader className="border-b">
+          <CardTitle className="flex items-center gap-2">
+            Users
+            <Badge variant="secondary">{users.length}</Badge>
+          </CardTitle>
           <CardDescription>
-            Only these users can sign in to Project Invoice, even if the auth server issues
-            them a token.
+            Control who can use Project Invoice. Users sign in with their Shipeedo
+            account, but only the people listed here get access.
           </CardDescription>
+          <CardAction>
+            <Button type="button" size="sm" variant="outline" onClick={openSheet}>
+              <PlusIcon />
+              Add user
+            </Button>
+          </CardAction>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
+          {error ? (
+            <Alert variant="destructive">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          ) : null}
           <Table>
             <TableHeader>
               <TableRow>
@@ -550,6 +552,6 @@ export function UsersManager({ initialUsers, currentUserId }: UsersManagerProps)
           </div>
         </SheetContent>
       </Sheet>
-    </div>
+    </>
   );
 }

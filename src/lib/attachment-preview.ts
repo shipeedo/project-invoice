@@ -52,9 +52,19 @@ export async function readSpreadsheetPreview(
         grid.length > MAX_PREVIEW_ROWS ||
         grid.some((row) => row.length > MAX_PREVIEW_COLUMNS);
 
-      const rows = grid
+      // sheet_to_json returns ragged, sparse rows (each ends at its last
+      // non-empty cell, with holes for blanks). Densify via Array.from and
+      // pad every row to the widest row so the rendered grid stays aligned.
+      const kept = grid
         .slice(0, MAX_PREVIEW_ROWS)
-        .map((row) => row.slice(0, MAX_PREVIEW_COLUMNS).map(toCellText));
+        .map((row) => Array.from(row.slice(0, MAX_PREVIEW_COLUMNS), toCellText));
+
+      const width = kept.reduce((max, row) => Math.max(max, row.length), 0);
+      const rows = kept.map((row) =>
+        row.length < width
+          ? row.concat(Array(width - row.length).fill(""))
+          : row,
+      );
 
       return { name, rows, truncated };
     }).filter((sheet) => sheet.rows.length > 0);

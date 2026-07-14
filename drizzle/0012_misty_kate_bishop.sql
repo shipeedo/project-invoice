@@ -1,0 +1,1 @@
+ALTER TABLE `invoice_documents` ADD `credit_request_id` text REFERENCES credit_requests(id);

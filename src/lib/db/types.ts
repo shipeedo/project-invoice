@@ -19,12 +19,19 @@ export const routingRuleTypes = [
   "SENDER_EMAIL",
   "AMOUNT_THRESHOLD",
   "PARSE_FAILURE",
+  "COMBO",
   "DEFAULT",
 ] as const;
 export type RoutingRuleType = (typeof routingRuleTypes)[number];
 
+export const invoiceDocumentKinds = ["GENERAL", "REBILL", "CREDIT"] as const;
+export type InvoiceDocumentKind = (typeof invoiceDocumentKinds)[number];
+
 export const o365ConnectionStatuses = ["CONNECTED", "DISCONNECTED", "ERROR"] as const;
 export type O365ConnectionStatus = (typeof o365ConnectionStatuses)[number];
+
+export const aiConnectorTypes = ["AI_GATEWAY", "OPENAI_COMPATIBLE"] as const;
+export type AiConnectorType = (typeof aiConnectorTypes)[number];
 
 export const creditRequestStatuses = [
   "DRAFT",
@@ -53,6 +60,7 @@ export type ProcessingJobStatus = (typeof processingJobStatuses)[number];
 export const notificationTypes = [
   "INVOICE_ASSIGNED",
   "INVOICE_REMINDER",
+  "NOTE_MENTION",
   "TEST",
 ] as const;
 export type NotificationType = (typeof notificationTypes)[number];

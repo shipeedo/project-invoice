@@ -3,7 +3,7 @@ import { and, asc, desc, eq } from "drizzle-orm";
 import { InvoiceQueue } from "@/components/invoice-queue";
 import { AppShell } from "@/components/app-shell";
 import { buttonVariants } from "@/components/ui/button";
-import { db, invoices, suppliers, users } from "@/lib/db";
+import { db, invoices, notes, suppliers, users } from "@/lib/db";
 import { RESPOND_BY_BUSINESS_DAYS } from "@/lib/invoice-deadlines";
 import { invoiceNotDeleted } from "@/lib/invoice-trash";
 import { getNavCounts } from "@/lib/nav-counts";
@@ -22,6 +22,13 @@ export default async function QueuePage() {
       with: {
         assignedTo: { columns: { id: true, name: true, email: true } },
         supplier: { columns: { id: true, name: true } },
+        notes: {
+          orderBy: desc(notes.createdAt),
+          with: {
+            user: { columns: { name: true, email: true } },
+            document: { columns: { id: true, fileName: true } },
+          },
+        },
       },
       orderBy: desc(invoices.createdAt),
     }),
@@ -56,6 +63,16 @@ export default async function QueuePage() {
     supplierId: invoice.supplierId,
     assignedTo: invoice.assignedTo,
     supplier: invoice.supplier,
+    notes: invoice.notes.map((note) => ({
+      id: note.id,
+      content: note.content,
+      createdAt: note.createdAt.toISOString(),
+      authorId: note.userId,
+      authorName: note.user ? (note.user.name ?? note.user.email) : null,
+      document: note.document
+        ? { id: note.document.id, fileName: note.document.fileName }
+        : null,
+    })),
   }));
 
   return (

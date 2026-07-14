@@ -39,6 +39,13 @@ type CreditRequestSheetProps = {
   onOpenChange: (open: boolean) => void;
   invoiceId: string;
   currency: string;
+  /**
+   * Runs after the credit request is created (e.g. approve the invoice).
+   * Returning an error message keeps the sheet open; resubmitting retries
+   * only this step.
+   */
+  onCreated?: () => Promise<string | null>;
+  submitLabel?: string;
 };
 
 type LineDraft = {
@@ -73,6 +80,8 @@ export function CreditRequestSheet({
   onOpenChange,
   invoiceId,
   currency,
+  onCreated,
+  submitLabel = "Create credit request",
 }: CreditRequestSheetProps) {
   const router = useRouter();
   const [lines, setLines] = useState<LineDraft[]>([emptyLine(0)]);
@@ -81,6 +90,7 @@ export function CreditRequestSheet({
   const [includeGst, setIncludeGst] = useState(false);
   const [requestedTotal, setRequestedTotal] = useState("");
   const [totalTouched, setTotalTouched] = useState(false);
+  const [created, setCreated] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -92,6 +102,7 @@ export function CreditRequestSheet({
       setIncludeGst(false);
       setRequestedTotal("");
       setTotalTouched(false);
+      setCreated(false);
       setError(null);
     }
     onOpenChange(nextOpen);
@@ -138,43 +149,59 @@ export function CreditRequestSheet({
   }
 
   async function handleSubmit() {
-    const problem = validationError();
-    if (problem) {
-      setError(problem);
-      return;
+    if (!created) {
+      const problem = validationError();
+      if (problem) {
+        setError(problem);
+        return;
+      }
+
+      setLoading(true);
+      setError(null);
+
+      const payload = lines.map((line) => ({
+        description: line.description.trim(),
+        requestedAmount: parseDecimalAmount(line.requestedAmount),
+        quantity: parseDecimalAmount(line.quantity),
+        reference: line.reference.trim() || null,
+        reason: line.reason as CreditReasonCode,
+        reasonDetail: line.reason === "OTHER" ? line.reasonDetail.trim() : null,
+      }));
+
+      const response = await fetch(`/api/invoices/${invoiceId}/credits`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          lines: payload,
+          includeGst,
+          requestedTotal: parseDecimalAmount(displayTotal),
+          notes: notes.trim() || null,
+        }),
+      });
+
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { error?: string } | null;
+        setLoading(false);
+        setError(body?.error ?? "Failed to create credit request");
+        return;
+      }
+
+      setCreated(true);
+    } else {
+      setLoading(true);
+      setError(null);
     }
 
-    setLoading(true);
-    setError(null);
-
-    const payload = lines.map((line) => ({
-      description: line.description.trim(),
-      requestedAmount: parseDecimalAmount(line.requestedAmount),
-      quantity: parseDecimalAmount(line.quantity),
-      reference: line.reference.trim() || null,
-      reason: line.reason as CreditReasonCode,
-      reasonDetail: line.reason === "OTHER" ? line.reasonDetail.trim() : null,
-    }));
-
-    const response = await fetch(`/api/invoices/${invoiceId}/credits`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        lines: payload,
-        includeGst,
-        requestedTotal: parseDecimalAmount(displayTotal),
-        notes: notes.trim() || null,
-      }),
-    });
+    if (onCreated) {
+      const followUpError = await onCreated();
+      if (followUpError) {
+        setLoading(false);
+        setError(followUpError);
+        return;
+      }
+    }
 
     setLoading(false);
-
-    if (!response.ok) {
-      const body = (await response.json().catch(() => null)) as { error?: string } | null;
-      setError(body?.error ?? "Failed to create credit request");
-      return;
-    }
-
     handleOpenChange(false);
     router.refresh();
   }
@@ -384,7 +411,7 @@ export function CreditRequestSheet({
             Cancel
           </Button>
           <Button type="button" onClick={() => void handleSubmit()} disabled={loading}>
-            {loading ? "Creating..." : "Create credit request"}
+            {loading ? "Working..." : submitLabel}
           </Button>
         </SheetFooter>
       </SheetContent>
