@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getAppOrigin } from "@/lib/app-url";
 import { upsertO365Connection } from "@/lib/o365/connection";
 import { exchangeMicrosoftCode } from "@/lib/o365/oauth";
 import { parseO365OAuthState } from "@/lib/o365/oauth-state";
@@ -10,7 +11,7 @@ export async function GET(request: Request) {
   const error = url.searchParams.get("error");
   const errorDescription = url.searchParams.get("error_description");
 
-  const redirectBase = new URL("/admin/o365", url.origin);
+  const redirectBase = new URL("/admin/o365", getAppOrigin(url.origin));
 
   if (error) {
     redirectBase.searchParams.set(

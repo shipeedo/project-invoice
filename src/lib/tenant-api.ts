@@ -1,6 +1,9 @@
-// Client for the Shipeedo tenant API. In development, point TENANT_API_URL at
-// the tenant service; in production the variable is unset and requests go to
-// the app's own origin, where the load balancer routes /api to the service.
+// Client for the Shipeedo tenant API. Point TENANT_API_URL at the origin
+// that routes /api/core to the tenant service (https://api.shipeedo.com in
+// production). When unset, requests fall back to the app's own origin, which
+// only works when a load balancer in front of the app routes /api there.
+
+import { getAppOrigin } from "@/lib/app-url";
 
 export type TenantUser = {
   id?: number;
@@ -36,7 +39,7 @@ type GetUsersResult = {
 
 function resolveBaseUrl(requestOrigin: string) {
   const configured = process.env.TENANT_API_URL?.trim();
-  return (configured || requestOrigin).replace(/\/$/, "");
+  return (configured || getAppOrigin(requestOrigin)).replace(/\/$/, "");
 }
 
 export async function fetchTenantUsers(params: {

@@ -14,10 +14,9 @@ export const MICROSOFT_SCOPES = [
 ].join(" ");
 
 export function getMicrosoftRedirectUri() {
-  return (
-    process.env.MS_REDIRECT_URI ??
-    `${process.env.NEXTAUTH_URL ?? "http://localhost:3000"}/api/o365/callback`
-  );
+  if (process.env.MS_REDIRECT_URI) return process.env.MS_REDIRECT_URI;
+  const base = process.env.AUTH_URL ?? process.env.NEXTAUTH_URL ?? "http://localhost:3000";
+  return `${base.replace(/\/$/, "")}/api/o365/callback`;
 }
 
 export function getMicrosoftClientConfig() {

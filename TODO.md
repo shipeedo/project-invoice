@@ -23,7 +23,7 @@ Track remaining work before production launch.
 ## Future
 
 - [ ] **Recharges** — skipped for launch
-
+- [ ] **Multi tenant support** - single users list - todo after auth changes 
 - [ ] **Storage providers** — pluggable document storage: S3, local filesystem, Dropbox
 - [ ] **More AI providers** — Azure AI Foundry and other providers alongside the current gateway connector
 - [ ] **More email providers** — implement the remaining providers already listed in the app

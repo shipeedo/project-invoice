@@ -31,8 +31,10 @@ Set the same variables in your **host environment** (e.g. GitHub Environment sec
 
 | Variable | Local value | Production value |
 |----------|-------------|------------------|
-| `REDIRECT_URI` | `http://localhost:3000/api/auth/callback/shipeedo` | `https://pi.shipeedo.com/api/auth/callback/shipeedo` |
-| `MS_REDIRECT_URI` | `http://localhost:3000/api/auth/callback/microsoft` (if used) | `https://pi.shipeedo.com/api/auth/callback/microsoft` |
+| `AUTH_URL` | unset (derived from the request) | `https://pi.shipeedo.com` |
+| `MS_REDIRECT_URI` | `http://localhost:3000/api/o365/callback` (if used) | `https://pi.shipeedo.com/api/o365/callback` |
+| `TENANT_API_URL` | `https://tenant.shipeedo.com` (if used) | `https://api.shipeedo.com` |
+| `RUN_DB_MIGRATIONS` | unset (dev uses `drizzle-kit push`) | `true` — applies committed drizzle migrations on boot |
 
 All other variables are typically the same across environments (different secret *values* if you rotate per env).
 
@@ -47,7 +49,7 @@ All other variables are typically the same across environments (different secret
 | `CLIENT_ID` | No | `project-invoice` |
 | `CLIENT_SECRET` | **Yes** | From Shipeedo OAuth client |
 | `OIDC_ISSUER` | No | `https://auth.shipeedo.com` |
-| `REDIRECT_URI` | No | Must match registered redirect URI for the environment |
+| `AUTH_URL` | No | Canonical public URL (e.g. `https://pi.shipeedo.com`). Required when deployed behind a proxy: Auth.js and user-facing redirects derive the app's origin from it, and `{AUTH_URL}/api/auth/callback/shipeedo` must be registered on the OAuth client. |
 
 Discovery: `{OIDC_ISSUER}/.well-known/openid-configuration`
 
@@ -57,7 +59,7 @@ See [auth.md](auth.md).
 
 | Variable | Secret? | Notes |
 |----------|---------|-------|
-| `TENANT_API_URL` | No | Base URL of the tenant API for `GET /api/core/user/getusers` — set in development only. In production leave unset: calls go to the app's own origin and the load balancer routes `/api` to the tenant service. |
+| `TENANT_API_URL` | No | Base URL of the tenant API for `GET /api/core/user/getusers` — the origin that routes `/api/core` to the tenant service (production: `https://api.shipeedo.com`). When unset, calls fall back to the app's canonical origin (`AUTH_URL`), which only works behind a load balancer that routes `/api` to the tenant service. |
 
 Requests are authenticated with the signed-in admin's OIDC access token, so the tenant directory is unavailable when using mock login (`AUTH_MOCK=true`) — use "Add by email" instead.
 
