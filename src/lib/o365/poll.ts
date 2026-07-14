@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db, o365Connections } from "@/lib/db";
 import {
   getO365Connection,

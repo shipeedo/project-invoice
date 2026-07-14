@@ -201,12 +201,16 @@ export function InvoiceNotesSheet({
   }, [open, canCompose]);
 
   // React to deep-link changes after mount too (client-side navigation from a
-  // notification while this page is already rendered).
-  useEffect(() => {
-    if (!initialNoteId) return;
-    setHighlightId(initialNoteId);
-    if (!isControlled) setUncontrolledOpen(true);
-  }, [initialNoteId, isControlled]);
+  // notification while this page is already rendered). Adjusting state during
+  // render on a prop change avoids the cascading re-render an effect would cause.
+  const [lastInitialNoteId, setLastInitialNoteId] = useState(initialNoteId);
+  if (initialNoteId !== lastInitialNoteId) {
+    setLastInitialNoteId(initialNoteId);
+    if (initialNoteId) {
+      setHighlightId(initialNoteId);
+      if (!isControlled) setUncontrolledOpen(true);
+    }
+  }
 
   useEffect(() => {
     if (!highlightId || !open) return;

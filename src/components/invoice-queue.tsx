@@ -416,6 +416,67 @@ export function InvoiceQueue({
     now,
   ]);
 
+  const sortedInvoices = useMemo(() => {
+    const factor = sortDirection === "asc" ? 1 : -1;
+
+    const sortValue = (invoice: InvoiceQueueRow): string | number | null => {
+      switch (sortKey) {
+        case "supplier":
+          return supplierLabel(invoice).toLowerCase();
+        case "status":
+          return invoiceStatuses.indexOf(invoice.status);
+        case "total":
+          return invoice.totalAmount;
+        case "assignee":
+          return invoice.assignedTo
+            ? userLabel(invoice.assignedTo).toLowerCase()
+            : null;
+        case "respondBy": {
+          const date = getRespondByDate({
+            status: invoice.status,
+            createdAt: invoice.createdAt,
+            validatedAt: invoice.validatedAt,
+            dueDate: invoice.dueDate,
+            respondByDate: invoice.respondByDate,
+          });
+          return date ? date.getTime() : null;
+        }
+        case "due":
+          return invoice.dueDate ? new Date(invoice.dueDate).getTime() : null;
+        case "received":
+          return new Date(invoice.createdAt).getTime();
+      }
+    };
+
+    return [...filteredInvoices].sort((a, b) => {
+      const av = sortValue(a);
+      const bv = sortValue(b);
+      // Missing values always sink to the bottom, regardless of direction.
+      if (av === null && bv === null) return 0;
+      if (av === null) return 1;
+      if (bv === null) return -1;
+      if (typeof av === "number" && typeof bv === "number") {
+        return (av - bv) * factor;
+      }
+      return String(av).localeCompare(String(bv)) * factor;
+    });
+  }, [filteredInvoices, sortKey, sortDirection]);
+
+  const handleSort = useCallback(
+    (key: SortKey) => {
+      const nextDirection: SortDirection =
+        key === sortKey
+          ? sortDirection === "asc"
+            ? "desc"
+            : "asc"
+          : key === DEFAULT_SORT_KEY
+            ? DEFAULT_SORT_DIRECTION
+            : "asc";
+      setParams({ sort: key, dir: nextDirection });
+    },
+    [sortKey, sortDirection, setParams],
+  );
+
   const hasActiveFilters =
     search.trim() !== "" ||
     supplierFilter.length > 0 ||
@@ -593,19 +654,54 @@ export function InvoiceQueue({
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Supplier</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Total</TableHead>
-                <TableHead>Assigned to</TableHead>
-                <TableHead>Respond by</TableHead>
-                <TableHead>Due</TableHead>
+                <SortableHead
+                  label="Supplier"
+                  active={sortKey === "supplier"}
+                  direction={sortDirection}
+                  onSort={() => handleSort("supplier")}
+                />
+                <SortableHead
+                  label="Status"
+                  active={sortKey === "status"}
+                  direction={sortDirection}
+                  onSort={() => handleSort("status")}
+                />
+                <SortableHead
+                  label="Total"
+                  active={sortKey === "total"}
+                  direction={sortDirection}
+                  onSort={() => handleSort("total")}
+                />
+                <SortableHead
+                  label="Assigned to"
+                  active={sortKey === "assignee"}
+                  direction={sortDirection}
+                  onSort={() => handleSort("assignee")}
+                />
+                <SortableHead
+                  label="Respond by"
+                  active={sortKey === "respondBy"}
+                  direction={sortDirection}
+                  onSort={() => handleSort("respondBy")}
+                />
+                <SortableHead
+                  label="Due"
+                  active={sortKey === "due"}
+                  direction={sortDirection}
+                  onSort={() => handleSort("due")}
+                />
                 <TableHead>Alerts</TableHead>
                 <TableHead>Notes</TableHead>
-                <TableHead>Received</TableHead>
+                <SortableHead
+                  label="Received"
+                  active={sortKey === "received"}
+                  direction={sortDirection}
+                  onSort={() => handleSort("received")}
+                />
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredInvoices.length === 0 ? (
+              {sortedInvoices.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={9} className="text-center text-muted-foreground">
                     {hasActiveFilters
@@ -614,7 +710,7 @@ export function InvoiceQueue({
                   </TableCell>
                 </TableRow>
               ) : (
-                filteredInvoices.map((invoice) => {
+                sortedInvoices.map((invoice) => {
                   const deadlineInput = {
                     status: invoice.status,
                     createdAt: invoice.createdAt,
