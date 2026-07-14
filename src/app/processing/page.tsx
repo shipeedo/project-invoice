@@ -116,6 +116,7 @@ export default async function ProcessingQueuePage({
     createdAt: job.createdAt.toISOString(),
     startedAt: job.startedAt?.toISOString() ?? null,
     finishedAt: job.finishedAt?.toISOString() ?? null,
+    nextAttemptAt: job.nextAttemptAt?.toISOString() ?? null,
     aiModel: job.aiModel,
     promptTokens: job.promptTokens,
     completionTokens: job.completionTokens,

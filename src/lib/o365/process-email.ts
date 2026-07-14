@@ -29,6 +29,7 @@ import {
 } from "@/lib/invoice-portals";
 import { documentLooksLikeAccountStatement, emailLooksLikeAccountStatement } from "@/lib/invoice-portals/detect-account-statement";
 import {
+  AiRateLimitError,
   extractInvoiceFromDocumentTexts,
   extractInvoiceFromEmailBody,
   parseInvoiceDate,
@@ -489,6 +490,13 @@ export async function processInboundEmailForInvoice(params: ProcessEmailOptions)
       skipStatementDetection: isManual,
     });
 
+  // A rate-limited extraction produced no data through no fault of the email.
+  // Abort before any invoice or processed-message row is written so the job
+  // can be rescheduled with backoff and reprocess this message cleanly.
+  if (extraction.rateLimited) {
+    throw new AiRateLimitError(extraction.error);
+  }
+
   if (!isManual && accountStatement) {
     return ignoreInboundEmail({
       organizationId: params.organizationId,
@@ -768,11 +776,22 @@ export async function processMailboxMessageInvoice(params: {
   organizationId: string;
   messageId: string;
 }) {
-  const result = await processStoredMailboxMessage({
-    organizationId: params.organizationId,
-    messageId: params.messageId,
-    triggeredBy: "manual",
-  });
+  let result: Awaited<ReturnType<typeof processStoredMailboxMessage>>;
+  try {
+    result = await processStoredMailboxMessage({
+      organizationId: params.organizationId,
+      messageId: params.messageId,
+      triggeredBy: "manual",
+    });
+  } catch (error) {
+    if (error instanceof AiRateLimitError) {
+      return {
+        error:
+          "The AI provider is currently rate limiting requests. Try again in a few minutes." as const,
+      };
+    }
+    throw error;
+  }
 
   if (result.error) {
     return { error: result.error, invoiceId: result.invoiceId };

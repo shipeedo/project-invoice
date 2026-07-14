@@ -52,6 +52,7 @@ export type MailboxMessageDirection = (typeof mailboxMessageDirections)[number];
 export const processingJobStatuses = [
   "PENDING",
   "PROCESSING",
+  "RATE_LIMITED",
   "COMPLETED",
   "FAILED",
 ] as const;

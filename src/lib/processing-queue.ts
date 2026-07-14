@@ -1,4 +1,4 @@
-import { and, asc, count, eq, isNull, lt, notInArray } from "drizzle-orm";
+import { and, asc, count, eq, inArray, isNull, lt, lte, notInArray, or } from "drizzle-orm";
 import { countInvoiceLikeAttachments } from "@/lib/attachment-types";
 import {
   db,
@@ -9,6 +9,7 @@ import {
 } from "@/lib/db";
 import type { ProcessingJobStatus } from "@/lib/db/types";
 import { getAiCallCostUsd, refreshAiCredits } from "@/lib/ai-connector";
+import { AiRateLimitError } from "@/lib/extraction";
 import { emailHasProcessableInvoiceSource } from "@/lib/invoice-portals";
 import { processStoredMailboxMessage } from "@/lib/o365/process-email";
 
@@ -17,6 +18,23 @@ const MAX_PROCESSING_CONCURRENCY = 10;
 const MAX_JOB_ATTEMPTS = 3;
 /** A PROCESSING job older than this belongs to a crashed run and is reclaimed. */
 const STALE_PROCESSING_MS = 15 * 60 * 1000;
+
+/**
+ * Rate-limited jobs get far more patience than ordinary failures: the email
+ * is fine, the provider is throttling us. Exponential backoff starting at
+ * 2 minutes and capped at 30, giving up after ~2.5 hours of retries.
+ */
+export const RATE_LIMIT_MAX_ATTEMPTS = 8;
+const RATE_LIMIT_BACKOFF_BASE_MS = 2 * 60 * 1000;
+const RATE_LIMIT_BACKOFF_MAX_MS = 30 * 60 * 1000;
+
+export function computeRateLimitBackoffMs(attempts: number): number {
+  const exponent = Math.max(attempts - 1, 0);
+  return Math.min(
+    RATE_LIMIT_BACKOFF_BASE_MS * 2 ** exponent,
+    RATE_LIMIT_BACKOFF_MAX_MS,
+  );
+}
 
 /**
  * How many jobs may run in parallel. Kept at 1 by default so a burst of
@@ -109,23 +127,28 @@ function recoverStaleJobs() {
 }
 
 /**
- * Atomically claims the oldest pending job not yet attempted in this run.
+ * Atomically claims the oldest claimable job not yet attempted in this run.
  * Failed attempts go back to PENDING but are excluded via attemptedIds so a
  * job is tried at most once per run — retries wait for the next run instead
- * of hammering a rate-limited provider in a tight loop.
+ * of hammering a rate-limited provider in a tight loop. RATE_LIMITED jobs
+ * only become claimable once their backoff (nextAttemptAt) has elapsed.
  */
 function claimNextJob(attemptedIds: Set<string>): ProcessingJob | null {
   return db.transaction((tx) => {
+    const claimable = and(
+      inArray(processingJobs.status, ["PENDING", "RATE_LIMITED"]),
+      or(
+        isNull(processingJobs.nextAttemptAt),
+        lte(processingJobs.nextAttemptAt, new Date()),
+      ),
+    );
     const pending = tx
       .select()
       .from(processingJobs)
       .where(
         attemptedIds.size > 0
-          ? and(
-              eq(processingJobs.status, "PENDING"),
-              notInArray(processingJobs.id, [...attemptedIds]),
-            )
-          : eq(processingJobs.status, "PENDING"),
+          ? and(claimable, notInArray(processingJobs.id, [...attemptedIds]))
+          : claimable,
       )
       .orderBy(asc(processingJobs.createdAt))
       .limit(1)
@@ -138,6 +161,7 @@ function claimNextJob(attemptedIds: Set<string>): ProcessingJob | null {
       .set({
         status: "PROCESSING",
         attempts: pending.attempts + 1,
+        nextAttemptAt: null,
         startedAt: new Date(),
         finishedAt: null,
         updatedAt: new Date(),
@@ -155,12 +179,14 @@ async function finalizeJob(
     outcome?: string | null;
     invoiceId?: string | null;
     lastError?: string | null;
+    nextAttemptAt?: Date | null;
     aiModel?: string | null;
     promptTokens?: number | null;
     completionTokens?: number | null;
     costUsd?: number | null;
   },
 ) {
+  const stillQueued = fields.status === "PENDING" || fields.status === "RATE_LIMITED";
   await db
     .update(processingJobs)
     .set({
@@ -168,17 +194,20 @@ async function finalizeJob(
       outcome: fields.outcome ?? null,
       invoiceId: fields.invoiceId ?? null,
       lastError: fields.lastError ?? null,
+      nextAttemptAt: fields.nextAttemptAt ?? null,
       aiModel: fields.aiModel ?? null,
       promptTokens: fields.promptTokens ?? null,
       completionTokens: fields.completionTokens ?? null,
       costUsd: fields.costUsd ?? null,
-      finishedAt: fields.status === "PENDING" ? null : new Date(),
+      finishedAt: stillQueued ? null : new Date(),
       updatedAt: new Date(),
     })
     .where(eq(processingJobs.id, jobId));
 }
 
-async function processJob(job: ProcessingJob): Promise<boolean> {
+type ProcessJobResult = "completed" | "failed" | "rate_limited";
+
+async function processJob(job: ProcessingJob): Promise<ProcessJobResult> {
   try {
     const result = await processStoredMailboxMessage({
       organizationId: job.organizationId,
@@ -193,10 +222,10 @@ async function processJob(job: ProcessingJob): Promise<boolean> {
           outcome: "already_processed",
           invoiceId: result.invoiceId,
         });
-        return true;
+        return "completed";
       }
       await finalizeJob(job.id, { status: "FAILED", lastError: result.error });
-      return false;
+      return "failed";
     }
 
     if (result.outcome.skipped) {
@@ -204,7 +233,7 @@ async function processJob(job: ProcessingJob): Promise<boolean> {
         status: "COMPLETED",
         outcome: result.outcome.reason ?? "ignored",
       });
-      return true;
+      return "completed";
     }
 
     const usage = result.outcome.usage;
@@ -218,14 +247,26 @@ async function processJob(job: ProcessingJob): Promise<boolean> {
       completionTokens: usage?.completionTokens ?? null,
       costUsd,
     });
-    return true;
+    return "completed";
   } catch (error) {
+    if (error instanceof AiRateLimitError) {
+      const exhausted = job.attempts >= RATE_LIMIT_MAX_ATTEMPTS;
+      await finalizeJob(job.id, {
+        status: exhausted ? "FAILED" : "RATE_LIMITED",
+        lastError: error.message,
+        nextAttemptAt: exhausted
+          ? null
+          : new Date(Date.now() + computeRateLimitBackoffMs(job.attempts)),
+      });
+      return exhausted ? "failed" : "rate_limited";
+    }
+
     const message = error instanceof Error ? error.message : "Processing failed";
     await finalizeJob(job.id, {
       status: job.attempts >= MAX_JOB_ATTEMPTS ? "FAILED" : "PENDING",
       lastError: message,
     });
-    return false;
+    return "failed";
   }
 }
 
@@ -233,6 +274,7 @@ export type ProcessingQueueRun = {
   started: boolean;
   processed: number;
   failed: number;
+  rateLimited: number;
 };
 
 /**
@@ -241,11 +283,11 @@ export type ProcessingQueueRun = {
  */
 export async function runProcessingQueue(): Promise<ProcessingQueueRun> {
   if (queueRunning) {
-    return { started: false, processed: 0, failed: 0 };
+    return { started: false, processed: 0, failed: 0, rateLimited: 0 };
   }
 
   queueRunning = true;
-  const stats = { started: true, processed: 0, failed: 0 };
+  const stats = { started: true, processed: 0, failed: 0, rateLimited: 0 };
 
   try {
     recoverStaleJobs();
@@ -253,17 +295,24 @@ export async function runProcessingQueue(): Promise<ProcessingQueueRun> {
     const concurrency = resolveProcessingConcurrency();
     const attemptedIds = new Set<string>();
     const touchedOrgIds = new Set<string>();
+    // Every job in a run talks to the same provider, so the first rate limit
+    // ends the drain — remaining jobs wait for the next run rather than each
+    // burning an attempt on a provider that is already throttling us.
+    let providerRateLimited = false;
 
     await Promise.all(
       Array.from({ length: concurrency }, async () => {
-        while (true) {
+        while (!providerRateLimited) {
           const job = claimNextJob(attemptedIds);
           if (!job) break;
           attemptedIds.add(job.id);
           touchedOrgIds.add(job.organizationId);
-          const succeeded = await processJob(job);
-          if (succeeded) {
+          const result = await processJob(job);
+          if (result === "completed") {
             stats.processed += 1;
+          } else if (result === "rate_limited") {
+            stats.rateLimited += 1;
+            providerRateLimited = true;
           } else {
             stats.failed += 1;
           }
@@ -302,8 +351,8 @@ export async function retryProcessingJob(params: {
   });
 
   if (!job) return { error: "Job not found" as const };
-  if (job.status !== "FAILED") {
-    return { error: "Only failed jobs can be retried" as const };
+  if (job.status !== "FAILED" && job.status !== "RATE_LIMITED") {
+    return { error: "Only failed or rate-limited jobs can be retried" as const };
   }
 
   await db
@@ -312,6 +361,7 @@ export async function retryProcessingJob(params: {
       status: "PENDING",
       attempts: 0,
       outcome: null,
+      nextAttemptAt: null,
       startedAt: null,
       finishedAt: null,
       updatedAt: new Date(),
@@ -336,6 +386,7 @@ export async function getProcessingQueueCounts(
   const counts: ProcessingQueueCounts = {
     PENDING: 0,
     PROCESSING: 0,
+    RATE_LIMITED: 0,
     COMPLETED: 0,
     FAILED: 0,
   };

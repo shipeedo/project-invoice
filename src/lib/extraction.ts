@@ -53,7 +53,21 @@ export type ExtractionResult = {
   usage?: AiUsage | null;
   model?: string | null;
   error?: string;
+  /** The AI provider rejected the call with a rate limit (HTTP 429). */
+  rateLimited?: boolean;
 };
+
+/**
+ * Thrown instead of creating an invoice when the AI provider rate-limits the
+ * extraction call, so the processing queue can reschedule the job with
+ * backoff rather than recording an empty invoice as a success.
+ */
+export class AiRateLimitError extends Error {
+  constructor(message?: string) {
+    super(message ?? "AI provider rate limit exceeded (429)");
+    this.name = "AiRateLimitError";
+  }
+}
 
 export async function extractTextFromPdf(filePath: string): Promise<string> {
   const { text } = await extractTextFromDocument(filePath, "invoice.pdf", "application/pdf");
@@ -208,6 +222,7 @@ async function callExtractionAI(params: {
         data: null,
         raw: result.raw,
         error: result.error,
+        rateLimited: result.status === 429,
       };
     }
 

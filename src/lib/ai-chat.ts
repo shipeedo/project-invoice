@@ -15,6 +15,8 @@ export type AiChatSuccess = {
 export type AiChatError = {
   error: string;
   raw: unknown | null;
+  /** HTTP status of a failed provider response, e.g. 429 when rate limited. */
+  status?: number;
 };
 
 export async function callAiChatCompletion(params: {
@@ -55,6 +57,7 @@ export async function callAiChatCompletion(params: {
       return {
         error: `${config.providerLabel} error (${response.status})`,
         raw: body,
+        status: response.status,
       };
     }
 

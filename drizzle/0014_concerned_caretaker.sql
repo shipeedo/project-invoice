@@ -1,0 +1,1 @@
+ALTER TABLE `processing_jobs` ADD `next_attempt_at` integer;

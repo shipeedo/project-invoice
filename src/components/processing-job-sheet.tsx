@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/sheet";
 import { EmailMessageBody } from "@/components/email-message-body";
 import type { ProcessingJobStatus } from "@/lib/db/types";
+import { statusLabel } from "@/lib/format";
 import {
   isDisplayAttachment,
   prepareEmailHtmlForDisplay,
@@ -182,7 +183,7 @@ export function ProcessingJobSheet({ jobId, onOpenChange }: ProcessingJobSheetPr
           </SheetTitle>
           <SheetDescription>
             {job
-              ? `${job.status.charAt(0) + job.status.slice(1).toLowerCase()}${job.outcome ? ` — ${job.outcome.replaceAll("_", " ")}` : ""} · ${job.attempts} attempt${job.attempts === 1 ? "" : "s"}`
+              ? `${statusLabel(job.status)}${job.outcome ? ` — ${job.outcome.replaceAll("_", " ")}` : ""} · ${job.attempts} attempt${job.attempts === 1 ? "" : "s"}`
               : "Original email for this processing job"}
           </SheetDescription>
         </SheetHeader>
@@ -265,7 +266,7 @@ export function ProcessingJobSheet({ jobId, onOpenChange }: ProcessingJobSheetPr
                       {busy ? "Processing…" : "Process as invoice"}
                     </Button>
                   ) : null}
-                  {job?.status === "FAILED" ? (
+                  {job?.status === "FAILED" || job?.status === "RATE_LIMITED" ? (
                     <Button
                       variant="outline"
                       size="sm"
@@ -273,7 +274,7 @@ export function ProcessingJobSheet({ jobId, onOpenChange }: ProcessingJobSheetPr
                       disabled={busy}
                     >
                       <RotateCcwIcon data-icon="inline-start" />
-                      Retry through queue
+                      {job.status === "RATE_LIMITED" ? "Retry now" : "Retry through queue"}
                     </Button>
                   ) : null}
                 </div>

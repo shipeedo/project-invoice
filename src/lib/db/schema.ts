@@ -498,11 +498,13 @@ export const processingJobs = sqliteTable(
       .notNull()
       .references(() => mailboxMessages.id, { onDelete: "cascade" }),
     status: text("status", {
-      enum: ["PENDING", "PROCESSING", "COMPLETED", "FAILED"],
+      enum: ["PENDING", "PROCESSING", "RATE_LIMITED", "COMPLETED", "FAILED"],
     })
       .notNull()
       .default("PENDING"),
     attempts: integer("attempts").notNull().default(0),
+    /** Earliest time a RATE_LIMITED job may be claimed again (backoff). */
+    nextAttemptAt: integer("next_attempt_at", { mode: "timestamp_ms" }),
     /** How the job finished: invoice_created or an ignore reason. */
     outcome: text("outcome"),
     lastError: text("last_error"),

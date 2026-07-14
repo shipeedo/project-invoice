@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/table";
 import { ProcessingJobSheet } from "@/components/processing-job-sheet";
 import type { ProcessingJobStatus } from "@/lib/db/types";
-import { formatDate } from "@/lib/format";
+import { formatDate, statusLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 export type ProcessingQueueJob = {
@@ -32,6 +32,7 @@ export type ProcessingQueueJob = {
   createdAt: string;
   startedAt: string | null;
   finishedAt: string | null;
+  nextAttemptAt: string | null;
   aiModel: string | null;
   promptTokens: number | null;
   completionTokens: number | null;
@@ -56,6 +57,7 @@ const REFRESH_INTERVAL_MS = 5_000;
 const STATUS_STYLES: Record<ProcessingJobStatus, string> = {
   PENDING: "bg-muted text-muted-foreground",
   PROCESSING: "bg-blue-500/15 text-blue-700 dark:text-blue-300",
+  RATE_LIMITED: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
   COMPLETED: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
   FAILED: "bg-destructive/15 text-destructive",
 };
@@ -63,7 +65,7 @@ const STATUS_STYLES: Record<ProcessingJobStatus, string> = {
 function statusBadge(status: ProcessingJobStatus) {
   return (
     <Badge variant="secondary" className={cn("font-medium", STATUS_STYLES[status])}>
-      {status.charAt(0) + status.slice(1).toLowerCase()}
+      {statusLabel(status)}
     </Badge>
   );
 }
@@ -85,6 +87,15 @@ function formatCost(job: ProcessingQueueJob) {
 
 function formatOutcome(job: ProcessingQueueJob) {
   if (job.status === "FAILED") return job.lastError ?? "Failed";
+  if (job.status === "RATE_LIMITED") {
+    const retryAt = job.nextAttemptAt
+      ? ` — retries ${new Date(job.nextAttemptAt).toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        })}`
+      : "";
+    return `${job.lastError ?? "Provider rate limit"}${retryAt}`;
+  }
   if (!job.outcome) return "—";
   return job.outcome.replaceAll("_", " ");
 }
@@ -102,7 +113,7 @@ export function ProcessingQueueView({
   const [search, setSearch] = useState(query);
   const [openJobId, setOpenJobId] = useState<string | null>(null);
 
-  const activeCount = counts.PENDING + counts.PROCESSING;
+  const activeCount = counts.PENDING + counts.PROCESSING + counts.RATE_LIMITED;
 
   const pageHref = (targetPage: number) => {
     const params = new URLSearchParams();
@@ -138,13 +149,14 @@ export function ProcessingQueueView({
   const summaryTiles: Array<{ label: string; value: number }> = [
     { label: "Pending", value: counts.PENDING },
     { label: "Processing", value: counts.PROCESSING },
+    { label: "Rate limited", value: counts.RATE_LIMITED },
     { label: "Completed", value: counts.COMPLETED },
     { label: "Failed", value: counts.FAILED },
   ];
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
         {summaryTiles.map((tile) => (
           <Card key={tile.label} className="py-3">
             <CardContent className="px-4">
@@ -219,6 +231,8 @@ export function ProcessingQueueView({
                         className={cn(
                           "block truncate text-sm",
                           job.status === "FAILED" && "text-destructive",
+                          job.status === "RATE_LIMITED" &&
+                            "text-amber-700 dark:text-amber-300",
                         )}
                         title={job.lastError ?? undefined}
                       >
