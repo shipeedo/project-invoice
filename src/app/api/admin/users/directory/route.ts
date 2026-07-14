@@ -30,6 +30,9 @@ export async function GET(request: Request) {
       accessToken: session.accessToken,
       requestOrigin: url.origin,
       filter: url.searchParams.get("filter") ?? undefined,
+      // Inactive users are hidden client-side, so fetch a large page to keep
+      // the visible list and the "N inactive users hidden" count meaningful.
+      maxResultCount: 500,
     });
     return NextResponse.json(result);
   } catch (error) {

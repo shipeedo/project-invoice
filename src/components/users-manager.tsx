@@ -144,6 +144,9 @@ export function UsersManager({ initialUsers, currentUserId }: UsersManagerProps)
 
   const accessEmails = new Set(users.map((user) => user.email.toLowerCase()));
 
+  const activeDirectory = directory.filter((entry) => entry.isActive);
+  const hiddenInactiveCount = directory.length - activeDirectory.length;
+
   async function loadDirectory(searchFilter: string) {
     setDirectoryStatus("loading");
     setDirectoryMessage(null);
@@ -466,12 +469,12 @@ export function UsersManager({ initialUsers, currentUserId }: UsersManagerProps)
                   <p className="text-sm text-muted-foreground">Loading directory...</p>
                 ) : (
                   <div className="flex flex-col divide-y rounded-lg border">
-                    {directory.length === 0 && directoryStatus === "ready" ? (
+                    {activeDirectory.length === 0 && directoryStatus === "ready" ? (
                       <p className="px-3 py-4 text-sm text-muted-foreground">
                         No tenant users match this search.
                       </p>
                     ) : (
-                      directory.map((entry) => {
+                      activeDirectory.map((entry) => {
                         const email = entry.emailAddress ?? entry.userName;
                         const alreadyAdded =
                           !!email && accessEmails.has(email.toLowerCase());
@@ -483,11 +486,6 @@ export function UsersManager({ initialUsers, currentUserId }: UsersManagerProps)
                             <div className="min-w-0">
                               <p className="truncate text-sm font-medium">
                                 {directoryDisplayName(entry)}
-                                {!entry.isActive ? (
-                                  <Badge variant="outline" className="ml-2">
-                                    Inactive
-                                  </Badge>
-                                ) : null}
                               </p>
                               <p className="truncate text-xs text-muted-foreground">
                                 {email ?? "No email"}
@@ -512,6 +510,12 @@ export function UsersManager({ initialUsers, currentUserId }: UsersManagerProps)
                         );
                       })
                     )}
+                    {hiddenInactiveCount > 0 ? (
+                      <p className="px-3 py-2 text-xs text-muted-foreground">
+                        {hiddenInactiveCount} inactive{" "}
+                        {hiddenInactiveCount === 1 ? "user" : "users"} hidden
+                      </p>
+                    ) : null}
                   </div>
                 )}
               </div>
