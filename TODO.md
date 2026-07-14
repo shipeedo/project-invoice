@@ -18,7 +18,14 @@ Track remaining work before production launch.
 - [x] **fix create supplier** — name/email/domain fields accept free text (Base UI Autocomplete instead of Combobox); picking an inbox suggestion only fills fields left empty
 - [x] **Delete supplier** — destructive button in the edit sheet with confirm dialog; linked invoices/emails are kept and unlinked (FKs are set-null)
 - [x] **rip out payments** — removed the payments feature end-to-end: invoice_payments table, amount_paid/paid_at/marked_paid_by columns, PAID/PART_PAID statuses (existing rows migrated to APPROVED), the record-payment API/dialog and Payments card, and the payment audit renderers
-- [ ] **Recharges** - 
+- [ ] **Deploy to production** — in progress; handing off to 3-4 stakeholders
 
+## Future
 
-- [ ] **Deploy to production**
+- [ ] **Recharges** — skipped for launch
+
+- [ ] **Storage providers** — pluggable document storage: S3, local filesystem, Dropbox
+- [ ] **More AI providers** — Azure AI Foundry and other providers alongside the current gateway connector
+- [ ] **More email providers** — implement the remaining providers already listed in the app
+- [ ] **Migrate to TanStack Start**
+- [ ] **Migrate to Postgres** — move off SQLite/dev.db

@@ -141,9 +141,6 @@ export function CreditRequestSheet({
       const amount = parseDecimalAmount(line.requestedAmount);
       if (amount == null || amount <= 0) return `Enter a credit amount for ${label}.`;
       if (!line.reason) return `Choose a reason for ${label}.`;
-      if (line.reason === "OTHER" && !line.reasonDetail.trim()) {
-        return `Enter a custom reason for ${label}.`;
-      }
     }
     return null;
   }

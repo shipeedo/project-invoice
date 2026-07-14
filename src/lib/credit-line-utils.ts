@@ -102,7 +102,6 @@ export function parseCreateCreditLinesInput(raw: unknown): CreateCreditLineInput
     if (reference != null && typeof reference !== "string") return null;
     if (typeof reason !== "string" || !isCreditReasonCode(reason)) return null;
     if (reasonDetail != null && typeof reasonDetail !== "string") return null;
-    if (reason === "OTHER" && !String(reasonDetail ?? "").trim()) return null;
 
     lines.push({
       description: description.trim(),

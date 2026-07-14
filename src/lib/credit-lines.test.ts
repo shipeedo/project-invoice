@@ -47,12 +47,6 @@ describe("credit line helpers", () => {
         { description: "Freight", requestedAmount: 10, reason: "NOT_A_REASON" },
       ]),
     ).toBeNull();
-    // OTHER requires a custom detail.
-    expect(
-      parseCreateCreditLinesInput([
-        { description: "Freight", requestedAmount: 10, reason: "OTHER" },
-      ]),
-    ).toBeNull();
     expect(
       parseCreateCreditLinesInput([
         {
@@ -70,6 +64,23 @@ describe("credit line helpers", () => {
         reference: null,
         reason: "OTHER",
         reasonDetail: "Wrong lane",
+      },
+    ]);
+  });
+
+  it("allows OTHER without a custom detail", () => {
+    expect(
+      parseCreateCreditLinesInput([
+        { description: "Freight", requestedAmount: 10, reason: "OTHER" },
+      ]),
+    ).toEqual([
+      {
+        description: "Freight",
+        requestedAmount: 10,
+        quantity: null,
+        reference: null,
+        reason: "OTHER",
+        reasonDetail: null,
       },
     ]);
   });

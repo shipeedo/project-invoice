@@ -1,3 +1,4 @@
+import Image from "next/image";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -7,6 +8,12 @@ import { Label } from "@/components/ui/label";
 const useMockAuth =
   process.env.AUTH_MOCK === "true" ||
   (!process.env.CLIENT_SECRET && process.env.NODE_ENV === "development");
+
+const highlights = [
+  "Supplier invoices captured straight from your inbox",
+  "Details and line items read and coded automatically",
+  "One queue for review, approvals, and credits",
+];
 
 export default async function LoginPage({
   searchParams,
@@ -19,16 +26,30 @@ export default async function LoginPage({
   return (
     <div className="flex min-h-screen items-center justify-center px-4">
       <Card className="w-full max-w-md">
-        <CardHeader>
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Project Invoice
-          </p>
-          <CardTitle className="text-2xl">Sign in</CardTitle>
+        <CardHeader className="items-center gap-3 text-center">
+          <Image
+            src="/icons/icon-192.png"
+            alt=""
+            width={56}
+            height={56}
+            priority
+            className="mx-auto rounded-xl"
+          />
+          <CardTitle className="text-2xl">Project Invoice</CardTitle>
           <CardDescription>
-            Authenticate with Shipeedo to access your organisation&apos;s invoice queue.
+            Every supplier invoice, from inbox to approved — in one place.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent className="space-y-5">
+          <ul className="space-y-2 text-sm text-muted-foreground">
+            {highlights.map((item) => (
+              <li key={item} className="flex items-start gap-2">
+                <span aria-hidden className="mt-1.5 size-1.5 shrink-0 rounded-full bg-primary" />
+                {item}
+              </li>
+            ))}
+          </ul>
+
           {params.error ? (
             <Alert variant="destructive">
               <AlertDescription>
@@ -44,10 +65,7 @@ export default async function LoginPage({
               <input type="hidden" name="callbackUrl" value={callbackUrl} />
 
               <Alert>
-                <AlertDescription>
-                  Development mock auth is enabled because `AUTH_MOCK=true` or `CLIENT_SECRET` is
-                  unset.
-                </AlertDescription>
+                <AlertDescription>Development mock auth is enabled.</AlertDescription>
               </Alert>
 
               <div className="space-y-2">
@@ -88,17 +106,10 @@ export default async function LoginPage({
             <form action="/api/auth/shipeedo-login" method="POST">
               <input type="hidden" name="callbackUrl" value={callbackUrl} />
               <Button type="submit" className="w-full">
-                Sign in with Shipeedo
+                Sign in
               </Button>
             </form>
           )}
-
-          <p className="text-xs text-muted-foreground">
-            OAuth callback: <code>/api/auth/callback/shipeedo</code>
-          </p>
-          <p className="text-xs text-muted-foreground">
-            See <code>docs/environment-setup.md</code> for local secret configuration.
-          </p>
         </CardContent>
       </Card>
     </div>
