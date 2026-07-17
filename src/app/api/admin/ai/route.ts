@@ -2,13 +2,14 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import {
   getAiConnector,
-  listGatewayModels,
+  listConnectorModels,
   perMillionToPerToken,
   refreshAiCredits,
   saveAiConnector,
   toAiConnectorSummary,
 } from "@/lib/ai-connector";
-import { aiConnectorTypes } from "@/lib/db/types";
+import { isHostedConnector } from "@/lib/ai-config";
+import { aiConnectorTypes, type AiConnectorType } from "@/lib/db/types";
 
 async function requireAdmin() {
   const session = await auth();
@@ -48,36 +49,33 @@ export async function PUT(request: Request) {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
 
-  const connectorType = body.connectorType;
-  if (
-    connectorType !== "AI_GATEWAY" &&
-    !aiConnectorTypes.includes(connectorType as (typeof aiConnectorTypes)[number])
-  ) {
+  if (!aiConnectorTypes.includes(body.connectorType as AiConnectorType)) {
     return NextResponse.json({ error: "Invalid connector type" }, { status: 400 });
   }
+  const connectorType = body.connectorType as AiConnectorType;
 
   const model = body.model?.trim() || null;
-  const isGateway = connectorType === "AI_GATEWAY";
+  const hosted = isHostedConnector(connectorType);
 
-  if (!isGateway && !body.baseUrl?.trim()) {
+  if (!hosted && !body.baseUrl?.trim()) {
     return NextResponse.json(
       { error: "A base URL is required for an OpenAI-compatible connector" },
       { status: 400 },
     );
   }
 
-  // Gateway pricing is snapshotted server-side from the model list so the
-  // client can't spoof cost figures; OpenAI-compatible endpoints have no
-  // price feed, so the admin enters per-1M prices manually.
+  // Hosted-connector pricing is snapshotted server-side from the provider's
+  // model list so the client can't spoof cost figures; OpenAI-compatible
+  // endpoints have no price feed, so the admin enters per-1M prices manually.
   let pricing: { input: number; output: number } | null = null;
-  if (isGateway && model) {
+  if (hosted && model) {
     try {
-      const models = await listGatewayModels();
+      const models = await listConnectorModels(connectorType);
       pricing = models.find((m) => m.id === model)?.pricing ?? null;
     } catch {
       pricing = null;
     }
-  } else if (!isGateway) {
+  } else if (!hosted) {
     const input = body.inputPricePerMillion ?? null;
     const output = body.outputPricePerMillion ?? null;
     const isValidPrice = (value: number | null) =>
@@ -105,7 +103,7 @@ export async function PUT(request: Request) {
   await saveAiConnector({
     organizationId: gate.session.user.organizationId,
     configuredById: gate.session.user.id,
-    connectorType: connectorType as (typeof aiConnectorTypes)[number],
+    connectorType,
     baseUrl: body.baseUrl ?? null,
     model,
     apiKey: body.apiKey ?? null,
@@ -113,7 +111,7 @@ export async function PUT(request: Request) {
   });
 
   // Refresh the cached balance so the sidebar warning reflects the new key/model.
-  if (isGateway) {
+  if (hosted) {
     await refreshAiCredits(gate.session.user.organizationId);
   }
 

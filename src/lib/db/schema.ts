@@ -332,22 +332,22 @@ export const aiConnectors = sqliteTable("ai_connectors", {
     .unique()
     .references(() => organizations.id, { onDelete: "cascade" }),
   connectorType: text("connector_type", {
-    enum: ["AI_GATEWAY", "OPENAI_COMPATIBLE"],
+    enum: ["AI_GATEWAY", "OPENROUTER", "OPENAI_COMPATIBLE"],
   })
     .notNull()
     .default("OPENAI_COMPATIBLE"),
   // Encrypted with the shared AUTH_SECRET-derived key. Never returned by the API.
   apiKeyEncrypted: text("api_key_encrypted"),
   // Required for OPENAI_COMPATIBLE (e.g. http://127.0.0.1:8000/v1). Null for the
-  // AI Gateway, which uses its fixed hosted URL.
+  // AI Gateway and OpenRouter, which use their fixed hosted URLs.
   baseUrl: text("base_url"),
-  // Gateway model id (e.g. openai/gpt-4o-mini) or a manual model name.
+  // Catalog model id (e.g. openai/gpt-4o-mini) or a manual model name.
   model: text("model"),
-  // Per-token USD pricing snapshotted from the gateway /v1/models list when the
+  // Per-token USD pricing snapshotted from the provider's /models list when the
   // model is selected, so per-call cost is computed without a network round-trip.
   modelInputPrice: real("model_input_price"),
   modelOutputPrice: real("model_output_price"),
-  // Cached gateway credit balance for the sidebar low-balance warning, refreshed
+  // Cached provider credit balance for the sidebar low-balance warning, refreshed
   // opportunistically so it is never fetched during a page render.
   creditsBalance: real("credits_balance"),
   creditsCheckedAt: integer("credits_checked_at", { mode: "timestamp_ms" }),

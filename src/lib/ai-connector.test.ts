@@ -1,8 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   computeAiCallCostUsd,
+  fetchOpenRouterCredits,
   getAiCallCostUsd,
   getAiConnector,
+  listOpenRouterModels,
   perMillionToPerToken,
   perTokenToPerMillion,
   saveAiConnector,
@@ -131,5 +133,100 @@ describe("saveAiConnector pricing persistence", () => {
     const connector = await getAiConnector(org.id);
     expect(connector?.modelInputPrice).toBeCloseTo(0.00000015, 12);
     expect(connector?.modelOutputPrice).toBeCloseTo(0.0000006, 12);
+  });
+});
+
+// Shapes taken from a live https://openrouter.ai/api/v1/models response.
+function stubFetchJson(body: unknown) {
+  const fetchMock = vi.fn(async () =>
+    new Response(JSON.stringify(body), {
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe("listOpenRouterModels", () => {
+  it("reads per-token prices and drops the redundant provider name prefix", async () => {
+    stubFetchJson({
+      data: [
+        {
+          id: "moonshotai/kimi-k3",
+          name: "MoonshotAI: Kimi K3",
+          architecture: { output_modalities: ["text"] },
+          pricing: { prompt: "0.000003", completion: "0.000015" },
+        },
+      ],
+    });
+
+    const models = await listOpenRouterModels();
+    expect(models).toEqual([
+      {
+        id: "moonshotai/kimi-k3",
+        name: "Kimi K3",
+        pricing: { input: 0.000003, output: 0.000015 },
+      },
+    ]);
+  });
+
+  it("treats a router model's -1 placeholder as unpriced", async () => {
+    stubFetchJson({
+      data: [
+        {
+          id: "openrouter/auto",
+          name: "Auto Router",
+          architecture: { output_modalities: ["text"] },
+          pricing: { prompt: "-1", completion: "-1" },
+        },
+      ],
+    });
+
+    const [model] = await listOpenRouterModels();
+    expect(model.pricing).toBeNull();
+  });
+
+  it("omits models that cannot return text", async () => {
+    stubFetchJson({
+      data: [
+        {
+          id: "black-forest-labs/flux",
+          name: "FLUX",
+          architecture: { output_modalities: ["image"] },
+          pricing: { prompt: "0.00001", completion: "0.00001" },
+        },
+      ],
+    });
+
+    expect(await listOpenRouterModels()).toEqual([]);
+  });
+});
+
+describe("fetchOpenRouterCredits", () => {
+  it("reports the balance as credits purchased minus usage", async () => {
+    stubFetchJson({ data: { total_credits: 25, total_usage: 4.25 } });
+    expect(await fetchOpenRouterCredits("sk-or-test")).toBeCloseTo(20.75, 10);
+  });
+
+  it("reports an overdrawn account as a negative balance", async () => {
+    stubFetchJson({ data: { total_credits: 10, total_usage: 12.5 } });
+    expect(await fetchOpenRouterCredits("sk-or-test")).toBeCloseTo(-2.5, 10);
+  });
+
+  it("sends the API key as a bearer token", async () => {
+    const fetchMock = stubFetchJson({ data: { total_credits: 1, total_usage: 0 } });
+    await fetchOpenRouterCredits("sk-or-test");
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(url).toBe("https://openrouter.ai/api/v1/credits");
+    expect((init.headers as Record<string, string>).Authorization).toBe(
+      "Bearer sk-or-test",
+    );
   });
 });

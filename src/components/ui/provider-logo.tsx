@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 
-// Brand marks for AI Gateway providers, served from the lobehub static-svg CDN.
+// Brand marks for model providers, served from the lobehub static-svg CDN.
 // The `icon` slug picks the exact file: a `-color` suffix uses the brand-coloured
 // variant; the plain slug is a monochrome mark (rendered on a white chip so it
 // stays legible in both light and dark themes). Providers without a mapped icon
@@ -13,7 +13,8 @@ const LOBE_ICONS_BASE =
 
 type ProviderMeta = { label: string; icon?: string };
 
-// Keyed by the AI Gateway provider slug (the part before "/" in a model id).
+// Keyed by the provider slug (the part before "/" in a model id), as the AI
+// Gateway spells it. OpenRouter's spellings are folded onto these by SLUG_ALIASES.
 const PROVIDER_META: Record<string, ProviderMeta> = {
   openai: { label: "OpenAI", icon: "openai" },
   anthropic: { label: "Anthropic", icon: "anthropic" },
@@ -39,7 +40,49 @@ const PROVIDER_META: Record<string, ProviderMeta> = {
   xiaomi: { label: "Xiaomi" },
   interfaze: { label: "Interfaze" },
   sakana: { label: "Sakana AI" },
+  // Providers OpenRouter carries that the gateway doesn't.
+  openrouter: { label: "OpenRouter", icon: "openrouter" },
+  microsoft: { label: "Microsoft", icon: "microsoft-color" },
+  tencent: { label: "Tencent", icon: "hunyuan-color" },
+  baidu: { label: "Baidu", icon: "baidu-color" },
+  upstage: { label: "Upstage", icon: "upstage-color" },
+  inflection: { label: "Inflection", icon: "inflection" },
+  ai21: { label: "AI21 Labs", icon: "ai21" },
+  allenai: { label: "Allen AI", icon: "ai2-color" },
+  nousresearch: { label: "Nous Research" },
+  rekaai: { label: "Reka AI" },
+  "ibm-granite": { label: "IBM Granite" },
+  "aion-labs": { label: "AionLabs" },
+  inclusionai: { label: "InclusionAI" },
+  cognitivecomputations: { label: "Cognitive Computations" },
+  "anthracite-org": { label: "Anthracite" },
+  sao10k: { label: "Sao10K" },
+  thedrummer: { label: "TheDrummer" },
+  undi95: { label: "Undi95" },
+  nex: { label: "Nex AGI" },
 };
+
+// OpenRouter and the AI Gateway namespace the same vendors differently; fold the
+// OpenRouter spelling onto the gateway's so both show one mark and one label.
+const SLUG_ALIASES: Record<string, string> = {
+  qwen: "alibaba",
+  mistralai: "mistral",
+  "z-ai": "zai",
+  "meta-llama": "meta",
+  "x-ai": "xai",
+  "bytedance-seed": "bytedance",
+  "nex-agi": "nex",
+};
+
+/**
+ * The canonical slug for a provider: OpenRouter marks some namespaces with a
+ * leading "~", and spells several vendors differently from the gateway. Group by
+ * this so one vendor is one entry however the model list spells it.
+ */
+export function normalizeProviderSlug(slug: string): string {
+  const bare = slug.startsWith("~") ? slug.slice(1) : slug;
+  return SLUG_ALIASES[bare] ?? bare;
+}
 
 function titleCase(slug: string) {
   return slug
@@ -49,9 +92,10 @@ function titleCase(slug: string) {
     .join(" ");
 }
 
-/** Human-readable label for an AI Gateway provider slug. */
+/** Human-readable label for a provider slug. */
 export function providerLabel(slug: string): string {
-  return PROVIDER_META[slug]?.label ?? (slug ? titleCase(slug) : "Other");
+  const canonical = normalizeProviderSlug(slug);
+  return PROVIDER_META[canonical]?.label ?? (canonical ? titleCase(canonical) : "Other");
 }
 
 export function ProviderLogo({
@@ -61,7 +105,7 @@ export function ProviderLogo({
   provider: string;
   className?: string;
 }) {
-  const meta = PROVIDER_META[provider];
+  const meta = PROVIDER_META[normalizeProviderSlug(provider)];
   const label = providerLabel(provider);
   const src = meta?.icon ? `${LOBE_ICONS_BASE}/${meta.icon}.svg` : null;
   // Track the failed src rather than a boolean so changing the provider (and

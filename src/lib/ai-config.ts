@@ -6,6 +6,18 @@ import { decryptSecret } from "@/lib/crypto";
 export const AI_GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh/v1";
 export const AI_GATEWAY_CHAT_COMPLETIONS_URL = `${AI_GATEWAY_BASE_URL}/chat/completions`;
 
+export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+export const OPENROUTER_CHAT_COMPLETIONS_URL = `${OPENROUTER_BASE_URL}/chat/completions`;
+
+/**
+ * Connectors whose endpoint and model catalog are fixed by us: the admin picks a
+ * model from the provider's list instead of typing a base URL, model name, and
+ * prices by hand.
+ */
+export function isHostedConnector(type: AiConnectorType): boolean {
+  return type === "AI_GATEWAY" || type === "OPENROUTER";
+}
+
 export type AiConfig = {
   apiKey: string;
   chatCompletionsUrl: string;
@@ -48,6 +60,11 @@ export async function resolveAiConfig(
     return { error: "AI extraction API key could not be decrypted" };
   }
 
+  const pricing =
+    connector.modelInputPrice != null && connector.modelOutputPrice != null
+      ? { input: connector.modelInputPrice, output: connector.modelOutputPrice }
+      : null;
+
   if (connector.connectorType === "AI_GATEWAY") {
     return {
       apiKey,
@@ -55,13 +72,18 @@ export async function resolveAiConfig(
       model: connector.model,
       providerLabel: "AI Gateway",
       connectorType: "AI_GATEWAY",
-      pricing:
-        connector.modelInputPrice != null && connector.modelOutputPrice != null
-          ? {
-              input: connector.modelInputPrice,
-              output: connector.modelOutputPrice,
-            }
-          : null,
+      pricing,
+    };
+  }
+
+  if (connector.connectorType === "OPENROUTER") {
+    return {
+      apiKey,
+      chatCompletionsUrl: OPENROUTER_CHAT_COMPLETIONS_URL,
+      model: connector.model,
+      providerLabel: "OpenRouter",
+      connectorType: "OPENROUTER",
+      pricing,
     };
   }
 
@@ -76,13 +98,7 @@ export async function resolveAiConfig(
     model: connector.model,
     providerLabel: "Local AI",
     connectorType: "OPENAI_COMPATIBLE",
-    pricing:
-      connector.modelInputPrice != null && connector.modelOutputPrice != null
-        ? {
-            input: connector.modelInputPrice,
-            output: connector.modelOutputPrice,
-          }
-        : null,
+    pricing,
   };
 }
 

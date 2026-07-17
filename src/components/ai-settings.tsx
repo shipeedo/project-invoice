@@ -24,7 +24,11 @@ import {
 import { Input } from "@/components/ui/input";
 import { InputGroupAddon } from "@/components/ui/input-group";
 import { Label } from "@/components/ui/label";
-import { ProviderLogo, providerLabel } from "@/components/ui/provider-logo";
+import {
+  ProviderLogo,
+  normalizeProviderSlug,
+  providerLabel,
+} from "@/components/ui/provider-logo";
 import {
   Select,
   SelectContent,
@@ -51,13 +55,13 @@ export type AiConnectorSummaryView = {
 
 type ConnectorSummary = AiConnectorSummaryView;
 
-type GatewayModel = {
+type CatalogModel = {
   id: string;
   name: string;
   pricing: { input: number; output: number } | null;
 };
 
-// A gateway model shaped for the combobox. `value`/`label` follow the base-ui
+// A catalog model shaped for the combobox. `value`/`label` follow the base-ui
 // convention (value submitted/matched, label shown in the input and list).
 type ModelOption = {
   value: string;
@@ -88,11 +92,20 @@ function byPriceAscending(a: ModelOption, b: ModelOption) {
 
 const CONNECTOR_TYPE_LABELS: Record<AiConnectorType, string> = {
   AI_GATEWAY: "Vercel AI Gateway",
+  OPENROUTER: "OpenRouter",
   OPENAI_COMPATIBLE: "OpenAI-compatible endpoint",
 };
 
-function toModelOption(model: GatewayModel): ModelOption {
-  const provider = model.id.includes("/") ? model.id.split("/")[0] : "";
+// The provider slug is the part before "/" in a model id, canonicalized so the
+// rail groups a vendor into one entry however the catalog spells it.
+function modelProviderSlug(modelId: string) {
+  return modelId.includes("/")
+    ? normalizeProviderSlug(modelId.split("/")[0])
+    : "";
+}
+
+function toModelOption(model: CatalogModel): ModelOption {
+  const provider = modelProviderSlug(model.id);
   return {
     value: model.id,
     label: model.name,
@@ -161,7 +174,7 @@ export function AiSettings({
     initialConnector?.creditsBalance ?? null,
   );
 
-  const [models, setModels] = useState<GatewayModel[]>([]);
+  const [models, setModels] = useState<CatalogModel[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsError, setModelsError] = useState<string | null>(null);
 
@@ -171,7 +184,12 @@ export function AiSettings({
     { type: "success" | "error"; text: string } | null
   >(null);
 
-  const isGateway = connectorType === "AI_GATEWAY";
+  // The AI Gateway and OpenRouter are hosted: fixed endpoint, models picked from
+  // the provider's catalog, credits reported by the provider. Everything else is
+  // an endpoint the admin describes by hand.
+  // Mirrors isHostedConnector in @/lib/ai-config, kept local so this client
+  // component never pulls the DB-importing module into the browser bundle.
+  const isHosted = connectorType !== "OPENAI_COMPATIBLE";
 
   // Anchor the model popup to the whole input group so it opens at the full
   // width of the field rather than sizing to the inner input.
@@ -181,25 +199,28 @@ export function AiSettings({
     setModelsLoading(true);
     setModelsError(null);
     try {
-      const response = await fetch("/api/admin/ai/models");
+      const response = await fetch(
+        `/api/admin/ai/models?type=${encodeURIComponent(connectorType)}`,
+      );
       const data = await response.json();
       if (!response.ok) throw new Error(data.error ?? "Failed to load models");
-      setModels(data.models as GatewayModel[]);
+      setModels(data.models as CatalogModel[]);
     } catch (error) {
+      setModels([]);
       setModelsError(
         error instanceof Error ? error.message : "Failed to load models",
       );
     } finally {
       setModelsLoading(false);
     }
-  }, []);
+  }, [connectorType]);
 
   useEffect(() => {
-    // Fetching the gateway model list from the server is a legitimate
+    // Fetching the provider's model list from the server is a legitimate
     // external-system sync; loadModels manages its own loading/error state.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (isGateway) void loadModels();
-  }, [isGateway, loadModels]);
+    if (isHosted) void loadModels();
+  }, [isHosted, loadModels]);
 
   const refreshCredits = useCallback(async () => {
     setCreditsLoading(true);
@@ -253,7 +274,7 @@ export function AiSettings({
     if (!model) return null;
     const match = modelOptions.find((item) => item.value === model);
     if (match) return match;
-    const provider = model.includes("/") ? model.split("/")[0] : "";
+    const provider = modelProviderSlug(model);
     return {
       value: model,
       label: model,
@@ -262,6 +283,31 @@ export function AiSettings({
       pricing,
     };
   }, [model, modelOptions, pricing]);
+
+  // Model ids, prices, and credits all belong to one provider, so switching
+  // provider clears them — except back to the saved one, which restores what
+  // was configured.
+  function changeConnectorType(next: AiConnectorType) {
+    if (next === connectorType) return;
+    const saved = initialConnector?.connectorType === next ? initialConnector : null;
+    setConnectorType(next);
+    setModels([]);
+    setModelsError(null);
+    setRailProvider(null);
+    setModel(saved?.model ?? "");
+    setPricing(saved?.pricing ?? null);
+    setCreditsBalance(saved?.creditsBalance ?? null);
+    setInputPriceText(
+      next === "OPENAI_COMPATIBLE"
+        ? perTokenToPerMillionText(saved?.pricing?.input)
+        : "",
+    );
+    setOutputPriceText(
+      next === "OPENAI_COMPATIBLE"
+        ? perTokenToPerMillionText(saved?.pricing?.output)
+        : "",
+    );
+  }
 
   function selectModel(option: ModelOption | null) {
     if (!option) {
@@ -294,14 +340,14 @@ export function AiSettings({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           connectorType,
-          baseUrl: isGateway ? null : baseUrl,
+          baseUrl: isHosted ? null : baseUrl,
           model,
           // Only send a key when the admin typed a new one; blank keeps the existing.
           apiKey: apiKey.trim() ? apiKey.trim() : null,
           // Manual per-1M pricing only applies to OpenAI-compatible endpoints;
           // the server snapshots gateway pricing itself.
-          inputPricePerMillion: isGateway ? null : (parsePriceText(inputPriceText) ?? null),
-          outputPricePerMillion: isGateway ? null : (parsePriceText(outputPriceText) ?? null),
+          inputPricePerMillion: isHosted ? null : (parsePriceText(inputPriceText) ?? null),
+          outputPricePerMillion: isHosted ? null : (parsePriceText(outputPriceText) ?? null),
         }),
       });
       const data = await response.json();
@@ -339,14 +385,14 @@ export function AiSettings({
   const parsedInputPrice = parsePriceText(inputPriceText);
   const parsedOutputPrice = parsePriceText(outputPriceText);
   const pricesValid =
-    isGateway ||
+    isHosted ||
     (parsedInputPrice !== undefined &&
       parsedOutputPrice !== undefined &&
       (parsedInputPrice === null) === (parsedOutputPrice === null));
 
   const canSave =
     Boolean(model) &&
-    (isGateway || Boolean(baseUrl.trim())) &&
+    (isHosted || Boolean(baseUrl.trim())) &&
     (hasApiKey || Boolean(apiKey.trim())) &&
     pricesValid;
 
@@ -356,7 +402,7 @@ export function AiSettings({
         <Label>Provider</Label>
         <Select
           value={connectorType}
-          onValueChange={(value) => setConnectorType(value as AiConnectorType)}
+          onValueChange={(value) => changeConnectorType(value as AiConnectorType)}
         >
           <SelectTrigger className="w-full sm:w-80">
             <SelectValue>
@@ -368,6 +414,9 @@ export function AiSettings({
           <SelectContent>
             <SelectItem value="AI_GATEWAY">
               {CONNECTOR_TYPE_LABELS.AI_GATEWAY}
+            </SelectItem>
+            <SelectItem value="OPENROUTER">
+              {CONNECTOR_TYPE_LABELS.OPENROUTER}
             </SelectItem>
             <SelectItem value="OPENAI_COMPATIBLE">
               {CONNECTOR_TYPE_LABELS.OPENAI_COMPATIBLE}
@@ -395,7 +444,7 @@ export function AiSettings({
         ) : null}
       </div>
 
-      {!isGateway ? (
+      {!isHosted ? (
         <>
           <div className="grid gap-2">
             <Label htmlFor="ai-base-url">Base URL</Label>
@@ -592,7 +641,7 @@ export function AiSettings({
         </Button>
       </div>
 
-      {isGateway ? (
+      {isHosted ? (
         <div className="space-y-3 rounded-lg border p-4">
           <div>
             <p className="flex items-center gap-2 text-sm font-medium">
@@ -600,7 +649,8 @@ export function AiSettings({
               Credits
             </p>
             <p className="mt-1 text-sm text-muted-foreground">
-              Remaining balance on your AI Gateway account.
+              Remaining balance on your {CONNECTOR_TYPE_LABELS[connectorType]}{" "}
+              account.
             </p>
           </div>
           <div className="flex items-center gap-3">
