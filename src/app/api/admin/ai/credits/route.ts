@@ -14,7 +14,7 @@ export async function GET() {
   const balance = await refreshAiCredits(session.user.organizationId);
   if (balance == null) {
     return NextResponse.json(
-      { error: "Unable to fetch AI Gateway credits" },
+      { error: "Unable to fetch AI provider credits" },
       { status: 502 },
     );
   }

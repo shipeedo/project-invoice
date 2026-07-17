@@ -25,10 +25,17 @@ import { cn } from "@/lib/utils";
 
 const AI_CREDITS_LOW_THRESHOLD = 10;
 
+const CONNECTOR_TYPE_LABELS: Record<
+  AiConnectorSummaryView["connectorType"],
+  string
+> = {
+  AI_GATEWAY: "Vercel AI Gateway",
+  OPENROUTER: "OpenRouter",
+  OPENAI_COMPATIBLE: "OpenAI-compatible endpoint",
+};
+
 function providerLabel(type: AiConnectorSummaryView["connectorType"]) {
-  return type === "AI_GATEWAY"
-    ? "Vercel AI Gateway"
-    : "OpenAI-compatible endpoint";
+  return CONNECTOR_TYPE_LABELS[type];
 }
 
 type AiProviderSectionProps = {
@@ -40,14 +47,17 @@ export function AiProviderSection({ initialConnector }: AiProviderSectionProps) 
   const [editing, setEditing] = useState(false);
 
   const configured = Boolean(connector?.hasApiKey && connector?.model);
-  const isGateway = connector?.connectorType === "AI_GATEWAY";
+  // Hosted providers (gateway, OpenRouter) namespace their model ids and report
+  // a credit balance; a hand-configured endpoint does neither.
+  const isHosted =
+    connector != null && connector.connectorType !== "OPENAI_COMPATIBLE";
   const lowBalance =
     connector?.creditsBalance != null &&
     connector.creditsBalance < AI_CREDITS_LOW_THRESHOLD;
-  // The model's provider slug (the part before "/" in a gateway model id),
+  // The model's provider slug (the part before "/" in a catalog model id),
   // used to show the brand mark of what actually reads the invoices.
   const modelProvider =
-    isGateway && connector?.model?.includes("/")
+    isHosted && connector?.model?.includes("/")
       ? connector.model.split("/")[0]
       : null;
 
@@ -113,7 +123,7 @@ export function AiProviderSection({ initialConnector }: AiProviderSectionProps) 
                 ) : null}
               </p>
             </div>
-            {isGateway && connector.creditsBalance != null ? (
+            {isHosted && connector.creditsBalance != null ? (
               <div className="text-right">
                 <p className="text-xs text-muted-foreground">Credits</p>
                 <div className="flex items-center justify-end gap-2">

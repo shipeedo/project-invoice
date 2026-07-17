@@ -2,7 +2,11 @@ import { eq } from "drizzle-orm";
 import { aiConnectors, db } from "@/lib/db";
 import type { AiConnectorType } from "@/lib/db/types";
 import type { AiUsage } from "@/lib/ai-chat";
-import { AI_GATEWAY_BASE_URL } from "@/lib/ai-config";
+import {
+  AI_GATEWAY_BASE_URL,
+  OPENROUTER_BASE_URL,
+  isHostedConnector,
+} from "@/lib/ai-config";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
 
 /** Show the low-balance warning once gateway credits fall below this (USD). */
@@ -10,7 +14,8 @@ export const AI_CREDITS_LOW_THRESHOLD = 10;
 
 export type AiConnectorRow = typeof aiConnectors.$inferSelect;
 
-export type GatewayModel = {
+/** A model offered by a hosted connector's catalog, with per-token USD pricing. */
+export type CatalogModel = {
   id: string;
   name: string;
   pricing: { input: number; output: number } | null;
@@ -65,8 +70,8 @@ export type SaveAiConnectorInput = {
   /** When provided, the key is re-encrypted; omit/blank to keep the existing key. */
   apiKey?: string | null;
   /**
-   * Per-token USD pricing: snapshotted from the gateway model list for
-   * AI_GATEWAY, entered manually by the admin for OPENAI_COMPATIBLE.
+   * Per-token USD pricing: snapshotted from the provider's model list for hosted
+   * connectors, entered manually by the admin for OPENAI_COMPATIBLE.
    */
   pricing?: { input: number; output: number } | null;
 };
@@ -89,12 +94,12 @@ export async function saveAiConnector(input: SaveAiConnectorInput) {
       ? encryptSecret(input.apiKey.trim())
       : (existing?.apiKeyEncrypted ?? null);
 
-  const isGateway = input.connectorType === "AI_GATEWAY";
+  const hosted = isHostedConnector(input.connectorType);
   const values = {
     organizationId: input.organizationId,
     connectorType: input.connectorType,
     apiKeyEncrypted,
-    baseUrl: isGateway ? null : (input.baseUrl?.trim() || null),
+    baseUrl: hosted ? null : (input.baseUrl?.trim() || null),
     model: input.model?.trim() || null,
     modelInputPrice: input.pricing?.input ?? null,
     modelOutputPrice: input.pricing?.output ?? null,
@@ -151,7 +156,7 @@ function parsePrice(value: unknown): number | null {
 }
 
 /** Lists the AI Gateway's language models with per-token pricing. No auth required. */
-export async function listGatewayModels(): Promise<GatewayModel[]> {
+export async function listGatewayModels(): Promise<CatalogModel[]> {
   const response = await fetch(`${AI_GATEWAY_BASE_URL}/models`, {
     headers: { "Content-Type": "application/json" },
   });
@@ -179,6 +184,60 @@ export async function listGatewayModels(): Promise<GatewayModel[]> {
     });
 }
 
+/** OpenRouter prices its router models at -1: the real cost is whatever model
+ * they route to, so it isn't known up front. Treat that as no price rather than
+ * letting a negative rate through into cost figures. */
+function parseOpenRouterPrice(value: unknown): number | null {
+  const price = parsePrice(value);
+  return price != null && price >= 0 ? price : null;
+}
+
+/**
+ * Lists OpenRouter's models with per-token pricing. No auth required. OpenRouter
+ * quotes prices as per-token USD strings, and names models "Provider: Model" —
+ * the provider is already shown by the picker's rail, so that prefix is dropped.
+ */
+export async function listOpenRouterModels(): Promise<CatalogModel[]> {
+  const response = await fetch(`${OPENROUTER_BASE_URL}/models`, {
+    headers: { "Content-Type": "application/json" },
+  });
+  if (!response.ok) {
+    throw new Error(`OpenRouter models request failed (${response.status})`);
+  }
+  const body = (await response.json()) as {
+    data?: Array<{
+      id: string;
+      name?: string;
+      architecture?: { output_modalities?: string[] };
+      pricing?: { prompt?: unknown; completion?: unknown };
+    }>;
+  };
+  return (body.data ?? [])
+    .filter((model) => {
+      const outputs = model.architecture?.output_modalities;
+      return !outputs || outputs.includes("text");
+    })
+    .map((model) => {
+      const input = parseOpenRouterPrice(model.pricing?.prompt);
+      const output = parseOpenRouterPrice(model.pricing?.completion);
+      const name = model.name ?? model.id;
+      return {
+        id: model.id,
+        name: name.includes(": ") ? name.slice(name.indexOf(": ") + 2) : name,
+        pricing: input != null && output != null ? { input, output } : null,
+      };
+    });
+}
+
+/** Lists the models a hosted connector offers; empty for manual endpoints. */
+export async function listConnectorModels(
+  connectorType: AiConnectorType,
+): Promise<CatalogModel[]> {
+  if (connectorType === "AI_GATEWAY") return listGatewayModels();
+  if (connectorType === "OPENROUTER") return listOpenRouterModels();
+  return [];
+}
+
 /** Fetches the remaining AI Gateway credit balance (USD) for an API key. */
 export async function fetchGatewayCredits(apiKey: string): Promise<number | null> {
   const response = await fetch(`${AI_GATEWAY_BASE_URL}/credits`, {
@@ -195,8 +254,34 @@ export async function fetchGatewayCredits(apiKey: string): Promise<number | null
 }
 
 /**
- * Refreshes and caches the gateway credit balance for an org. Returns the balance,
- * or null if the org isn't on a gateway connector or the lookup fails.
+ * Fetches the remaining OpenRouter balance (USD) for an API key. OpenRouter
+ * reports lifetime credits purchased and lifetime usage, so the balance is the
+ * difference.
+ */
+export async function fetchOpenRouterCredits(
+  apiKey: string,
+): Promise<number | null> {
+  const response = await fetch(`${OPENROUTER_BASE_URL}/credits`, {
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`OpenRouter credits request failed (${response.status})`);
+  }
+  const body = (await response.json()) as {
+    data?: { total_credits?: unknown; total_usage?: unknown };
+  };
+  const credits = parsePrice(body.data?.total_credits);
+  const usage = parsePrice(body.data?.total_usage);
+  if (credits == null || usage == null) return null;
+  return credits - usage;
+}
+
+/**
+ * Refreshes and caches the credit balance for an org. Returns the balance, or
+ * null if the org isn't on a connector that reports credits, or the lookup fails.
  */
 export async function refreshAiCredits(
   organizationId: string,
@@ -204,7 +289,7 @@ export async function refreshAiCredits(
   const connector = await getAiConnector(organizationId);
   if (
     !connector ||
-    connector.connectorType !== "AI_GATEWAY" ||
+    !isHostedConnector(connector.connectorType) ||
     !connector.apiKeyEncrypted
   ) {
     return null;
@@ -212,7 +297,10 @@ export async function refreshAiCredits(
 
   try {
     const apiKey = decryptSecret(connector.apiKeyEncrypted);
-    const balance = await fetchGatewayCredits(apiKey);
+    const balance =
+      connector.connectorType === "OPENROUTER"
+        ? await fetchOpenRouterCredits(apiKey)
+        : await fetchGatewayCredits(apiKey);
     await db
       .update(aiConnectors)
       .set({ creditsBalance: balance, creditsCheckedAt: new Date() })
@@ -224,8 +312,8 @@ export async function refreshAiCredits(
 }
 
 /**
- * Reads the *cached* gateway balance and returns a warning when it is below the
- * low threshold. Never makes a network call, so it's safe to call during render.
+ * Reads the *cached* balance and returns a warning when it is below the low
+ * threshold. Never makes a network call, so it's safe to call during render.
  */
 export async function getAiBalanceWarning(
   organizationId: string,
@@ -233,7 +321,7 @@ export async function getAiBalanceWarning(
   const connector = await getAiConnector(organizationId);
   if (
     !connector ||
-    connector.connectorType !== "AI_GATEWAY" ||
+    !isHostedConnector(connector.connectorType) ||
     connector.creditsBalance == null
   ) {
     return null;

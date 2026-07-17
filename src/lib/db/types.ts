@@ -30,7 +30,11 @@ export type InvoiceDocumentKind = (typeof invoiceDocumentKinds)[number];
 export const o365ConnectionStatuses = ["CONNECTED", "DISCONNECTED", "ERROR"] as const;
 export type O365ConnectionStatus = (typeof o365ConnectionStatuses)[number];
 
-export const aiConnectorTypes = ["AI_GATEWAY", "OPENAI_COMPATIBLE"] as const;
+export const aiConnectorTypes = [
+  "AI_GATEWAY",
+  "OPENROUTER",
+  "OPENAI_COMPATIBLE",
+] as const;
 export type AiConnectorType = (typeof aiConnectorTypes)[number];
 
 export const creditRequestStatuses = [
