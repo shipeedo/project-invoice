@@ -9,9 +9,15 @@ import {
   ChevronDownIcon,
   ChevronsUpDownIcon,
   MessageSquareTextIcon,
+  PaperclipIcon,
   SearchIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  InvoiceDocumentsSheet,
+  isDefaultVisibleDocument,
+  type InvoiceDocumentLink,
+} from "@/components/invoice-documents-sheet";
 import {
   InvoiceNotesSheet,
   type InvoiceNoteItem,
@@ -73,6 +79,7 @@ export type InvoiceQueueRow = {
   assignedTo: { id: string; name: string | null; email: string } | null;
   supplier: { id: string; name: string } | null;
   notes: InvoiceNoteItem[];
+  documents: InvoiceDocumentLink[];
 };
 
 type InvoiceQueueProps = {
@@ -264,6 +271,12 @@ export function InvoiceQueue({
   const supplierFilter = parseListParam(searchParams.get("supplier"));
   const assigneeFilter = parseListParam(searchParams.get("assignee"));
   const statusFilter = parseListParam(searchParams.get("status"));
+  // Statuses excluded from a preset view (e.g. "Assigned to me" hides
+  // Approved). An explicit status filter selection overrides the exclusion.
+  const hiddenStatuses = parseListParam(searchParams.get("hide")).filter(
+    (value): value is InvoiceStatus =>
+      invoiceStatuses.includes(value as InvoiceStatus),
+  );
   const urgencyParam = searchParams.get("urgency") as UrgencyFilter | null;
   const urgencyFilter: UrgencyFilter =
     urgencyParam && URGENCY_FILTER_VALUES.includes(urgencyParam)
@@ -289,6 +302,11 @@ export function InvoiceQueue({
   const [notesInvoiceId, setNotesInvoiceId] = useState<string | null>(null);
   const notesInvoice = notesInvoiceId
     ? (invoices.find((invoice) => invoice.id === notesInvoiceId) ?? null)
+    : null;
+
+  const [documentsInvoiceId, setDocumentsInvoiceId] = useState<string | null>(null);
+  const documentsInvoice = documentsInvoiceId
+    ? (invoices.find((invoice) => invoice.id === documentsInvoiceId) ?? null)
     : null;
 
   const setParams = useCallback(
@@ -379,6 +397,10 @@ export function InvoiceQueue({
         return false;
       }
 
+      if (statusFilter.length === 0 && hiddenStatuses.includes(invoice.status)) {
+        return false;
+      }
+
       if (
         !matchesUrgencyFilter(
           {
@@ -410,6 +432,7 @@ export function InvoiceQueue({
     supplierFilter,
     assigneeFilter,
     statusFilter,
+    hiddenStatuses,
     urgencyFilter,
     search,
     currentUserId,
@@ -482,6 +505,7 @@ export function InvoiceQueue({
     supplierFilter.length > 0 ||
     assigneeFilter.length > 0 ||
     statusFilter.length > 0 ||
+    hiddenStatuses.length > 0 ||
     urgencyFilter !== "all";
 
   return (
@@ -548,6 +572,13 @@ export function InvoiceQueue({
               </Button>
             ) : null}
           </div>
+
+          {hiddenStatuses.length > 0 && statusFilter.length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              {hiddenStatuses.map(statusLabel).join(", ")} invoices are hidden
+              from this view — find them under All invoices.
+            </p>
+          ) : null}
 
           <div className="grid gap-3">
             <div className="relative">
@@ -691,6 +722,7 @@ export function InvoiceQueue({
                   onSort={() => handleSort("due")}
                 />
                 <TableHead>Alerts</TableHead>
+                <TableHead>Docs</TableHead>
                 <TableHead>Notes</TableHead>
                 <SortableHead
                   label="Received"
@@ -703,7 +735,7 @@ export function InvoiceQueue({
             <TableBody>
               {sortedInvoices.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center text-muted-foreground">
+                  <TableCell colSpan={10} className="text-center text-muted-foreground">
                     {hasActiveFilters
                       ? "No invoices match your search or filters."
                       : "No invoices yet. Upload a PDF to start the pilot flow."}
@@ -731,6 +763,11 @@ export function InvoiceQueue({
                     currentUserId,
                     now,
                   );
+                  // Match the sheet's default view: logo/signature originals
+                  // sit behind its "show more" toggle and don't count here.
+                  const documentCount = invoice.documents.filter(
+                    isDefaultVisibleDocument,
+                  ).length;
 
                   return (
                     <TableRow
@@ -780,6 +817,22 @@ export function InvoiceQueue({
                           size="sm"
                           className={cn(
                             "h-auto gap-1 px-2 py-1",
+                            documentCount === 0 && "text-muted-foreground",
+                          )}
+                          aria-label={`Open documents for ${supplierLabel(invoice)} (${documentCount})`}
+                          onClick={() => setDocumentsInvoiceId(invoice.id)}
+                        >
+                          <PaperclipIcon className="size-3.5" />
+                          {documentCount}
+                        </Button>
+                      </TableCell>
+                      <TableCell>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className={cn(
+                            "h-auto gap-1 px-2 py-1",
                             invoice.notes.length === 0 && "text-muted-foreground",
                           )}
                           aria-label={`Open notes for ${supplierLabel(invoice)} (${invoice.notes.length})`}
@@ -798,6 +851,17 @@ export function InvoiceQueue({
           </Table>
         </CardContent>
       </Card>
+
+      {documentsInvoice ? (
+        <InvoiceDocumentsSheet
+          supplierName={supplierLabel(documentsInvoice)}
+          documents={documentsInvoice.documents}
+          open
+          onOpenChange={(open) => {
+            if (!open) setDocumentsInvoiceId(null);
+          }}
+        />
+      ) : null}
 
       {notesInvoice ? (
         <InvoiceNotesSheet

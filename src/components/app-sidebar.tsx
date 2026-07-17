@@ -63,7 +63,9 @@ const INVOICE_FILTERS: Array<{
   params: Record<string, string>;
   countKey: keyof InvoiceFilterCounts;
 }> = [
-  { title: "Assigned to me", icon: <UserIcon />, params: { assignee: "me" }, countKey: "assignedToMe" },
+  // Assigned to me hides Approved: once approved, an invoice is done for the
+  // assignee — it stays findable under Approved / All invoices.
+  { title: "Assigned to me", icon: <UserIcon />, params: { assignee: "me", hide: "APPROVED" }, countKey: "assignedToMe" },
   { title: "Overdue", icon: <AlertTriangleIcon />, params: { urgency: "overdue" }, countKey: "overdue" },
   { title: "Due tomorrow", icon: <CalendarClockIcon />, params: { urgency: "due_tomorrow" }, countKey: "dueTomorrow" },
   { title: "Draft", icon: <PencilIcon />, params: { status: "DRAFT" }, countKey: "draft" },
@@ -72,7 +74,7 @@ const INVOICE_FILTERS: Array<{
   { title: "All invoices", icon: <FileTextIcon />, params: {}, countKey: "all" },
 ];
 
-const INVOICE_FILTER_KEYS = ["q", "supplier", "assignee", "status", "urgency"];
+const INVOICE_FILTER_KEYS = ["q", "supplier", "assignee", "status", "hide", "urgency"];
 
 export function AppSidebar({
   user,
