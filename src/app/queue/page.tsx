@@ -3,8 +3,9 @@ import { and, asc, desc, eq } from "drizzle-orm";
 import { InvoiceQueue } from "@/components/invoice-queue";
 import { AppShell } from "@/components/app-shell";
 import { buttonVariants } from "@/components/ui/button";
-import { db, invoices, notes, suppliers, users } from "@/lib/db";
+import { db, invoiceDocuments, invoices, notes, suppliers, users } from "@/lib/db";
 import { RESPOND_BY_BUSINESS_DAYS } from "@/lib/invoice-deadlines";
+import { getSourceAttachments } from "@/lib/invoice-source-files";
 import { invoiceNotDeleted } from "@/lib/invoice-trash";
 import { getNavCounts } from "@/lib/nav-counts";
 import { requireSession } from "@/lib/session";
@@ -29,6 +30,27 @@ export default async function QueuePage() {
             document: { columns: { id: true, fileName: true } },
           },
         },
+        attachments: {
+          columns: {
+            id: true,
+            fileName: true,
+            filePath: true,
+            mimeType: true,
+            size: true,
+            isPrimary: true,
+          },
+        },
+        documents: {
+          orderBy: desc(invoiceDocuments.createdAt),
+          columns: {
+            id: true,
+            fileName: true,
+            mimeType: true,
+            kind: true,
+            size: true,
+            createdAt: true,
+          },
+        },
       },
       orderBy: desc(invoices.createdAt),
     }),
@@ -45,35 +67,64 @@ export default async function QueuePage() {
     getNavCounts(session.user.organizationId, session.user.id),
   ]);
 
-  const serializedInvoices = rows.map((invoice) => ({
-    id: invoice.id,
-    status: invoice.status,
-    vendorName: invoice.vendorName,
-    originalFileName: invoice.originalFileName,
-    invoiceNumber: invoice.invoiceNumber,
-    emailSubject: invoice.emailSubject,
-    totalAmount: invoice.totalAmount,
-    currency: invoice.currency,
-    parseError: invoice.parseError,
-    createdAt: invoice.createdAt.toISOString(),
-    validatedAt: invoice.validatedAt?.toISOString() ?? null,
-    dueDate: invoice.dueDate?.toISOString() ?? null,
-    respondByDate: invoice.respondByDate?.toISOString() ?? null,
-    assignedToId: invoice.assignedToId,
-    supplierId: invoice.supplierId,
-    assignedTo: invoice.assignedTo,
-    supplier: invoice.supplier,
-    notes: invoice.notes.map((note) => ({
-      id: note.id,
-      content: note.content,
-      createdAt: note.createdAt.toISOString(),
-      authorId: note.userId,
-      authorName: note.user ? (note.user.name ?? note.user.email) : null,
-      document: note.document
-        ? { id: note.document.id, fileName: note.document.fileName }
-        : null,
-    })),
-  }));
+  const serializedInvoices = rows.map((invoice) => {
+    // Source files first (like the detail page's Documents card), then
+    // uploaded documents, all reachable from the queue's Docs column.
+    const receivedAtIso = (invoice.emailReceivedAt ?? invoice.createdAt).toISOString();
+    const documents = [
+      ...getSourceAttachments(invoice).map((attachment) => ({
+        key: attachment.key,
+        fileName: attachment.fileName,
+        mimeType: attachment.mimeType ?? null,
+        size: attachment.size,
+        kind: "ORIGINAL" as const,
+        addedAt: receivedAtIso,
+        streamUrl: attachment.href,
+        previewUrl: attachment.previewHref,
+      })),
+      ...invoice.documents.map((document) => ({
+        key: document.id,
+        fileName: document.fileName,
+        mimeType: document.mimeType,
+        size: document.size,
+        kind: document.kind,
+        addedAt: document.createdAt.toISOString(),
+        streamUrl: `/api/invoices/${invoice.id}/documents/${document.id}`,
+        previewUrl: `/api/invoices/${invoice.id}/preview?documentId=${document.id}`,
+      })),
+    ];
+
+    return {
+      id: invoice.id,
+      status: invoice.status,
+      vendorName: invoice.vendorName,
+      originalFileName: invoice.originalFileName,
+      invoiceNumber: invoice.invoiceNumber,
+      emailSubject: invoice.emailSubject,
+      totalAmount: invoice.totalAmount,
+      currency: invoice.currency,
+      parseError: invoice.parseError,
+      createdAt: invoice.createdAt.toISOString(),
+      validatedAt: invoice.validatedAt?.toISOString() ?? null,
+      dueDate: invoice.dueDate?.toISOString() ?? null,
+      respondByDate: invoice.respondByDate?.toISOString() ?? null,
+      assignedToId: invoice.assignedToId,
+      supplierId: invoice.supplierId,
+      assignedTo: invoice.assignedTo,
+      supplier: invoice.supplier,
+      notes: invoice.notes.map((note) => ({
+        id: note.id,
+        content: note.content,
+        createdAt: note.createdAt.toISOString(),
+        authorId: note.userId,
+        authorName: note.user ? (note.user.name ?? note.user.email) : null,
+        document: note.document
+          ? { id: note.document.id, fileName: note.document.fileName }
+          : null,
+      })),
+      documents,
+    };
+  });
 
   return (
     <AppShell

@@ -12,6 +12,7 @@ import { invoiceInVisibleTrash, invoiceNotDeleted } from "@/lib/invoice-trash";
 
 /** Counts behind each Invoices sidebar shortcut, matching the table filters. */
 export type InvoiceFilterCounts = {
+  /** Assigned to the user and not yet approved (the sidebar view hides Approved). */
   assignedToMe: number;
   overdue: number;
   dueTomorrow: number;
@@ -92,7 +93,9 @@ export async function getNavCounts(
   };
 
   for (const row of invoiceRows) {
-    if (userId && row.assignedToId === userId) invoiceFilters.assignedToMe++;
+    if (userId && row.assignedToId === userId && row.status !== "APPROVED") {
+      invoiceFilters.assignedToMe++;
+    }
     if (row.status === "DRAFT") invoiceFilters.draft++;
     else if (row.status === "PENDING_APPROVAL") invoiceFilters.pending++;
     else if (row.status === "APPROVED") invoiceFilters.approved++;
