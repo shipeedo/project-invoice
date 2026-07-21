@@ -4,6 +4,7 @@ import { InvoiceQueue } from "@/components/invoice-queue";
 import { AppShell } from "@/components/app-shell";
 import { buttonVariants } from "@/components/ui/button";
 import { db, invoiceDocuments, invoices, notes, suppliers, users } from "@/lib/db";
+import { getInvoiceCreditAlert } from "@/lib/invoice-credit-alert";
 import { RESPOND_BY_BUSINESS_DAYS } from "@/lib/invoice-deadlines";
 import { getSourceAttachments } from "@/lib/invoice-source-files";
 import { invoiceNotDeleted } from "@/lib/invoice-trash";
@@ -51,6 +52,7 @@ export default async function QueuePage() {
             createdAt: true,
           },
         },
+        creditRequests: { columns: { status: true } },
       },
       orderBy: desc(invoices.createdAt),
     }),
@@ -123,6 +125,10 @@ export default async function QueuePage() {
           : null,
       })),
       documents,
+      creditAlert: getInvoiceCreditAlert({
+        status: invoice.status,
+        creditStatuses: invoice.creditRequests.map((request) => request.status),
+      }),
     };
   });
 

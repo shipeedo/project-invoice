@@ -1,5 +1,5 @@
 import ExcelJS from "exceljs";
-import type { CreditRequestLineItem } from "@/lib/credit-line-utils";
+import { creditLineDescription, type CreditRequestLineItem } from "@/lib/credit-line-utils";
 import { formatCreditLineReason } from "@/lib/credit-reasons";
 import { roundToTwoDecimals } from "@/lib/format";
 
@@ -198,7 +198,7 @@ export async function buildCreditSubmissionWorkbook(params: CreditSubmissionPara
       line.lineNumber ?? (line.lineIndex != null ? line.lineIndex + 1 : index + 1),
       line.serviceType ?? "",
       line.reference ?? "",
-      line.description,
+      creditLineDescription(line),
       formatMoney(line.invoiceAmount),
       formatMoney(line.requestedAmount),
       formatCreditLineReason(line),

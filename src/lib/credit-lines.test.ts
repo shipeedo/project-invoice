@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildCreditRequestLineItems,
   computeGstCreditAmount,
+  creditLineDescription,
   parseCreateCreditLinesInput,
   parseCreditRequestLineItems,
   resolveDefaultApprovedAmount,
@@ -30,13 +31,25 @@ describe("credit line helpers", () => {
     ]);
   });
 
-  it("rejects lines without a description, amount, or valid reason", () => {
-    expect(parseCreateCreditLinesInput([])).toBeNull();
+  it("accepts lines with no description, which describe themselves by reason", () => {
     expect(
       parseCreateCreditLinesInput([
-        { description: "", requestedAmount: 10, reason: "OTHER" },
+        { requestedAmount: 10, reason: "SERVICE_DOWNGRADE" },
       ]),
-    ).toBeNull();
+    ).toEqual([
+      {
+        description: null,
+        requestedAmount: 10,
+        quantity: null,
+        reference: null,
+        reason: "SERVICE_DOWNGRADE",
+        reasonDetail: null,
+      },
+    ]);
+  });
+
+  it("rejects lines without an amount or a valid reason", () => {
+    expect(parseCreateCreditLinesInput([])).toBeNull();
     expect(
       parseCreateCreditLinesInput([
         { description: "Freight", requestedAmount: 0, reason: "SERVICE_DOWNGRADE" },
@@ -68,21 +81,28 @@ describe("credit line helpers", () => {
     ]);
   });
 
-  it("allows OTHER without a custom detail", () => {
+  it("describes a line by its reason when it has no description", () => {
+    expect(creditLineDescription({ reason: "NOT_OUR_CONSIGNMENT" })).toBe(
+      "Not our consignment",
+    );
+    expect(
+      creditLineDescription({ reason: "OTHER", reasonDetail: "Wrong lane" }),
+    ).toBe("Wrong lane");
+    // Legacy rows keep their own text.
+    expect(
+      creditLineDescription({ description: "Freight", reason: "OTHER" }),
+    ).toBe("Freight");
+  });
+
+  it("rejects OTHER without a custom detail, which would export as a bare 'Other'", () => {
+    expect(
+      parseCreateCreditLinesInput([{ requestedAmount: 10, reason: "OTHER" }]),
+    ).toBeNull();
     expect(
       parseCreateCreditLinesInput([
-        { description: "Freight", requestedAmount: 10, reason: "OTHER" },
+        { requestedAmount: 10, reason: "OTHER", reasonDetail: "   " },
       ]),
-    ).toEqual([
-      {
-        description: "Freight",
-        requestedAmount: 10,
-        quantity: null,
-        reference: null,
-        reason: "OTHER",
-        reasonDetail: null,
-      },
-    ]);
+    ).toBeNull();
   });
 
   it("keeps optional quantity and reference when provided", () => {

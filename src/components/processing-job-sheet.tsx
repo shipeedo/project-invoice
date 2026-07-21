@@ -125,7 +125,7 @@ export function ProcessingJobSheet({ jobId, onOpenChange }: ProcessingJobSheetPr
       method: "POST",
     });
     const body = (await response.json().catch(() => null)) as
-      | { error?: string; invoiceId?: string }
+      | { error?: string; invoiceId?: string; skipped?: boolean; message?: string }
       | null;
     setBusy(false);
 
@@ -137,6 +137,9 @@ export function ProcessingJobSheet({ jobId, onOpenChange }: ProcessingJobSheetPr
 
     router.refresh();
     if (body?.invoiceId) {
+      // Covers the duplicate skip too: it reports success and links the
+      // invoice this one duplicates, so the user lands on it rather than
+      // reading an error and having to search for it.
       router.push(`/invoices/${body.invoiceId}`);
     }
   }

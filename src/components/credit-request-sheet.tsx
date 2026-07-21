@@ -50,7 +50,6 @@ type CreditRequestSheetProps = {
 
 type LineDraft = {
   key: number;
-  description: string;
   requestedAmount: string;
   quantity: string;
   reference: string;
@@ -58,15 +57,19 @@ type LineDraft = {
   reasonDetail: string;
 };
 
-function emptyLine(key: number): LineDraft {
+/**
+ * New lines inherit the previous line's reason. Credits are usually several
+ * charges disputed for the same cause, so this saves re-picking (and, for
+ * "Other", re-typing) it on every line.
+ */
+function emptyLine(key: number, inheritFrom?: LineDraft): LineDraft {
   return {
     key,
-    description: "",
     requestedAmount: "",
     quantity: "",
     reference: "",
-    reason: "",
-    reasonDetail: "",
+    reason: inheritFrom?.reason ?? "",
+    reasonDetail: inheritFrom?.reasonDetail ?? "",
   };
 }
 
@@ -115,7 +118,7 @@ export function CreditRequestSheet({
   }
 
   function addLine() {
-    setLines((current) => [...current, emptyLine(nextKey)]);
+    setLines((current) => [...current, emptyLine(nextKey, current.at(-1))]);
     setNextKey((key) => key + 1);
   }
 
@@ -137,10 +140,12 @@ export function CreditRequestSheet({
   function validationError(): string | null {
     for (const [index, line] of lines.entries()) {
       const label = `line ${index + 1}`;
-      if (!line.description.trim()) return `Enter a description for ${label}.`;
       const amount = parseDecimalAmount(line.requestedAmount);
       if (amount == null || amount <= 0) return `Enter a credit amount for ${label}.`;
       if (!line.reason) return `Choose a reason for ${label}.`;
+      if (line.reason === "OTHER" && !line.reasonDetail.trim()) {
+        return `Describe the reason for ${label}.`;
+      }
     }
     return null;
   }
@@ -157,7 +162,6 @@ export function CreditRequestSheet({
       setError(null);
 
       const payload = lines.map((line) => ({
-        description: line.description.trim(),
         requestedAmount: parseDecimalAmount(line.requestedAmount),
         quantity: parseDecimalAmount(line.quantity),
         reference: line.reference.trim() || null,
@@ -209,8 +213,9 @@ export function CreditRequestSheet({
         <SheetHeader className="border-b px-6 py-5">
           <SheetTitle>Create credit request</SheetTitle>
           <SheetDescription>
-            Add each charge you want credited with its amount and reason. A
-            spreadsheet will be generated for carrier submission.
+            Add each charge you want credited with its amount and reason. New
+            lines reuse the previous line&apos;s reason. A spreadsheet will be
+            generated for carrier submission.
           </SheetDescription>
         </SheetHeader>
 
@@ -236,18 +241,6 @@ export function CreditRequestSheet({
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2 sm:col-span-2">
-                  <Label htmlFor={`credit-description-${line.key}`}>Description</Label>
-                  <Input
-                    id={`credit-description-${line.key}`}
-                    value={line.description}
-                    onChange={(event) =>
-                      updateLine(line.key, { description: event.target.value })
-                    }
-                    placeholder="e.g. Fuel surcharge overcharged on consignment 12345"
-                  />
-                </div>
-
                 <div className="space-y-2">
                   <Label htmlFor={`credit-amount-${line.key}`}>Credit amount</Label>
                   <Input

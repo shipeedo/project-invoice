@@ -18,6 +18,7 @@ export type {
 } from "@/lib/credit-line-utils";
 export {
   computeGstCreditAmount,
+  creditLineDescription,
   isCreditRequestOpen,
   parseCreateCreditLinesInput,
   parseCreditRequestLineItems,

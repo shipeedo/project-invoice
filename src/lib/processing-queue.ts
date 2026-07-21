@@ -232,6 +232,12 @@ async function processJob(job: ProcessingJob): Promise<ProcessJobResult> {
       await finalizeJob(job.id, {
         status: "COMPLETED",
         outcome: result.outcome.reason ?? "ignored",
+        // Link a skipped duplicate back to the invoice it duplicates so the
+        // queue row can point at the one that was already imported.
+        invoiceId:
+          "duplicateInvoiceId" in result.outcome
+            ? (result.outcome.duplicateInvoiceId ?? null)
+            : null,
       });
       return "completed";
     }

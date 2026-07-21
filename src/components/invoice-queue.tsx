@@ -22,6 +22,7 @@ import {
   InvoiceNotesSheet,
   type InvoiceNoteItem,
 } from "@/components/invoice-notes-sheet";
+import { CreditAlertBadge } from "@/components/credit-alert-badge";
 import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -48,6 +49,7 @@ import {
 import type { InvoiceStatus } from "@/lib/db/types";
 import { invoiceStatuses } from "@/lib/db/types";
 import { formatCurrency, statusLabel } from "@/lib/format";
+import type { InvoiceCreditAlert } from "@/lib/invoice-credit-alert";
 import {
   formatDateOnly,
   getInvoiceDeadlineSignals,
@@ -80,6 +82,7 @@ export type InvoiceQueueRow = {
   supplier: { id: string; name: string } | null;
   notes: InvoiceNoteItem[];
   documents: InvoiceDocumentLink[];
+  creditAlert: InvoiceCreditAlert | null;
 };
 
 type InvoiceQueueProps = {
@@ -793,7 +796,12 @@ export function InvoiceQueue({
                         ) : null}
                       </TableCell>
                       <TableCell>
-                        <StatusBadge status={invoice.status} />
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <StatusBadge status={invoice.status} />
+                          {invoice.creditAlert ? (
+                            <CreditAlertBadge alert={invoice.creditAlert} />
+                          ) : null}
+                        </div>
                       </TableCell>
                       <TableCell>
                         {formatCurrency(invoice.totalAmount, invoice.currency ?? "AUD")}

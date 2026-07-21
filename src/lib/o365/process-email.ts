@@ -22,7 +22,10 @@ import {
   classifyInboundEmail,
 } from "@/lib/email-classification";
 import { recordEmailProcessingOutcome } from "@/lib/o365/email-audit";
-import { findDuplicateSupplierInvoice } from "@/lib/o365/invoice-duplicates";
+import {
+  DUPLICATE_SKIP_MESSAGE,
+  findDuplicateSupplierInvoice,
+} from "@/lib/o365/invoice-duplicates";
 import {
   emailHasProcessableInvoiceSource,
   fetchPortalInvoicePdfAttachment,
@@ -517,24 +520,23 @@ export async function processInboundEmailForInvoice(params: ProcessEmailOptions)
     tradingTermDays: supplier?.tradingTermDays,
   });
 
-  if (resolvedSupplierId) {
-    const duplicate = await findDuplicateSupplierInvoice({
-      organizationId: params.organizationId,
-      supplierId: resolvedSupplierId,
-      invoiceNumber: extraction.data?.invoiceNumber,
-      invoiceDate,
-      totalAmount: extraction.data?.totalAmount,
-    });
+  // Runs regardless of whether a supplier record resolved — see
+  // findDuplicateSupplierInvoice for why supplier scoping was dropped.
+  const duplicate = await findDuplicateSupplierInvoice({
+    organizationId: params.organizationId,
+    invoiceNumber: extraction.data?.invoiceNumber,
+    invoiceDate,
+    totalAmount: extraction.data?.totalAmount,
+  });
 
-    if (duplicate) {
-      return ignoreInboundEmail({
-        organizationId: params.organizationId,
-        email: emailContext,
-        ignoreReason: "duplicate_invoice",
-        duplicateInvoiceId: duplicate.id,
-        triggeredBy: params.triggeredBy,
-      });
-    }
+  if (duplicate) {
+    return ignoreInboundEmail({
+      organizationId: params.organizationId,
+      email: emailContext,
+      ignoreReason: "duplicate_invoice",
+      duplicateInvoiceId: duplicate.id,
+      triggeredBy: params.triggeredBy,
+    });
   }
 
   const receivedAt = emailContext.receivedAt ?? new Date();
@@ -805,7 +807,7 @@ export async function processMailboxMessageInvoice(params: {
   if (outcome.skipped) {
     if (outcome.reason === "duplicate_invoice" && outcome.duplicateInvoiceId) {
       return {
-        error: "An invoice with the same details already exists for this supplier" as const,
+        error: DUPLICATE_SKIP_MESSAGE,
         invoiceId: outcome.duplicateInvoiceId,
       };
     }
