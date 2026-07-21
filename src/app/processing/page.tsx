@@ -15,7 +15,7 @@ import {
   type ProcessingQueueJob,
 } from "@/components/processing-queue-view";
 import { computeAiCallCostUsd, getAiConnector } from "@/lib/ai-connector";
-import { db, mailboxMessages, processingJobs } from "@/lib/db";
+import { db, invoices, mailboxMessages, processingJobs } from "@/lib/db";
 import { getNavCounts } from "@/lib/nav-counts";
 import { getProcessingQueueCounts } from "@/lib/processing-queue";
 import { requireSession } from "@/lib/session";
@@ -27,6 +27,11 @@ const PAGE_SIZE = 25;
  * subject/sender, status, outcome (stored snake_case, displayed with spaces),
  * and failure message. LIKE wildcards in the query are escaped so searching
  * for "invoice_created" doesn't turn the underscore into a wildcard.
+ *
+ * Also matches the linked invoice's supplier, number and total. A job skipped
+ * as a duplicate links to the invoice it duplicates, so this is what makes a
+ * skipped row findable by the invoice number a user has in hand — otherwise
+ * the only way to reach it is knowing which email it arrived on.
  */
 function buildSearchFilter(query: string): SQL | undefined {
   if (!query) return undefined;
@@ -39,6 +44,9 @@ function buildSearchFilter(query: string): SQL | undefined {
     matches(processingJobs.status),
     matches(sql`replace(${processingJobs.outcome}, '_', ' ')`),
     matches(processingJobs.lastError),
+    matches(invoices.invoiceNumber),
+    matches(invoices.vendorName),
+    matches(sql`CAST(${invoices.totalAmount} AS TEXT)`),
   );
 }
 
@@ -68,6 +76,7 @@ export default async function ProcessingQueuePage({
         mailboxMessages,
         eq(processingJobs.mailboxMessageId, mailboxMessages.id),
       )
+      .leftJoin(invoices, eq(processingJobs.invoiceId, invoices.id))
       .where(jobFilter),
     getProcessingQueueCounts(session.user.organizationId),
     getNavCounts(session.user.organizationId, session.user.id),
@@ -85,12 +94,15 @@ export default async function ProcessingQueuePage({
       job: processingJobs,
       subject: mailboxMessages.subject,
       fromEmail: mailboxMessages.fromEmail,
+      invoiceNumber: invoices.invoiceNumber,
+      vendorName: invoices.vendorName,
     })
     .from(processingJobs)
     .leftJoin(
       mailboxMessages,
       eq(processingJobs.mailboxMessageId, mailboxMessages.id),
     )
+    .leftJoin(invoices, eq(processingJobs.invoiceId, invoices.id))
     .where(jobFilter)
     .orderBy(desc(processingJobs.createdAt))
     .limit(PAGE_SIZE)
@@ -104,13 +116,21 @@ export default async function ProcessingQueuePage({
       ? { input: connector.modelInputPrice, output: connector.modelOutputPrice }
       : null;
 
-  const jobs: ProcessingQueueJob[] = rows.map(({ job, subject, fromEmail }) => ({
+  const jobs: ProcessingQueueJob[] = rows.map(({
+    job,
+    subject,
+    fromEmail,
+    invoiceNumber,
+    vendorName,
+  }) => ({
     id: job.id,
     status: job.status,
     attempts: job.attempts,
     outcome: job.outcome,
     lastError: job.lastError,
     invoiceId: job.invoiceId,
+    invoiceNumber,
+    vendorName,
     subject,
     fromEmail,
     createdAt: job.createdAt.toISOString(),

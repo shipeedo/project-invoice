@@ -86,24 +86,30 @@ export async function POST(_request: Request, context: RouteContext) {
   const { outcome } = result;
 
   if (outcome.skipped) {
-    const message =
-      outcome.reason === "duplicate_invoice"
-        ? "An invoice with the same details already exists for this supplier"
-        : `Processing was skipped (${outcome.reason.replaceAll("_", " ")})`;
+    const isDuplicate = outcome.reason === "duplicate_invoice";
+    const message = isDuplicate
+      ? "Skipped: an invoice with the same number and total already exists"
+      : `Processing was skipped (${outcome.reason.replaceAll("_", " ")})`;
+
+    // A correctly-skipped duplicate is a successful outcome, not a failure, so
+    // it records the same way a background queue run would. Other skip reasons
+    // still surface as failures for a human to look at.
     await db
       .update(processingJobs)
       .set({
-        status: "FAILED",
-        lastError: message,
+        status: isDuplicate ? "COMPLETED" : "FAILED",
+        outcome: isDuplicate ? outcome.reason : null,
+        lastError: isDuplicate ? null : message,
+        invoiceId: isDuplicate ? (outcome.duplicateInvoiceId ?? null) : null,
         finishedAt: new Date(),
         updatedAt: new Date(),
       })
       .where(eq(processingJobs.id, job.id));
+
     return NextResponse.json(
       {
         error: message,
-        invoiceId:
-          outcome.reason === "duplicate_invoice" ? outcome.duplicateInvoiceId : undefined,
+        invoiceId: isDuplicate ? outcome.duplicateInvoiceId : undefined,
       },
       { status: 409 },
     );

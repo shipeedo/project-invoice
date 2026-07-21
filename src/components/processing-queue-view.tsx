@@ -27,6 +27,8 @@ export type ProcessingQueueJob = {
   outcome: string | null;
   lastError: string | null;
   invoiceId: string | null;
+  invoiceNumber: string | null;
+  vendorName: string | null;
   subject: string | null;
   fromEmail: string | null;
   createdAt: string;
@@ -97,6 +99,9 @@ function formatOutcome(job: ProcessingQueueJob) {
     return `${job.lastError ?? "Provider rate limit"}${retryAt}`;
   }
   if (!job.outcome) return "—";
+  if (job.outcome === "duplicate_invoice") {
+    return "Skipped — same invoice number and total already imported";
+  }
   return job.outcome.replaceAll("_", " ");
 }
 
@@ -238,6 +243,14 @@ export function ProcessingQueueView({
                       >
                         {formatOutcome(job)}
                       </span>
+                    )}
+                    {/* Shows which invoice a row resolved to, so a search on an
+                        invoice number visibly matches rather than looking like
+                        an unrelated hit on the email subject. */}
+                    {(job.invoiceNumber || job.vendorName) && (
+                      <p className="truncate text-xs text-muted-foreground">
+                        {[job.vendorName, job.invoiceNumber].filter(Boolean).join(" · ")}
+                      </p>
                     )}
                   </TableCell>
                   <TableCell>{job.attempts}</TableCell>
