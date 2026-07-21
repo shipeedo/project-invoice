@@ -94,21 +94,15 @@ describe("credit line helpers", () => {
     ).toBe("Freight");
   });
 
-  it("allows OTHER without a custom detail", () => {
+  it("rejects OTHER without a custom detail, which would export as a bare 'Other'", () => {
+    expect(
+      parseCreateCreditLinesInput([{ requestedAmount: 10, reason: "OTHER" }]),
+    ).toBeNull();
     expect(
       parseCreateCreditLinesInput([
-        { description: "Freight", requestedAmount: 10, reason: "OTHER" },
+        { requestedAmount: 10, reason: "OTHER", reasonDetail: "   " },
       ]),
-    ).toEqual([
-      {
-        description: "Freight",
-        requestedAmount: 10,
-        quantity: null,
-        reference: null,
-        reason: "OTHER",
-        reasonDetail: null,
-      },
-    ]);
+    ).toBeNull();
   });
 
   it("keeps optional quantity and reference when provided", () => {

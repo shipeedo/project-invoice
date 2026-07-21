@@ -22,7 +22,10 @@ import {
   classifyInboundEmail,
 } from "@/lib/email-classification";
 import { recordEmailProcessingOutcome } from "@/lib/o365/email-audit";
-import { findDuplicateSupplierInvoice } from "@/lib/o365/invoice-duplicates";
+import {
+  DUPLICATE_SKIP_MESSAGE,
+  findDuplicateSupplierInvoice,
+} from "@/lib/o365/invoice-duplicates";
 import {
   emailHasProcessableInvoiceSource,
   fetchPortalInvoicePdfAttachment,
@@ -804,8 +807,7 @@ export async function processMailboxMessageInvoice(params: {
   if (outcome.skipped) {
     if (outcome.reason === "duplicate_invoice" && outcome.duplicateInvoiceId) {
       return {
-        error:
-          "Skipped: an invoice with the same number and total already exists" as const,
+        error: DUPLICATE_SKIP_MESSAGE,
         invoiceId: outcome.duplicateInvoiceId,
       };
     }

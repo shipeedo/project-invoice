@@ -2,6 +2,15 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 import { db, invoices } from "@/lib/db";
 
 /**
+ * Deliberately does not name the fields that matched: a duplicate is found by
+ * number+total or by total+date, and claiming one when the other fired misled
+ * whoever read it. The skipped job links the invoice it duplicates, which
+ * answers "which one?" better than describing the rule.
+ */
+export const DUPLICATE_SKIP_MESSAGE =
+  "Skipped: this duplicates an invoice that is already imported";
+
+/**
  * Finds an existing invoice that the incoming extraction is a repeat of.
  *
  * Matching is deliberately NOT scoped to `supplierId`. Supplier resolution
@@ -13,13 +22,14 @@ import { db, invoices } from "@/lib/db";
  *
  * Two rules, in order:
  *   1. same total AND same invoice number (case-insensitive)
- *   2. same total AND same invoice date — catches re-sends where the invoice
- *      number failed to extract
+ *   2. same total AND same invoice date — only when the incoming invoice has
+ *      no number, to catch re-sends where the number failed to extract
  *
- * Rule 2 is broad: total+date alone collides across unrelated suppliers, so an
- * invoice that genuinely happens to share both with another supplier's invoice
- * will be skipped rather than imported. That trade was made deliberately in
- * favour of catching re-sends with no extractable invoice number.
+ * Rule 2 is broad: total+date alone collides across unrelated suppliers. It is
+ * therefore gated on the number being absent. When a number did extract and
+ * simply matched nothing, that is evidence of a genuinely new invoice, and
+ * falling through to total+date would silently drop it — a far worse outcome
+ * than importing a duplicate, which is at least visible and reversible.
  */
 export async function findDuplicateSupplierInvoice(params: {
   organizationId: string;
@@ -41,7 +51,7 @@ export async function findDuplicateSupplierInvoice(params: {
     if (byNumberAndTotal) return byNumberAndTotal;
   }
 
-  if (params.totalAmount != null && params.invoiceDate) {
+  if (!invoiceNumber && params.totalAmount != null && params.invoiceDate) {
     const byAmountAndDate = await db.query.invoices.findFirst({
       where: and(
         eq(invoices.organizationId, params.organizationId),

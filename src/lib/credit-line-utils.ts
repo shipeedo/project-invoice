@@ -115,6 +115,10 @@ export function parseCreateCreditLinesInput(raw: unknown): CreateCreditLineInput
     if (reference != null && typeof reference !== "string") return null;
     if (typeof reason !== "string" || !isCreditReasonCode(reason)) return null;
     if (reasonDetail != null && typeof reasonDetail !== "string") return null;
+    // The reason is the only thing identifying a credit line now that lines
+    // carry no description, so "Other" without its detail would render and
+    // export as a bare "Other".
+    if (reason === "OTHER" && !String(reasonDetail ?? "").trim()) return null;
 
     lines.push({
       description: description == null ? null : description.trim() || null,

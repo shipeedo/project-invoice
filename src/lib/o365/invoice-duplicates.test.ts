@@ -117,10 +117,34 @@ describe("findDuplicateSupplierInvoice", () => {
     expect(found?.id).toBe("inv-1");
   });
 
+  it("imports an invoice whose number did not match, even if total+date collide", async () => {
+    // The total+date rule is not vendor-scoped, so two unrelated suppliers
+    // billing the same amount on the same day would collide. Gating it on a
+    // missing invoice number keeps that collision from silently dropping a
+    // genuinely new invoice that carries its own number.
+    const invoiceDate = new Date("2026-05-01T00:00:00.000Z");
+    await seedInvoice({
+      id: "inv-1",
+      invoiceNumber: "INV-500",
+      vendorName: "Ausfast Couriers",
+      totalAmount: 95.84,
+      invoiceDate,
+    });
+
+    const found = await findDuplicateSupplierInvoice({
+      organizationId: ORG,
+      invoiceNumber: "INV-501",
+      totalAmount: 95.84,
+      invoiceDate,
+    });
+
+    expect(found).toBeNull();
+  });
+
   it("applies the total+date rule regardless of vendor name", async () => {
-    // Documented trade-off: total+date is not vendor-scoped, so two unrelated
-    // suppliers billing the same amount on the same day collide and the second
-    // is skipped. Change this test if that behaviour is ever tightened.
+    // Still not vendor-scoped when no number extracted: two unrelated suppliers
+    // billing the same amount on the same day collide and the second is
+    // skipped. Change this test if that behaviour is ever tightened.
     const invoiceDate = new Date("2026-05-01T00:00:00.000Z");
     await seedInvoice({
       id: "inv-1",

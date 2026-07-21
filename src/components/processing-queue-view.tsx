@@ -100,7 +100,7 @@ function formatOutcome(job: ProcessingQueueJob) {
   }
   if (!job.outcome) return "—";
   if (job.outcome === "duplicate_invoice") {
-    return "Skipped — same invoice number and total already imported";
+    return "Skipped — duplicate of an already-imported invoice";
   }
   return job.outcome.replaceAll("_", " ");
 }
