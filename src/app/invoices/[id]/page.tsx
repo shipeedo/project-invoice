@@ -10,6 +10,7 @@ import { InvoiceDocumentsCard } from "@/components/invoice-documents-card";
 import { InvoiceNotesSheet } from "@/components/invoice-notes-sheet";
 import { InvoiceDueDate } from "@/components/invoice-due-date";
 import { InvoiceValidationPanel } from "@/components/invoice-validation-panel";
+import { CreditAlertBadge } from "@/components/credit-alert-badge";
 import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -29,6 +30,7 @@ import {
 import { recordInvoiceView } from "@/lib/audit";
 import { describeAuditEvent } from "@/lib/audit-log";
 import { resolveInvoiceSourceEmail } from "@/lib/invoice-source-email";
+import { getInvoiceCreditAlert } from "@/lib/invoice-credit-alert";
 import { isExtractionPending } from "@/lib/invoice-status";
 import {
   TRASH_RETENTION_DAYS,
@@ -134,6 +136,13 @@ export default async function InvoiceDetailPage({ params, searchParams }: PagePr
   const hasCreditDocument = invoice.documents.some(
     (document) => document.kind === "CREDIT",
   );
+  const liveCreditStatuses = invoiceCreditRequests
+    .map((request) => request.status)
+    .filter((status) => status !== "REJECTED");
+  const creditAlert = getInvoiceCreditAlert({
+    status: invoice.status,
+    creditStatuses: invoiceCreditRequests.map((request) => request.status),
+  });
 
   const noteItems = invoice.notes.map((note) => ({
     id: note.id,
@@ -284,7 +293,8 @@ export default async function InvoiceDetailPage({ params, searchParams }: PagePr
                 {invoice.vendorName ?? invoice.originalFileName ?? "Invoice"}
               </h2>
               <StatusBadge status={invoice.status} />
-              {hasCreditDocument ? (
+              {creditAlert ? <CreditAlertBadge alert={creditAlert} /> : null}
+              {hasCreditDocument && !creditAlert ? (
                 <Badge
                   variant="outline"
                   className="border-amber-500/60 bg-amber-500/10 text-amber-700 dark:text-amber-400"
@@ -350,6 +360,7 @@ export default async function InvoiceDetailPage({ params, searchParams }: PagePr
                 mimeType: attachment.mimeType,
                 isPrimary: attachment.isPrimary,
               }))}
+              existingCreditCount={liveCreditStatuses.length}
             />
           </div>
         </div>

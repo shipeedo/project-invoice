@@ -64,6 +64,8 @@ type InvoiceActionsMenuProps = {
   sourceType: "UPLOAD" | "EMAIL";
   currency: string;
   reprocessAttachments?: ReprocessAttachment[];
+  /** Credit requests on this invoice that the carrier hasn't rejected. */
+  existingCreditCount?: number;
 };
 
 type ConfirmAction = "approve" | "reject";
@@ -76,6 +78,7 @@ type ActionDialog =
   | "rebill"
   | "approve-rebill"
   | "approve-credit"
+  | "approve-credit-choice"
   | "reprocess";
 type PendingAction = LifecycleAction | "trash" | "restore";
 
@@ -138,6 +141,7 @@ export function InvoiceActionsMenu({
   sourceType,
   currency,
   reprocessAttachments = [],
+  existingCreditCount = 0,
 }: InvoiceActionsMenuProps) {
   const router = useRouter();
   const [dialog, setDialog] = useState<ActionDialog | null>(null);
@@ -327,7 +331,15 @@ export function InvoiceActionsMenu({
                   </DropdownMenuItem>
                 ) : null}
                 {canApprove ? (
-                  <DropdownMenuItem onClick={() => openDialog("approve-credit")}>
+                  <DropdownMenuItem
+                    onClick={() =>
+                      openDialog(
+                        existingCreditCount > 0
+                          ? "approve-credit-choice"
+                          : "approve-credit",
+                      )
+                    }
+                  >
                     <ReceiptIcon />
                     Approve with credit…
                   </DropdownMenuItem>
@@ -405,16 +417,80 @@ export function InvoiceActionsMenu({
       </div>
 
       <Dialog
-        open={confirmCopy !== null || reasonCopy !== null || dialog === "trash"}
+        open={
+          confirmCopy !== null ||
+          reasonCopy !== null ||
+          dialog === "trash" ||
+          dialog === "approve-credit-choice"
+        }
         onOpenChange={(open) => !open && closeDialog()}
       >
         <DialogContent>
+          {dialog === "approve-credit-choice" ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>This invoice already has a credit</DialogTitle>
+                <DialogDescription>
+                  {existingCreditCount === 1
+                    ? "A credit request is already attached to this invoice."
+                    : `${existingCreditCount} credit requests are already attached to this invoice.`}{" "}
+                  Approve the invoice against the existing credit, or add
+                  another credit before approving.
+                </DialogDescription>
+              </DialogHeader>
+
+              {/* Two full-width choices rather than peer footer buttons —
+                  the dialog is too narrow to sit them beside Cancel. */}
+              <div className="flex flex-col gap-2">
+                <Button
+                  type="button"
+                  className="w-full"
+                  onClick={() => void submitLifecycle("approve", {})}
+                  disabled={loading !== null}
+                >
+                  {loading === "approve"
+                    ? "Working..."
+                    : "Approve with existing credit"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => setDialog("approve-credit")}
+                  disabled={loading !== null}
+                >
+                  Add another credit…
+                </Button>
+              </div>
+
+              {error ? <p className="text-sm text-destructive">{error}</p> : null}
+
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={closeDialog}
+                  disabled={loading !== null}
+                >
+                  Cancel
+                </Button>
+              </DialogFooter>
+            </>
+          ) : null}
+
           {confirmCopy && (dialog === "approve" || dialog === "reject") ? (
             <>
               <DialogHeader>
                 <DialogTitle>{confirmCopy.title}</DialogTitle>
                 <DialogDescription>{confirmCopy.description}</DialogDescription>
               </DialogHeader>
+
+              {dialog === "approve" && existingCreditCount > 0 ? (
+                <p className="rounded-lg border border-amber-500/60 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-400">
+                  A credit is attached to this invoice. It will stay attached
+                  and must be applied before payment.
+                </p>
+              ) : null}
 
               <div className="flex items-start gap-3 rounded-lg border bg-muted/20 p-4">
                 <Checkbox

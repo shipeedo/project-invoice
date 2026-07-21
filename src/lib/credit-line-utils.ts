@@ -1,10 +1,15 @@
 import type { CreditRequestStatus } from "@/lib/db/types";
 import type { CreditReasonCode } from "@/lib/credit-reasons";
-import { isCreditReasonCode } from "@/lib/credit-reasons";
+import { formatCreditLineReason, isCreditReasonCode } from "@/lib/credit-reasons";
 import { roundToTwoDecimals } from "@/lib/format";
 
 export type CreditRequestLineItem = {
-  description: string;
+  /**
+   * Free-text charge description. Only present on rows created before the
+   * reason picker replaced the description field; new lines describe
+   * themselves through their reason.
+   */
+  description?: string | null;
   requestedAmount?: number | null;
   quantity?: number | null;
   serviceType?: string | null;
@@ -19,7 +24,7 @@ export type CreditRequestLineItem = {
 };
 
 export type CreateCreditLineInput = {
-  description: string;
+  description?: string | null;
   requestedAmount: number;
   quantity?: number | null;
   reference?: string | null;
@@ -48,6 +53,14 @@ export function parseCreditRequestLineItems(
 
 export function isCreditRequestOpen(status: CreditRequestStatus) {
   return OPEN_CREDIT_STATUSES.includes(status);
+}
+
+/**
+ * What to show in a "Description" column. Legacy lines carry their own text;
+ * lines captured through the reason picker fall back to the reason itself.
+ */
+export function creditLineDescription(line: CreditRequestLineItem) {
+  return line.description?.trim() || formatCreditLineReason(line);
 }
 
 export function sumRequestedAmounts(lineItems: CreditRequestLineItem[]) {
@@ -85,7 +98,7 @@ export function parseCreateCreditLinesInput(raw: unknown): CreateCreditLineInput
         reason?: unknown;
         reasonDetail?: unknown;
       };
-    if (typeof description !== "string" || !description.trim()) return null;
+    if (description != null && typeof description !== "string") return null;
     if (
       typeof requestedAmount !== "number" ||
       !Number.isFinite(requestedAmount) ||
@@ -104,7 +117,7 @@ export function parseCreateCreditLinesInput(raw: unknown): CreateCreditLineInput
     if (reasonDetail != null && typeof reasonDetail !== "string") return null;
 
     lines.push({
-      description: description.trim(),
+      description: description == null ? null : description.trim() || null,
       requestedAmount,
       quantity: quantity == null ? null : quantity,
       reference: reference == null ? null : reference.trim() || null,
@@ -121,7 +134,7 @@ export function buildCreditRequestLineItems(
   inputs: CreateCreditLineInput[],
 ): CreditRequestLineItem[] {
   return inputs.map((input) => ({
-    description: input.description,
+    description: input.description?.trim() || null,
     requestedAmount: input.requestedAmount,
     quantity: input.quantity ?? null,
     reference: input.reference ?? null,
