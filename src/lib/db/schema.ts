@@ -158,6 +158,41 @@ export const notes = sqliteTable("notes", {
   createdAt: timestamp(),
 });
 
+// Who is in an invoice's note thread. Participants are notified on every note
+// posted there, not only when they are @mentioned, so the thread behaves like a
+// group chat rather than a comment log. A row is the whole membership record:
+// leaving deletes it, so nothing re-adds someone who has left except a fresh
+// mention, an invite, or their own message.
+export const noteParticipants = sqliteTable(
+  "note_participants",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => createId()),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    invoiceId: text("invoice_id")
+      .notNull()
+      .references(() => invoices.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    // Who invited them; null when they joined by posting, being mentioned, or
+    // being the assignee when the thread started.
+    addedById: text("added_by_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp(),
+  },
+  (table) => [
+    uniqueIndex("note_participants_invoice_user_idx").on(
+      table.invoiceId,
+      table.userId,
+    ),
+  ],
+);
+
 // A rebill passes an invoice's charges on to a customer; the accounts team
 // raises the sales invoice in the accounting system from the attached documents.
 export const rebills = sqliteTable("rebills", {
@@ -632,7 +667,16 @@ export const notifications = sqliteTable(
       onDelete: "cascade",
     }),
     type: text("type", {
-      enum: ["INVOICE_ASSIGNED", "INVOICE_REMINDER", "NOTE_MENTION", "TEST"],
+      enum: [
+        "INVOICE_ASSIGNED",
+        "INVOICE_REMINDER",
+        "NOTE_MENTION",
+        // A note posted in a thread the recipient is a participant of, without
+        // being mentioned by name.
+        "NOTE_MESSAGE",
+        "NOTE_PARTICIPANT_ADDED",
+        "TEST",
+      ],
     }).notNull(),
     title: text("title").notNull(),
     body: text("body").notNull(),
@@ -709,6 +753,7 @@ export const invoicesRelations = relations(invoices, ({ one, many }) => ({
     references: [users.id],
   }),
   notes: many(notes),
+  noteParticipants: many(noteParticipants),
   auditEvents: many(auditEvents),
   creditDrafts: many(creditDrafts),
   creditRequests: many(creditRequests),
@@ -781,6 +826,25 @@ export const notesRelations = relations(notes, ({ one }) => ({
   // resolves author names for display.
   user: one(users, {
     fields: [notes.userId],
+    references: [users.id],
+  }),
+}));
+
+export const noteParticipantsRelations = relations(noteParticipants, ({ one }) => ({
+  organization: one(organizations, {
+    fields: [noteParticipants.organizationId],
+    references: [organizations.id],
+  }),
+  invoice: one(invoices, {
+    fields: [noteParticipants.invoiceId],
+    references: [invoices.id],
+  }),
+  user: one(users, {
+    fields: [noteParticipants.userId],
+    references: [users.id],
+  }),
+  addedBy: one(users, {
+    fields: [noteParticipants.addedById],
     references: [users.id],
   }),
 }));
