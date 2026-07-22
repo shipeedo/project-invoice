@@ -37,6 +37,11 @@ type SupplierOption = {
   name: string;
 };
 
+/** Mirrors the server-side supplier name comparison in supplier-extraction.ts. */
+function normalizeForMatch(value: string) {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
 type ValidationFieldKey =
   | "vendorName"
   | "vendorEmail"
@@ -204,6 +209,14 @@ export function InvoiceValidationPanel({
   );
   const [pickerOpen, setPickerOpen] = useState(false);
   const [extractError, setExtractError] = useState<string | null>(null);
+  // Set once the reviewer picks a supplier themselves, after which the
+  // confirmed name never moves the selection for them.
+  const [supplierPickedByUser, setSupplierPickedByUser] = useState(false);
+  const [supplierRelinkNote, setSupplierRelinkNote] = useState<string | null>(null);
+  // A pre-filled link may legitimately not match the extracted name (it can be
+  // matched on the supplier's email domain instead), so only an edit to the
+  // name puts the selection in question.
+  const [vendorNameEdited, setVendorNameEdited] = useState(false);
 
   const canValidate = status === "DRAFT";
 
@@ -233,7 +246,49 @@ export function InvoiceValidationPanel({
   }
 
   function updateField(key: ValidationFieldKey, value: string) {
+    if (key === "vendorName") setVendorNameEdited(true);
     setFields((current) => ({ ...current, [key]: value }));
+  }
+
+  /**
+   * Re-resolves the linked supplier once the confirmed name is finished being
+   * edited.
+   *
+   * The select is pre-filled with the supplier extraction matched, so leaving it
+   * alone while retyping the name is the easy path — and it saves an invoice
+   * whose header names one company and whose queue row names another. Runs on
+   * blur rather than per keystroke so it doesn't fight the reviewer mid-word,
+   * and never overrides a supplier they picked themselves.
+   */
+  function realignSupplierToConfirmedName() {
+    if (!vendorNameEdited || supplierPickedByUser || createSupplier) return;
+
+    const name = normalizeForMatch(fields.vendorName);
+    if (!name) return;
+
+    const selected = suppliers.find((entry) => entry.id === supplierId);
+    if (!selected || normalizeForMatch(selected.name) === name) {
+      setSupplierRelinkNote(null);
+      return;
+    }
+
+    const rematched = suppliers.find(
+      (entry) => normalizeForMatch(entry.name) === name,
+    );
+
+    if (rematched) {
+      setSupplierId(rematched.id);
+      setSupplierRelinkNote(
+        `Confirmed name no longer matches ${selected.name}, so this invoice will link to ${rematched.name}.`,
+      );
+      return;
+    }
+
+    setSupplierId("none");
+    setCreateSupplier(true);
+    setSupplierRelinkNote(
+      `Confirmed name no longer matches ${selected.name}, so a new supplier will be created. Pick an existing supplier above to link to that instead.`,
+    );
   }
 
   /** Fill the supplier fields from a candidate and collapse the picker so the
@@ -327,9 +382,13 @@ export function InvoiceValidationPanel({
         name: fields.vendorName,
         emailAddresses: fields.vendorEmail ? [fields.vendorEmail] : [],
       };
-    } else if (supplierId !== "none") {
+    } else if (supplierId !== "none" && !staleSupplierSelection) {
       payload.supplierId = supplierId;
     }
+    // A stale selection is deliberately left out so the server re-resolves the
+    // link from the confirmed name and email rather than pinning the supplier
+    // the reviewer just typed over. Submitting via Enter can skip the blur that
+    // would otherwise have realigned the select.
 
     const response = await fetch(`/api/invoices/${invoiceId}/validate`, {
       method: "POST",
@@ -351,6 +410,16 @@ export function InvoiceValidationPanel({
   const selectedCandidate =
     selectedCandidateIndex != null ? candidates[selectedCandidateIndex] : null;
   const platformEmail = detectPlatformEmail(fields.vendorEmail);
+
+  // A pre-filled selection the reviewer never confirmed, on an invoice whose
+  // supplier name they have since changed.
+  const selectedSupplier = suppliers.find((entry) => entry.id === supplierId);
+  const staleSupplierSelection =
+    vendorNameEdited &&
+    !supplierPickedByUser &&
+    selectedSupplier != null &&
+    normalizeForMatch(fields.vendorName).length > 0 &&
+    normalizeForMatch(selectedSupplier.name) !== normalizeForMatch(fields.vendorName);
 
   const supplierActionSummary = createSupplier
     ? `A new supplier "${fields.vendorName || "…"}" will be created and linked.`
@@ -402,6 +471,8 @@ export function InvoiceValidationPanel({
                 items={supplierSelectItems}
                 value={createSupplier ? "create" : supplierId}
                 onValueChange={(value) => {
+                  setSupplierPickedByUser(true);
+                  setSupplierRelinkNote(null);
                   if (!value || value === "create") {
                     setCreateSupplier(true);
                     setSupplierId("none");
@@ -462,6 +533,12 @@ export function InvoiceValidationPanel({
                 <p className="text-xs text-muted-foreground">
                   {supplierActionSummary}
                 </p>
+                {supplierRelinkNote ? (
+                  <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                    <TriangleAlertIcon className="mt-0.5 size-4 shrink-0" />
+                    <span>{supplierRelinkNote}</span>
+                  </div>
+                ) : null}
               </div>
 
               {extractError ? (
@@ -539,6 +616,11 @@ export function InvoiceValidationPanel({
                       type={config.type}
                       value={fields[config.key]}
                       onChange={(event) => updateField(config.key, event.target.value)}
+                      onBlur={
+                        config.key === "vendorName"
+                          ? realignSupplierToConfirmedName
+                          : undefined
+                      }
                       required={config.key === "vendorName"}
                     />
                   </div>

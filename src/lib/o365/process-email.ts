@@ -44,6 +44,7 @@ import {
   findMatchingSupplier,
   getSupplierExtractionContext,
   supplierHasCustomExtraction,
+  supplierMatchesInvoiceFields,
 } from "@/lib/supplier-extraction";
 import { getUploadAbsolutePath, saveBufferToUploads } from "@/lib/uploads";
 import type { GraphMessage } from "@/lib/o365/graph";
@@ -317,7 +318,11 @@ export async function runInvoiceExtraction(params: {
 
   const senderEmail = params.emailContext.fromEmail;
 
-  let resolvedSupplier = params.supplierId
+  // The caller's supplier id is a hint used to pick the extraction prompt, so
+  // it only carries through to the link while it still matches what was just
+  // extracted. A re-process of an invoice whose document now names a different
+  // company must re-resolve rather than keep the stale link.
+  const hintedSupplier = params.supplierId
     ? ((await db.query.suppliers.findFirst({
         where: and(
           eq(suppliers.id, params.supplierId),
@@ -325,6 +330,17 @@ export async function runInvoiceExtraction(params: {
         ),
       })) ?? null)
     : null;
+
+  let resolvedSupplier =
+    hintedSupplier &&
+    (!extraction.data ||
+      supplierMatchesInvoiceFields(
+        hintedSupplier,
+        extraction.data.vendorName,
+        extraction.data.vendorEmail ?? senderEmail,
+      ))
+      ? hintedSupplier
+      : null;
 
   if (!resolvedSupplier && extraction.data) {
     resolvedSupplier = await resolveSupplierFromExtraction(params.organizationId, {
