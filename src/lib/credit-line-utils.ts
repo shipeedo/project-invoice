@@ -32,12 +32,34 @@ export type CreateCreditLineInput = {
   reasonDetail?: string | null;
 };
 
-export const OPEN_CREDIT_STATUSES: CreditRequestStatus[] = [
-  "DRAFT",
-  "SENT",
-  "AWAITING_USER",
-  "CONTESTED",
-];
+/** Still waiting on the carrier — nothing has been decided yet. */
+export const OPEN_CREDIT_STATUSES: CreditRequestStatus[] = ["PENDING", "SUBMITTED"];
+
+/**
+ * User-facing wording for each credit status. Kept here rather than derived
+ * from the enum so "PARTIALLY_APPROVED" reads as "Partially approved" and the
+ * labels stay distinct from invoice statuses.
+ */
+export const CREDIT_STATUS_LABELS: Record<CreditRequestStatus, string> = {
+  PENDING: "Pending",
+  SUBMITTED: "Submitted",
+  APPROVED: "Approved",
+  PARTIALLY_APPROVED: "Partially approved",
+  REJECTED: "Rejected",
+};
+
+/** One-line explanation, shown as the badge tooltip. */
+export const CREDIT_STATUS_DESCRIPTIONS: Record<CreditRequestStatus, string> = {
+  PENDING: "Created, not yet sent to the carrier",
+  SUBMITTED: "Sent to the carrier, awaiting their decision",
+  APPROVED: "The carrier approved the full requested amount",
+  PARTIALLY_APPROVED: "The carrier approved less than the requested amount",
+  REJECTED: "The carrier rejected the credit",
+};
+
+export function creditStatusLabel(status: string) {
+  return CREDIT_STATUS_LABELS[status as CreditRequestStatus] ?? status;
+}
 
 export function parseCreditRequestLineItems(
   raw: string | null | undefined,
@@ -74,13 +96,53 @@ export function computeGstCreditAmount(subtotal: number): number | null {
   return roundToTwoDecimals(subtotal * GST_RATE);
 }
 
-export function resolveDefaultApprovedAmount(
+/**
+ * What the carrier was actually asked for. Older requests carry the amount
+ * only on their lines, and a stored zero is no total at all, so both fall back
+ * to the line sum. Everything that compares against the request — the approval
+ * status, the shortfall, the outcome dialog's default — must resolve it the
+ * same way, or the preview and the saved row disagree.
+ */
+export function resolveRequestedTotal(
   requestedTotal: number | null | undefined,
   lineItemsJson: string | null | undefined,
 ) {
   if (requestedTotal != null && requestedTotal > 0) return requestedTotal;
   const sum = sumRequestedAmounts(parseCreditRequestLineItems(lineItemsJson));
   return sum > 0 ? sum : null;
+}
+
+/**
+ * Which "the carrier said yes" status applies. Anything short of the requested
+ * total is a partial approval, so the shortfall stays visible instead of
+ * reading as a clean win. Compared in whole cents to keep float noise from
+ * turning an exact match into a partial.
+ */
+export function resolveApprovalStatus(
+  approvedAmount: number,
+  requestedTotal: number | null | undefined,
+): Extract<CreditRequestStatus, "APPROVED" | "PARTIALLY_APPROVED"> {
+  if (requestedTotal == null || !Number.isFinite(requestedTotal) || requestedTotal <= 0) {
+    return "APPROVED";
+  }
+  return Math.round(approvedAmount * 100) < Math.round(requestedTotal * 100)
+    ? "PARTIALLY_APPROVED"
+    : "APPROVED";
+}
+
+/** How much of the request the carrier withheld, or null when nothing is short. */
+export function creditShortfall(request: {
+  status: CreditRequestStatus;
+  requestedTotal: number | null;
+  approvedAmount: number | null;
+  lineItems: string;
+}) {
+  if (request.status !== "PARTIALLY_APPROVED") return null;
+  if (request.approvedAmount == null) return null;
+  const requestedTotal = resolveRequestedTotal(request.requestedTotal, request.lineItems);
+  if (requestedTotal == null) return null;
+  const shortfall = roundToTwoDecimals(requestedTotal - request.approvedAmount);
+  return shortfall > 0 ? shortfall : null;
 }
 
 export function parseCreateCreditLinesInput(raw: unknown): CreateCreditLineInput[] | null {

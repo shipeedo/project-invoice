@@ -3,9 +3,11 @@ import {
   buildCreditRequestLineItems,
   computeGstCreditAmount,
   creditLineDescription,
+  creditShortfall,
   parseCreateCreditLinesInput,
   parseCreditRequestLineItems,
-  resolveDefaultApprovedAmount,
+  resolveApprovalStatus,
+  resolveRequestedTotal,
   sumRequestedAmounts,
 } from "@/lib/credit-line-utils";
 
@@ -187,15 +189,85 @@ describe("credit line helpers", () => {
     expect(computeGstCreditAmount(-5)).toBeNull();
   });
 
-  it("resolves default approved amount from total or line sum", () => {
+  it("resolves the requested total from the stored total or the line sum", () => {
     const lineItems = JSON.stringify([
       { description: "A", requestedAmount: 10 },
       { description: "B", requestedAmount: 5 },
     ]);
 
-    expect(resolveDefaultApprovedAmount(99, lineItems)).toBe(99);
-    expect(resolveDefaultApprovedAmount(null, lineItems)).toBe(15);
-    expect(resolveDefaultApprovedAmount(0, lineItems)).toBe(15);
-    expect(resolveDefaultApprovedAmount(null, "[]")).toBeNull();
+    expect(resolveRequestedTotal(99, lineItems)).toBe(99);
+    expect(resolveRequestedTotal(null, lineItems)).toBe(15);
+    // A stored zero is no total at all — falling through to the lines here is
+    // what keeps the saved status matching the dialog's preview.
+    expect(resolveRequestedTotal(0, lineItems)).toBe(15);
+    expect(resolveRequestedTotal(null, "[]")).toBeNull();
+  });
+});
+
+describe("resolveApprovalStatus", () => {
+  it("is a full approval when the carrier grants the requested total", () => {
+    expect(resolveApprovalStatus(120, 120)).toBe("APPROVED");
+  });
+
+  it("is partial when the carrier grants less than requested", () => {
+    expect(resolveApprovalStatus(80, 120)).toBe("PARTIALLY_APPROVED");
+  });
+
+  it("treats an over-approval as a full approval", () => {
+    expect(resolveApprovalStatus(150, 120)).toBe("APPROVED");
+  });
+
+  it("does not let float noise turn an exact match into a partial", () => {
+    expect(resolveApprovalStatus(0.1 + 0.2, 0.3)).toBe("APPROVED");
+  });
+
+  it("is a full approval when there is no requested total to fall short of", () => {
+    expect(resolveApprovalStatus(50, null)).toBe("APPROVED");
+    expect(resolveApprovalStatus(50, 0)).toBe("APPROVED");
+  });
+});
+
+describe("creditShortfall", () => {
+  const lineItems = JSON.stringify([{ requestedAmount: 120 }]);
+
+  it("reports what the carrier withheld on a partial approval", () => {
+    expect(
+      creditShortfall({
+        status: "PARTIALLY_APPROVED",
+        requestedTotal: 120,
+        approvedAmount: 80.5,
+        lineItems,
+      }),
+    ).toBe(39.5);
+  });
+
+  it("falls back to the line sum, so a partial always shows its shortfall", () => {
+    expect(
+      creditShortfall({
+        status: "PARTIALLY_APPROVED",
+        requestedTotal: null,
+        approvedAmount: 80.5,
+        lineItems,
+      }),
+    ).toBe(39.5);
+  });
+
+  it("is silent for any other status", () => {
+    expect(
+      creditShortfall({
+        status: "APPROVED",
+        requestedTotal: 120,
+        approvedAmount: 120,
+        lineItems,
+      }),
+    ).toBeNull();
+    expect(
+      creditShortfall({
+        status: "REJECTED",
+        requestedTotal: 120,
+        approvedAmount: null,
+        lineItems,
+      }),
+    ).toBeNull();
   });
 });

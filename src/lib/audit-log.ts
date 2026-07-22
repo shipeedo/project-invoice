@@ -1,3 +1,4 @@
+import { creditStatusLabel } from "@/lib/credit-line-utils";
 import { formatCurrency, formatDate, statusLabel } from "@/lib/format";
 
 export type AuditDisplay = {
@@ -357,7 +358,7 @@ export function describeAuditEvent(
         ? details.fileNames.filter((name): name is string => typeof name === "string")
         : [];
       const parts = [
-        status ? `Status: ${statusLabel(status)}` : null,
+        status ? `Status: ${creditStatusLabel(status)}` : null,
         approved != null ? `Approved ${formatCurrency(approved, currency)}` : null,
         fileNames.length > 0 ? `Credit note: ${fileNames.join(", ")}` : null,
       ].filter(Boolean);

@@ -2,7 +2,6 @@ import { and, count, eq, isNull } from "drizzle-orm";
 import { readFile } from "fs/promises";
 import {
   db,
-  creditRequests,
   emailThreads,
   mailboxMessageAttachments,
   mailboxMessages,
@@ -191,30 +190,6 @@ async function syncMessageAttachments(params: {
   }
 }
 
-async function handleCreditThreadReply(params: {
-  organizationId: string;
-  threadId: string;
-}) {
-  const openRequests = await db.query.creditRequests.findMany({
-    where: and(
-      eq(creditRequests.organizationId, params.organizationId),
-      eq(creditRequests.threadId, params.threadId),
-    ),
-  });
-
-  for (const request of openRequests) {
-    if (["SENT", "CONTESTED"].includes(request.status)) {
-      await db
-        .update(creditRequests)
-        .set({
-          status: "AWAITING_USER",
-          updatedAt: new Date(),
-        })
-        .where(eq(creditRequests.id, request.id));
-    }
-  }
-}
-
 export async function syncGraphMessage(params: {
   connection: SyncConnection;
   accessToken: string;
@@ -351,13 +326,6 @@ export async function syncGraphMessage(params: {
       mailbox: params.mailbox,
       dbMessageId: storedMessage.id,
       graphMessageId: message.id,
-    });
-  }
-
-  if (!outbound) {
-    await handleCreditThreadReply({
-      organizationId: params.connection.organizationId,
-      threadId: thread.id,
     });
   }
 

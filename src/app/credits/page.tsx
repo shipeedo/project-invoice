@@ -31,12 +31,12 @@ export default async function CreditsPage() {
   const serialized = rows.map((request) => ({
     id: request.id,
     status: request.status,
-    carrierDecision: request.carrierDecision,
     subject: request.subject,
     requestedTotal: request.requestedTotal,
     approvedAmount: request.approvedAmount,
     lineItems: request.lineItems,
     createdAt: request.createdAt.toISOString(),
+    submittedAt: request.submittedAt?.toISOString() ?? null,
     invoice: request.invoice,
     createdBy: request.createdBy,
   }));

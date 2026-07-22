@@ -1,10 +1,9 @@
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { updateCreditRequestStatus } from "@/lib/credit-requests";
+import { markCreditRequestSubmitted } from "@/lib/credit-requests";
 import { recordCreditRequestOutcome } from "@/lib/credit-lines";
 import { creditRequests, db } from "@/lib/db";
-import type { CarrierDecision, CreditRequestStatus } from "@/lib/db/types";
 import {
   CREDIT_NOTE_UPLOAD_EXTENSIONS,
   hasAllowedExtension,
@@ -16,16 +15,8 @@ type RouteContext = {
 };
 
 type PatchBody = {
-  status?: CreditRequestStatus;
-  carrierDecision?: CarrierDecision;
   approvedAmount?: number | null;
-  action?:
-    | "contest"
-    | "approve"
-    | "reject"
-    | "carrier_approved"
-    | "carrier_denied"
-    | "record_outcome";
+  action?: "submit" | "record_outcome";
   outcome?: "approved" | "denied";
 };
 
@@ -121,46 +112,26 @@ export async function PATCH(request: Request, context: RouteContext) {
     return NextResponse.json(outcome.creditRequest);
   }
 
-  let status = body.status;
-  let carrierDecision = body.carrierDecision ?? existing.carrierDecision;
+  if (body.action === "submit") {
+    const submitted = await markCreditRequestSubmitted({
+      organizationId: session.user.organizationId,
+      userId: session.user.id,
+      creditRequestId: id,
+    });
 
-  switch (body.action) {
-    case "carrier_approved":
-      carrierDecision = "APPROVED";
-      status = "AWAITING_USER";
-      break;
-    case "carrier_denied":
-      carrierDecision = "DENIED";
-      status = "AWAITING_USER";
-      break;
-    case "approve":
-      status = "APPROVED";
-      break;
-    case "reject":
-      status = "REJECTED";
-      break;
-    case "contest":
-      status = "CONTESTED";
-      break;
-    default:
-      break;
+    if ("error" in submitted) {
+      return NextResponse.json({ error: submitted.error }, { status: 400 });
+    }
+
+    return NextResponse.json(submitted.creditRequest);
   }
 
-  if (!status) {
-    return NextResponse.json({ error: "status or action is required" }, { status: 400 });
-  }
-
-  const outcome = await updateCreditRequestStatus({
-    organizationId: session.user.organizationId,
-    userId: session.user.id,
-    creditRequestId: id,
-    status,
-    carrierDecision,
-  });
-
-  if ("error" in outcome && outcome.error) {
-    return NextResponse.json({ error: outcome.error }, { status: 400 });
-  }
-
-  return NextResponse.json(outcome.creditRequest);
+  // Every status carries something beyond the word: SUBMITTED a sent time,
+  // the approval statuses an amount they were derived from. A raw status
+  // setter could write any of them with none of it, so transitions only
+  // happen through the actions above.
+  return NextResponse.json(
+    { error: "action must be submit or record_outcome" },
+    { status: 400 },
+  );
 }
