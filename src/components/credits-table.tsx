@@ -19,7 +19,7 @@ import {
   creditShortfall,
   isCreditRequestOpen,
   parseCreditRequestLineItems,
-  resolveDefaultApprovedAmount,
+  resolveRequestedTotal,
 } from "@/lib/credit-line-utils";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -167,7 +167,7 @@ export function CreditsTable({ creditRequests }: { creditRequests: CreditRequest
           }}
           creditRequestId={outcomeFor.id}
           currency={outcomeFor.invoice.currency ?? "AUD"}
-          requestedTotal={resolveDefaultApprovedAmount(
+          requestedTotal={resolveRequestedTotal(
             outcomeFor.requestedTotal,
             outcomeFor.lineItems,
           )}

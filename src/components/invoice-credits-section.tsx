@@ -21,7 +21,7 @@ import {
   creditShortfall,
   isCreditRequestOpen,
   parseCreditRequestLineItems,
-  resolveDefaultApprovedAmount,
+  resolveRequestedTotal,
 } from "@/lib/credit-line-utils";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -175,7 +175,7 @@ export function InvoiceCreditsSection({
           }}
           creditRequestId={outcomeFor.id}
           currency={currency}
-          requestedTotal={resolveDefaultApprovedAmount(
+          requestedTotal={resolveRequestedTotal(
             outcomeFor.requestedTotal,
             outcomeFor.lineItems,
           )}

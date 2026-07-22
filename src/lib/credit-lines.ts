@@ -5,8 +5,8 @@ import {
   buildCreditRequestLineItems,
   computeGstCreditAmount,
   isCreditRequestOpen,
-  parseCreditRequestLineItems,
   resolveApprovalStatus,
+  resolveRequestedTotal,
   sumRequestedAmounts,
   type CreateCreditLineInput,
 } from "@/lib/credit-line-utils";
@@ -25,6 +25,7 @@ export {
   parseCreateCreditLinesInput,
   parseCreditRequestLineItems,
   resolveApprovalStatus,
+  resolveRequestedTotal,
   sumRequestedAmounts,
 } from "@/lib/credit-line-utils";
 
@@ -127,8 +128,7 @@ export async function recordCreditRequestOutcome(params: {
     return { error: "Credit request is already closed" as const };
   }
 
-  const creditLines = parseCreditRequestLineItems(request.lineItems);
-  const requestedTotal = request.requestedTotal ?? sumRequestedAmounts(creditLines);
+  const requestedTotal = resolveRequestedTotal(request.requestedTotal, request.lineItems);
   let approvedAmount: number | null = null;
   let status: CreditRequestStatus;
 

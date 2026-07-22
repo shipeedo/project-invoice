@@ -10,6 +10,9 @@ WHERE `status` = 'APPROVED'
   AND ROUND(`approved_amount` * 100) < ROUND(`requested_total` * 100);--> statement-breakpoint
 UPDATE `credit_requests` SET `status` = 'PENDING' WHERE `status` = 'DRAFT';--> statement-breakpoint
 -- SENT, AWAITING_USER and CONTESTED all meant "with the carrier, undecided".
+-- These rows were created by the send itself, so created_at is when they went
+-- out; without it they would read as submitted-but-never-sent, and only a
+-- PENDING request can be marked submitted by hand.
 UPDATE `credit_requests`
-SET `status` = 'SUBMITTED'
+SET `status` = 'SUBMITTED', `submitted_at` = COALESCE(`submitted_at`, `created_at`)
 WHERE `status` IN ('SENT', 'AWAITING_USER', 'CONTESTED');

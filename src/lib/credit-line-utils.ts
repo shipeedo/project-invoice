@@ -96,7 +96,14 @@ export function computeGstCreditAmount(subtotal: number): number | null {
   return roundToTwoDecimals(subtotal * GST_RATE);
 }
 
-export function resolveDefaultApprovedAmount(
+/**
+ * What the carrier was actually asked for. Older requests carry the amount
+ * only on their lines, and a stored zero is no total at all, so both fall back
+ * to the line sum. Everything that compares against the request — the approval
+ * status, the shortfall, the outcome dialog's default — must resolve it the
+ * same way, or the preview and the saved row disagree.
+ */
+export function resolveRequestedTotal(
   requestedTotal: number | null | undefined,
   lineItemsJson: string | null | undefined,
 ) {
@@ -128,10 +135,13 @@ export function creditShortfall(request: {
   status: CreditRequestStatus;
   requestedTotal: number | null;
   approvedAmount: number | null;
+  lineItems: string;
 }) {
   if (request.status !== "PARTIALLY_APPROVED") return null;
-  if (request.requestedTotal == null || request.approvedAmount == null) return null;
-  const shortfall = roundToTwoDecimals(request.requestedTotal - request.approvedAmount);
+  if (request.approvedAmount == null) return null;
+  const requestedTotal = resolveRequestedTotal(request.requestedTotal, request.lineItems);
+  if (requestedTotal == null) return null;
+  const shortfall = roundToTwoDecimals(requestedTotal - request.approvedAmount);
   return shortfall > 0 ? shortfall : null;
 }
 

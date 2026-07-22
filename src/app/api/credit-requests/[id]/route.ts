@@ -1,13 +1,9 @@
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import {
-  markCreditRequestSubmitted,
-  updateCreditRequestStatus,
-} from "@/lib/credit-requests";
+import { markCreditRequestSubmitted } from "@/lib/credit-requests";
 import { recordCreditRequestOutcome } from "@/lib/credit-lines";
 import { creditRequests, db } from "@/lib/db";
-import { creditRequestStatuses, type CreditRequestStatus } from "@/lib/db/types";
 import {
   CREDIT_NOTE_UPLOAD_EXTENSIONS,
   hasAllowedExtension,
@@ -19,7 +15,6 @@ type RouteContext = {
 };
 
 type PatchBody = {
-  status?: CreditRequestStatus;
   approvedAmount?: number | null;
   action?: "submit" | "record_outcome";
   outcome?: "approved" | "denied";
@@ -131,21 +126,12 @@ export async function PATCH(request: Request, context: RouteContext) {
     return NextResponse.json(submitted.creditRequest);
   }
 
-  const status = body.status;
-  if (!status || !creditRequestStatuses.includes(status)) {
-    return NextResponse.json({ error: "status or action is required" }, { status: 400 });
-  }
-
-  const outcome = await updateCreditRequestStatus({
-    organizationId: session.user.organizationId,
-    userId: session.user.id,
-    creditRequestId: id,
-    status,
-  });
-
-  if ("error" in outcome && outcome.error) {
-    return NextResponse.json({ error: outcome.error }, { status: 400 });
-  }
-
-  return NextResponse.json(outcome.creditRequest);
+  // Every status carries something beyond the word: SUBMITTED a sent time,
+  // the approval statuses an amount they were derived from. A raw status
+  // setter could write any of them with none of it, so transitions only
+  // happen through the actions above.
+  return NextResponse.json(
+    { error: "action must be submit or record_outcome" },
+    { status: 400 },
+  );
 }

@@ -3,7 +3,12 @@ import { createCreditRequest, recordCreditRequestOutcome } from "@/lib/credit-li
 import { markCreditRequestSubmitted } from "@/lib/credit-requests";
 import { db, invoices, organizations, users } from "@/lib/db";
 
-async function seedCreditRequest(slug: string, requestedAmount = 100) {
+async function seedCreditRequest(
+  slug: string,
+  requestedAmount = 100,
+  /** Lets a caller store a total that disagrees with the lines. */
+  requestedTotal?: number | null,
+) {
   const [org] = await db
     .insert(organizations)
     .values({ name: `Org ${slug}`, slug })
@@ -22,6 +27,7 @@ async function seedCreditRequest(slug: string, requestedAmount = 100) {
     userId: user.id,
     invoiceId: invoice.id,
     lines: [{ requestedAmount, reason: "SERVICE_DOWNGRADE" }],
+    requestedTotal,
   });
   if ("error" in outcome) throw new Error(outcome.error);
 
@@ -98,6 +104,23 @@ describe("credit request lifecycle", () => {
     expect(result).toMatchObject({
       creditRequest: { status: "PARTIALLY_APPROVED", approvedAmount: 60 },
     });
+  });
+
+  it("falls back to the lines when the stored total is zero, matching the dialog", async () => {
+    // The outcome dialog resolves its benchmark the same way, so a stored zero
+    // must not quietly make every approval look full.
+    const { org, user, creditRequest } = await seedCreditRequest("status-zero", 100, 0);
+    expect(creditRequest.requestedTotal).toBe(0);
+
+    const result = await recordCreditRequestOutcome({
+      organizationId: org.id,
+      userId: user.id,
+      creditRequestId: creditRequest.id,
+      outcome: "approved",
+      approvedAmount: 60,
+    });
+
+    expect(result).toMatchObject({ creditRequest: { status: "PARTIALLY_APPROVED" } });
   });
 
   it("defaults an unspecified approved amount to the full request", async () => {

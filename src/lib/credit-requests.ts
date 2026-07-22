@@ -13,7 +13,6 @@ import {
   invoices,
   mailboxMessages,
 } from "@/lib/db";
-import type { CreditRequestStatus } from "@/lib/db/types";
 import { getO365Connection, getValidAccessToken, resolveGraphMailboxUser } from "@/lib/o365/connection";
 import {
   getMessageDetails,
@@ -248,45 +247,6 @@ export async function sendThreadReply(params: {
   });
 
   return { success: true as const };
-}
-
-export async function updateCreditRequestStatus(params: {
-  organizationId: string;
-  userId: string;
-  creditRequestId: string;
-  status: CreditRequestStatus;
-}) {
-  const request = await db.query.creditRequests.findFirst({
-    where: and(
-      eq(creditRequests.id, params.creditRequestId),
-      eq(creditRequests.organizationId, params.organizationId),
-    ),
-  });
-
-  if (!request) {
-    return { error: "Credit request not found" as const };
-  }
-
-  const [updated] = await db
-    .update(creditRequests)
-    .set({
-      status: params.status,
-      updatedAt: new Date(),
-    })
-    .where(eq(creditRequests.id, params.creditRequestId))
-    .returning();
-
-  await recordAuditEvent({
-    invoiceId: request.invoiceId,
-    userId: params.userId,
-    action: "credit_request.updated",
-    details: {
-      creditRequestId: request.id,
-      status: params.status,
-    },
-  });
-
-  return { creditRequest: updated };
 }
 
 /**
