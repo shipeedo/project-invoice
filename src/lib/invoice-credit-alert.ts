@@ -5,6 +5,11 @@ export type InvoiceCreditAlert = {
   label: string;
   /** Long-form copy for the badge tooltip. */
   detail: string;
+  /**
+   * "granted" — the carrier has agreed a credit, it just needs deducting.
+   * "waiting" — the carrier hasn't answered, so the amount is still unknown.
+   */
+  tone: "granted" | "waiting";
 };
 
 /**
@@ -27,6 +32,7 @@ export function getInvoiceCreditAlert(params: {
       label: "Credit to apply",
       detail:
         "Approved for payment, but the carrier granted a credit on this invoice. Deduct the credit before paying.",
+      tone: "granted",
     };
   }
 
@@ -34,5 +40,6 @@ export function getInvoiceCreditAlert(params: {
     label: "Credit pending",
     detail:
       "Approved for payment, but a credit request is still open with the carrier. Check the credit before paying.",
+    tone: "waiting",
   };
 }
