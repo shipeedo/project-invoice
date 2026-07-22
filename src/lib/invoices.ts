@@ -270,10 +270,14 @@ export type ChangeInvoiceSupplierInput = {
  *
  * A correction rather than a step of the workflow: extraction (or the reviewer)
  * matched the wrong company, and someone spotted it later — often once the
- * invoice is already approved. Only the link moves. The extracted vendor name
- * and email stay as they were read off the document, since they are the
- * evidence for who actually sent it, and the approver already decided on this
- * invoice as it stands.
+ * invoice is already approved. The extracted vendor name and email stay as they
+ * were read off the document, since they are the evidence for who actually sent
+ * it, and the approver already decided on this invoice as it stands.
+ *
+ * The due date is the exception, because it is derived rather than read: it is
+ * recomputed from the new supplier's trading terms, the same way validation and
+ * re-processing derive it, so it can never be a date the old supplier's terms
+ * produced while the screen credits it to the new supplier's.
  */
 export async function changeInvoiceSupplier(input: ChangeInvoiceSupplierInput) {
   const invoice = await db.query.invoices.findFirst({
@@ -287,6 +291,16 @@ export async function changeInvoiceSupplier(input: ChangeInvoiceSupplierInput) {
 
   if (invoice.deletedAt) {
     return { error: "Restore this invoice before changing its supplier" as const };
+  }
+
+  // Drafts settle their supplier through linkInvoiceSupplier, which also
+  // reconciles the vendor fields the validation screen is still editing.
+  if (invoice.status === "DRAFT") {
+    return { error: "Confirm the supplier from the validation panel" as const };
+  }
+
+  if (invoice.status === "CANCELLED") {
+    return { error: "Cancelled invoices cannot be changed" as const };
   }
 
   const supplier =
@@ -305,9 +319,23 @@ export async function changeInvoiceSupplier(input: ChangeInvoiceSupplierInput) {
     return { supplier, changed: false as const };
   }
 
+  // originalDueDate holds the document's own due date whenever trading terms
+  // replaced it, so it is the stated date to re-derive from; otherwise the
+  // stored due date is still the stated one.
+  const resolvedDueDate = resolveDueDate({
+    invoiceDate: invoice.invoiceDate,
+    extractedDueDate: invoice.originalDueDate ?? invoice.dueDate,
+    tradingTermDays: supplier.tradingTermDays,
+  });
+
   await db
     .update(invoices)
-    .set({ supplierId: supplier.id, updatedAt: new Date() })
+    .set({
+      supplierId: supplier.id,
+      dueDate: resolvedDueDate.dueDate,
+      originalDueDate: resolvedDueDate.originalDueDate,
+      updatedAt: new Date(),
+    })
     .where(eq(invoices.id, invoice.id));
 
   await recordAuditEvent({
@@ -319,6 +347,13 @@ export async function changeInvoiceSupplier(input: ChangeInvoiceSupplierInput) {
       supplierName: supplier.name,
       previousSupplierId: invoice.supplierId,
       previousSupplierName: invoice.supplier?.name ?? null,
+      ...(resolvedDueDate.dueDate?.getTime() !== invoice.dueDate?.getTime()
+        ? {
+            previousDueDate: invoice.dueDate?.toISOString() ?? null,
+            dueDate: resolvedDueDate.dueDate?.toISOString() ?? null,
+            tradingTermDays: resolvedDueDate.tradingTermDays,
+          }
+        : {}),
     },
   });
 

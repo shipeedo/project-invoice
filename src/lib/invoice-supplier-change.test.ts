@@ -31,8 +31,8 @@ async function seed() {
     hasAccess: true,
   });
   await db.insert(suppliers).values([
-    { id: FEDEX, organizationId: ORG, name: "FedEx" },
-    { id: SHIPEEDO, organizationId: ORG, name: "Shipeedo IP" },
+    { id: FEDEX, organizationId: ORG, name: "FedEx", tradingTermDays: 30 },
+    { id: SHIPEEDO, organizationId: ORG, name: "Shipeedo IP", tradingTermDays: 14 },
     { id: FOREIGN, organizationId: OTHER_ORG, name: "Someone else" },
   ]);
   await db.insert(invoices).values({
@@ -42,6 +42,10 @@ async function seed() {
     supplierId: FEDEX,
     vendorName: "Shipeedo IP",
     vendorEmail: "r.lynch@couriersandfreight.com.au",
+    invoiceDate: new Date("2026-07-01T00:00:00.000Z"),
+    // What FedEx's 30-day terms produced, over a document stating 7 July.
+    dueDate: new Date("2026-07-31T00:00:00.000Z"),
+    originalDueDate: new Date("2026-07-07T00:00:00.000Z"),
   });
 }
 
@@ -122,6 +126,69 @@ describe("changeInvoiceSupplier", () => {
     const result = await change(SHIPEEDO, "invoice-foreign");
 
     expect(result).toEqual({ error: "Not found" });
+  });
+
+  it("re-derives the due date from the new supplier's trading terms", async () => {
+    await change(SHIPEEDO);
+
+    const invoice = await loadInvoice();
+    // 1 July + Shipeedo IP's 14 days, not FedEx's 30.
+    expect(invoice.dueDate?.toISOString()).toBe("2026-07-15T00:00:00.000Z");
+    // The document's own due date is still what the override is measured against.
+    expect(invoice.originalDueDate?.toISOString()).toBe(
+      "2026-07-07T00:00:00.000Z",
+    );
+
+    const events = await db.query.auditEvents.findMany({
+      where: eq(auditEvents.invoiceId, INVOICE),
+    });
+    const changed = events.find(
+      (event) => event.action === "invoice.supplier_changed",
+    );
+    expect(JSON.parse(changed!.details!)).toMatchObject({
+      previousDueDate: "2026-07-31T00:00:00.000Z",
+      dueDate: "2026-07-15T00:00:00.000Z",
+      tradingTermDays: 14,
+    });
+  });
+
+  it("falls back to the stated due date when the new supplier has no terms", async () => {
+    await db
+      .update(suppliers)
+      .set({ tradingTermDays: null })
+      .where(eq(suppliers.id, SHIPEEDO));
+
+    await change(SHIPEEDO);
+
+    const invoice = await loadInvoice();
+    expect(invoice.dueDate?.toISOString()).toBe("2026-07-07T00:00:00.000Z");
+    expect(invoice.originalDueDate).toBeNull();
+  });
+
+  it("refuses a draft, which settles its supplier during validation", async () => {
+    await db
+      .update(invoices)
+      .set({ status: "DRAFT" })
+      .where(eq(invoices.id, INVOICE));
+
+    const result = await change(SHIPEEDO);
+
+    expect(result).toEqual({
+      error: "Confirm the supplier from the validation panel",
+    });
+    expect((await loadInvoice()).supplierId).toBe(FEDEX);
+  });
+
+  it("refuses a cancelled invoice", async () => {
+    await db
+      .update(invoices)
+      .set({ status: "CANCELLED" })
+      .where(eq(invoices.id, INVOICE));
+
+    const result = await change(SHIPEEDO);
+
+    expect(result).toEqual({ error: "Cancelled invoices cannot be changed" });
+    expect((await loadInvoice()).supplierId).toBe(FEDEX);
   });
 
   it("refuses a trashed invoice", async () => {

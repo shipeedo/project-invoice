@@ -47,18 +47,30 @@ export function InvoiceSupplierControl({
   const router = useRouter();
   const anchor = useComboboxAnchor();
   const [open, setOpen] = useState(false);
+  // What the API last confirmed, so the line and the Save baseline are right
+  // straight away rather than after router.refresh() lands. Re-seeded from the
+  // server whenever the invoice's own supplier changes.
+  const [linked, setLinked] = useState(supplier);
   const [picked, setPicked] = useState<SupplierChoice | null>(supplier);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Adjusting during render rather than in an effect, so a server-side change
+  // is reflected in the same pass instead of a second one.
+  const [serverSupplierId, setServerSupplierId] = useState(supplier?.id ?? null);
+  if ((supplier?.id ?? null) !== serverSupplierId) {
+    setServerSupplierId(supplier?.id ?? null);
+    setLinked(supplier);
+  }
+
   function openDialog() {
-    setPicked(supplier);
+    setPicked(linked);
     setError(null);
     setOpen(true);
   }
 
   async function save() {
-    if (!picked || picked.id === supplier?.id) {
+    if (!picked || picked.id === linked?.id) {
       setOpen(false);
       return;
     }
@@ -82,13 +94,15 @@ export function InvoiceSupplierControl({
       return;
     }
 
+    const body = (await response.json()) as { supplier: SupplierChoice };
+    setLinked(body.supplier);
     setOpen(false);
     router.refresh();
   }
 
   return (
     <div className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
-      <span>Supplier: {supplier?.name ?? "Not linked"}</span>
+      <span>Supplier: {linked?.name ?? "Not linked"}</span>
       {canChange ? (
         <Button
           type="button"
@@ -97,7 +111,7 @@ export function InvoiceSupplierControl({
           className="h-auto p-0 text-sm"
           onClick={openDialog}
         >
-          {supplier ? "Change" : "Link supplier"}
+          {linked ? "Change" : "Link supplier"}
         </Button>
       ) : null}
 
@@ -108,11 +122,12 @@ export function InvoiceSupplierControl({
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              {supplier ? "Change supplier" : "Link a supplier"}
+              {linked ? "Change supplier" : "Link a supplier"}
             </DialogTitle>
             <DialogDescription>
               Moves this invoice onto another supplier. The extracted supplier
-              name and email on the invoice stay as they are.
+              name and email stay as they are; the due date is re-derived from
+              the new supplier&apos;s trading terms.
             </DialogDescription>
           </DialogHeader>
 
@@ -159,7 +174,7 @@ export function InvoiceSupplierControl({
             <Button
               type="button"
               onClick={() => void save()}
-              disabled={saving || !picked || picked.id === supplier?.id}
+              disabled={saving || !picked || picked.id === linked?.id}
             >
               {saving ? "Saving..." : "Save"}
             </Button>
