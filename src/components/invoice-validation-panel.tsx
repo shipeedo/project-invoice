@@ -38,6 +38,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import {
   rankSupplierMatches,
+  sharedEmailProvider,
   type SupplierMatch,
   type SupplierMatchReason,
   type SupplierMatchTarget,
@@ -104,25 +105,6 @@ const INVOICE_FIELDS: FieldConfig[] = [
   { key: "totalAmount", label: "Total", type: "number" },
   { key: "currency", label: "Currency", type: "text" },
 ];
-
-/** Invoicing platforms whose "from" address is not the supplier's own inbox. */
-const PLATFORM_EMAIL_LABELS: Record<string, string> = {
-  xero: "Xero",
-  myob: "MYOB",
-};
-
-/** Returns the platform name (e.g. "Xero") when an email is sent via an
- * invoicing platform rather than the supplier's own domain. */
-function detectPlatformEmail(email: string): string | null {
-  const at = email.indexOf("@");
-  if (at === -1) return null;
-  const domain = email.slice(at + 1).trim().toLowerCase();
-  if (!domain) return null;
-  for (const label of domain.split(".")) {
-    if (PLATFORM_EMAIL_LABELS[label]) return PLATFORM_EMAIL_LABELS[label];
-  }
-  return null;
-}
 
 function SectionHeading({ children }: { children: React.ReactNode }) {
   return (
@@ -220,9 +202,13 @@ export function InvoiceValidationPanel({
       : null,
   );
   // The supplier is settled first: an invoice that arrived with a link already
-  // resolved skips straight to its details.
+  // resolved skips straight to its details. A blank supplier name does not
+  // count as settled even when a link exists — validation rejects it, and only
+  // step one can edit it.
   const [step, setStep] = useState<"supplier" | "details">(
-    initialSupplierId && supplierName ? "details" : "supplier",
+    initialSupplierId && supplierName && initialFields.vendorName.trim()
+      ? "details"
+      : "supplier",
   );
   // Null until the reviewer overrides the ranked default.
   const [picked, setPicked] = useState<string | null>(null);
@@ -418,7 +404,7 @@ export function InvoiceValidationPanel({
 
   const selectedCandidate =
     selectedCandidateIndex != null ? candidates[selectedCandidateIndex] : null;
-  const platformEmail = detectPlatformEmail(fields.vendorEmail);
+  const platformEmail = sharedEmailProvider(fields.vendorEmail);
   const confirmedName = fields.vendorName.trim();
 
   const supplierCard =
@@ -548,9 +534,10 @@ export function InvoiceValidationPanel({
                 <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
                   <TriangleAlertIcon className="mt-0.5 size-4 shrink-0" />
                   <span>
-                    <span className="font-medium">{platformEmail} invoicing address.</span>{" "}
-                    This isn&apos;t the supplier&apos;s own inbox — use their direct
-                    email so future invoices match automatically.
+                    <span className="font-medium">{platformEmail} address.</span> This
+                    isn&apos;t the supplier&apos;s own domain, so it won&apos;t be
+                    recorded against them — use their direct email if you have it, so
+                    future invoices match automatically.
                   </span>
                 </div>
               ) : null}

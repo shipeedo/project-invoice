@@ -251,6 +251,31 @@ describe("linkInvoiceSupplier", () => {
     });
     expect(await linkedSupplierId(invoice.id)).toBe(created?.id);
     expect(JSON.parse(created!.emailAddresses)).toEqual(["accounts@brandnew.test"]);
+    // Recorded so a later invoice from someone else at the same company matches.
+    expect(JSON.parse(created!.emailDomains)).toEqual(["brandnew.test"]);
+  });
+
+  it("does not record a relayed platform domain against the new supplier", async () => {
+    // post.xero.com carries mail for every Xero customer, so keeping it would
+    // match all of their invoices to whichever supplier was created first.
+    const invoice = await draftInvoice({ supplierId: null, vendorName: null });
+
+    await linkInvoiceSupplier({
+      organizationId: ORG,
+      userId: VALIDATOR,
+      invoiceId: invoice.id,
+      vendorName: "Relayed Freight Co",
+      vendorEmail: "messaging-service@post.xero.com",
+      createSupplier: true,
+    });
+
+    const created = await db.query.suppliers.findFirst({
+      where: eq(suppliers.name, "Relayed Freight Co"),
+    });
+    expect(JSON.parse(created!.emailAddresses)).toEqual([
+      "messaging-service@post.xero.com",
+    ]);
+    expect(JSON.parse(created!.emailDomains)).toEqual([]);
   });
 
   it("refuses a supplier from another organisation", async () => {

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   rankSupplierMatches,
+  sharedEmailProvider,
+  supplierEmailDomain,
   type SupplierMatchTarget,
 } from "@/lib/supplier-matching";
 
@@ -78,6 +80,59 @@ describe("rankSupplierMatches", () => {
 
   it("does not match two businesses that merely share a common word", () => {
     expect(rankSupplierMatches(ALL, { name: "Sydney Freight Services" })).toEqual([]);
+  });
+
+  it("does not treat a qualifier as a strippable suffix", () => {
+    // "Group", "Holdings" and "International" read like registration noise but
+    // are the whole difference between two related businesses — stripping them
+    // matched Linfox Australia to Linfox International.
+    const related = [
+      { id: "a", name: "Linfox International", emailAddresses: [], emailDomains: [] },
+      { id: "b", name: "Sydney Holdings", emailAddresses: [], emailDomains: [] },
+    ];
+
+    expect(rankSupplierMatches(related, { name: "Linfox Australia" })).toEqual([]);
+    expect(rankSupplierMatches(related, { name: "Sydney Group" })).toEqual([]);
+  });
+
+  it("still matches a name that only carries a longer legal form", () => {
+    const [top] = rankSupplierMatches(
+      [{ id: "a", name: "Aramex", emailAddresses: [], emailDomains: [] }],
+      { name: "Aramex Australia Pty Ltd" },
+    );
+
+    expect(top.supplierId).toBe("a");
+    expect(top.reason).toBe("similar_name");
+  });
+});
+
+describe("supplierEmailDomain", () => {
+  it("keeps the supplier's own domain so their colleagues match later", () => {
+    expect(supplierEmailDomain("accounts@cartoncloud.com")).toBe("cartoncloud.com");
+  });
+
+  it("withholds domains that carry mail for many businesses", () => {
+    // Recording post.xero.com would match every invoice Xero relays, for every
+    // supplier, to whichever one happened to be created first.
+    expect(supplierEmailDomain("messaging-service@post.xero.com")).toBeNull();
+    expect(supplierEmailDomain("bookkeeper@gmail.com")).toBeNull();
+  });
+
+  it("has nothing to record without an address", () => {
+    expect(supplierEmailDomain(null)).toBeNull();
+    expect(supplierEmailDomain("not-an-address")).toBeNull();
+  });
+});
+
+describe("sharedEmailProvider", () => {
+  it("names the platform behind a relayed address", () => {
+    expect(sharedEmailProvider("messaging-service@post.xero.com")).toBe("Xero");
+    expect(sharedEmailProvider("noreply@myob.com.au")).toBe("MYOB");
+    expect(sharedEmailProvider("someone@gmail.com")).toBe("Gmail");
+  });
+
+  it("leaves a supplier's own address alone", () => {
+    expect(sharedEmailProvider("accounts@cartoncloud.com")).toBeNull();
   });
 
   it("keeps only the strongest reason per supplier", () => {

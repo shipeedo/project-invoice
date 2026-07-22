@@ -12,6 +12,7 @@ import {
   supplierHasCustomExtraction,
   supplierMatchesInvoiceFields,
 } from "@/lib/supplier-extraction";
+import { supplierEmailDomain } from "@/lib/supplier-matching";
 
 async function resolveSupplierFromExtraction(
   organizationId: string,
@@ -204,6 +205,10 @@ export async function linkInvoiceSupplier(input: LinkInvoiceSupplierInput) {
     // reachable on a domain it cannot would otherwise be duplicated here.
     supplier = await findMatchingSupplier(input.organizationId, vendorName, vendorEmail);
     if (!supplier) {
+      // Recording the domain lets a later invoice from someone else at the
+      // same company match on its own; supplierEmailDomain withholds it for
+      // Xero-style relays and free mail, which belong to no one supplier.
+      const domain = supplierEmailDomain(vendorEmail);
       const [row] = await db
         .insert(suppliers)
         .values(
@@ -211,6 +216,7 @@ export async function linkInvoiceSupplier(input: LinkInvoiceSupplierInput) {
             organizationId: input.organizationId,
             name: vendorName,
             emailAddresses: vendorEmail ? [vendorEmail] : [],
+            emailDomains: domain ? [domain] : [],
           }),
         )
         .returning();

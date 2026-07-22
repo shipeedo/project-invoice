@@ -51,8 +51,15 @@ export type SupplierMatch = {
   detail: string;
 };
 
-/** Words that differ between how a supplier trades and how it is registered,
- * and so should not stop "Acme Freight" matching "Acme Freight Pty Ltd". */
+/**
+ * Legal-form words, which say how a supplier is registered rather than who it
+ * is, and so should not stop "Acme Freight" matching "Acme Freight Pty Ltd".
+ *
+ * Strictly legal forms: words like "group", "holdings" and "international" read
+ * like noise but are exactly what separates two related businesses, and
+ * stripping them matched Linfox Australia to Linfox International. Anything
+ * that distinguishes companies is left for the similarity threshold to weigh.
+ */
 const COMPANY_SUFFIXES = new Set([
   "pty",
   "ptyltd",
@@ -65,13 +72,6 @@ const COMPANY_SUFFIXES = new Set([
   "company",
   "corp",
   "corporation",
-  "group",
-  "holdings",
-  "australia",
-  "aus",
-  "au",
-  "nz",
-  "international",
   "the",
   "and",
 ]);
@@ -115,9 +115,52 @@ function tokenSimilarity(a: string, b: string) {
  * "Sydney Couriers") rather than naming the same business. */
 const SIMILAR_NAME_THRESHOLD = 0.6;
 
-export function emailDomain(email: string | null | undefined) {
+function emailDomain(email: string | null | undefined) {
   if (!email) return "";
   return email.split("@")[1]?.trim().toLowerCase() ?? "";
+}
+
+/**
+ * Domains that carry mail for many businesses at once — invoicing platforms
+ * that send on a supplier's behalf, and free mail providers.
+ */
+const SHARED_EMAIL_PROVIDERS: Record<string, string> = {
+  xero: "Xero",
+  myob: "MYOB",
+  quickbooks: "QuickBooks",
+  intuit: "QuickBooks",
+  gmail: "Gmail",
+  googlemail: "Gmail",
+  hotmail: "Hotmail",
+  outlook: "Outlook",
+  yahoo: "Yahoo",
+  icloud: "iCloud",
+  bigpond: "Bigpond",
+  optusnet: "Optus",
+};
+
+/** The provider name (e.g. "Xero") when an address belongs to a platform or
+ * free mail service rather than the supplier's own domain. */
+export function sharedEmailProvider(email: string | null | undefined): string | null {
+  const domain = emailDomain(email);
+  if (!domain) return null;
+  for (const label of domain.split(".")) {
+    if (SHARED_EMAIL_PROVIDERS[label]) return SHARED_EMAIL_PROVIDERS[label];
+  }
+  return null;
+}
+
+/**
+ * The domain worth remembering against a supplier, so a later invoice from a
+ * different person at the same company still matches.
+ *
+ * Null for shared providers: storing `post.xero.com` would match every invoice
+ * Xero relays, for every supplier, to whichever one recorded it first.
+ */
+export function supplierEmailDomain(email: string | null | undefined): string | null {
+  const domain = emailDomain(email);
+  if (!domain || sharedEmailProvider(email)) return null;
+  return domain;
 }
 
 function matchOn(
