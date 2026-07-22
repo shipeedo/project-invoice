@@ -1,9 +1,17 @@
 "use client";
 
-import { PlusIcon, SparklesIcon, TriangleAlertIcon, Wand2Icon } from "lucide-react";
+import {
+  BuildingIcon,
+  CheckIcon,
+  PlusIcon,
+  SparklesIcon,
+  TriangleAlertIcon,
+  Wand2Icon,
+} from "lucide-react";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -23,24 +31,35 @@ import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
-  SelectGroup,
   SelectItem,
-  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import {
+  rankSupplierMatches,
+  type SupplierMatch,
+  type SupplierMatchReason,
+  type SupplierMatchTarget,
+} from "@/lib/supplier-matching";
 import { cn } from "@/lib/utils";
 
-type SupplierOption = {
+type SupplierOption = SupplierMatchTarget;
+
+type LinkedSupplier = {
   id: string;
   name: string;
 };
 
-/** Mirrors the server-side supplier name comparison in supplier-extraction.ts. */
-function normalizeForMatch(value: string) {
-  return value.trim().toLowerCase().replace(/\s+/g, " ");
-}
+/** Sentinel selection for "none of these — create a new supplier". */
+const CREATE = "create";
+
+const MATCH_REASON_LABEL: Record<SupplierMatchReason, string> = {
+  email: "Email match",
+  domain: "Domain match",
+  name: "Name match",
+  similar_name: "Similar name",
+};
 
 type ValidationFieldKey =
   | "vendorName"
@@ -74,11 +93,6 @@ type FieldConfig = {
   label: string;
   type: "text" | "date" | "number";
 };
-
-const SUPPLIER_FIELDS: FieldConfig[] = [
-  { key: "vendorName", label: "Supplier name", type: "text" },
-  { key: "vendorEmail", label: "Supplier email", type: "text" },
-];
 
 const INVOICE_FIELDS: FieldConfig[] = [
   { key: "invoiceNumber", label: "Invoice no.", type: "text" },
@@ -118,72 +132,74 @@ function SectionHeading({ children }: { children: React.ReactNode }) {
   );
 }
 
-type SupplierFeaturedOptionProps = {
-  icon: React.ReactNode;
-  title: string;
-  description: string;
-  tone?: "create" | "matched";
-};
-
-function SupplierFeaturedOption({
-  icon,
-  title,
-  description,
-  tone = "create",
-}: SupplierFeaturedOptionProps) {
+function StepBadge({ step }: { step: 1 | 2 }) {
   return (
-    <span className="flex items-center gap-3 py-1">
-      <span
-        className={cn(
-          "flex size-10 shrink-0 items-center justify-center rounded-lg",
-          tone === "create"
-            ? "bg-primary/10 text-primary"
-            : "bg-secondary text-secondary-foreground",
-        )}
-      >
-        {icon}
-      </span>
-      <span className="flex min-w-0 flex-col gap-0.5 text-left">
-        <span className="text-sm font-semibold leading-tight">{title}</span>
-        <span className="text-xs leading-snug text-muted-foreground">{description}</span>
-      </span>
-    </span>
+    <Badge variant="secondary" className="shrink-0">
+      Step {step} of 2
+    </Badge>
   );
 }
 
-function SupplierSelectTriggerLabel({
-  createSupplier,
-  supplierId,
-  initialSupplierId,
-  supplierName,
-  suppliers,
-}: {
-  createSupplier: boolean;
-  supplierId: string;
-  initialSupplierId: string | null;
-  supplierName: string | null;
-  suppliers: SupplierOption[];
-}) {
-  if (createSupplier) {
-    return (
-      <span className="flex items-center gap-2">
-        <PlusIcon className="size-4 shrink-0 text-primary" />
-        <span className="font-medium">Create from confirmed name</span>
-      </span>
-    );
-  }
+type SupplierChoiceProps = {
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+  badge?: React.ReactNode;
+  selected: boolean;
+  tone?: "match" | "create";
+  onSelect: () => void;
+};
 
-  if (initialSupplierId && supplierId === initialSupplierId && supplierName) {
-    return (
-      <span className="flex items-center gap-2">
-        <Wand2Icon className="size-4 shrink-0 text-muted-foreground" />
-        <span className="font-medium">Matched: {supplierName}</span>
+function SupplierChoice({
+  icon,
+  title,
+  description,
+  badge,
+  selected,
+  tone = "match",
+  onSelect,
+}: SupplierChoiceProps) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      aria-pressed={selected}
+      className={cn(
+        "flex w-full items-start gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors",
+        selected
+          ? "border-primary/40 bg-primary/5 ring-2 ring-primary"
+          : "hover:border-muted-foreground/20 hover:bg-muted/30",
+      )}
+    >
+      <span
+        className={cn(
+          "mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border transition-colors",
+          selected
+            ? "border-primary bg-primary text-primary-foreground"
+            : "border-muted-foreground/30 bg-background text-transparent",
+        )}
+        aria-hidden
+      >
+        <CheckIcon className="size-3" />
       </span>
-    );
-  }
-
-  const supplier = suppliers.find((entry) => entry.id === supplierId);
-  return supplier?.name ?? null;
+      <span
+        className={cn(
+          "mt-0.5 shrink-0",
+          tone === "create" ? "text-primary" : "text-muted-foreground",
+        )}
+        aria-hidden
+      >
+        {icon}
+      </span>
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="text-sm font-medium leading-tight wrap-break-word">{title}</span>
+        <span className="text-xs leading-snug text-muted-foreground wrap-break-word">
+          {description}
+        </span>
+      </span>
+      {badge ? <span className="shrink-0">{badge}</span> : null}
+    </button>
+  );
 }
 
 export function InvoiceValidationPanel({
@@ -198,8 +214,20 @@ export function InvoiceValidationPanel({
 }: InvoiceValidationPanelProps) {
   const router = useRouter();
   const [fields, setFields] = useState(initialFields);
-  const [supplierId, setSupplierId] = useState(initialSupplierId ?? "none");
-  const [createSupplier, setCreateSupplier] = useState(!initialSupplierId);
+  const [linkedSupplier, setLinkedSupplier] = useState<LinkedSupplier | null>(
+    initialSupplierId && supplierName
+      ? { id: initialSupplierId, name: supplierName }
+      : null,
+  );
+  // The supplier is settled first: an invoice that arrived with a link already
+  // resolved skips straight to its details.
+  const [step, setStep] = useState<"supplier" | "details">(
+    initialSupplierId && supplierName ? "details" : "supplier",
+  );
+  // Null until the reviewer overrides the ranked default.
+  const [picked, setPicked] = useState<string | null>(null);
+  const [linking, setLinking] = useState(false);
+  const [linkError, setLinkError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [extracting, setExtracting] = useState(false);
@@ -209,95 +237,49 @@ export function InvoiceValidationPanel({
   );
   const [pickerOpen, setPickerOpen] = useState(false);
   const [extractError, setExtractError] = useState<string | null>(null);
-  // Set once the reviewer picks a supplier themselves, after which the
-  // confirmed name never moves the selection for them.
-  const [supplierPickedByUser, setSupplierPickedByUser] = useState(false);
-  const [supplierRelinkNote, setSupplierRelinkNote] = useState<string | null>(null);
-  // A pre-filled link may legitimately not match the extracted name (it can be
-  // matched on the supplier's email domain instead), so only an edit to the
-  // name puts the selection in question.
-  const [vendorNameEdited, setVendorNameEdited] = useState(false);
 
   const canValidate = status === "DRAFT";
 
-  const supplierSelectItems = useMemo(() => {
-    const items: Array<{ label: string; value: string }> = [
-      { label: "Create from confirmed name", value: "create" },
-    ];
+  // Re-ranked as the reviewer edits, so the offered matches always reflect the
+  // name and email actually being confirmed.
+  const matches = useMemo(
+    () =>
+      rankSupplierMatches(suppliers, {
+        name: fields.vendorName,
+        email: fields.vendorEmail,
+      }),
+    [suppliers, fields.vendorName, fields.vendorEmail],
+  );
 
-    if (supplierName && initialSupplierId) {
-      items.push({
-        label: `Matched: ${supplierName}`,
-        value: initialSupplierId,
-      });
+  // Matching always leads; creating is only the default once nothing matches.
+  const defaultSelection = useMemo(() => {
+    if (linkedSupplier && matches.some((match) => match.supplierId === linkedSupplier.id)) {
+      return linkedSupplier.id;
     }
+    return matches[0]?.supplierId ?? CREATE;
+  }, [matches, linkedSupplier]);
 
-    for (const supplier of suppliers) {
-      if (supplier.id !== initialSupplierId) {
-        items.push({ label: supplier.name, value: supplier.id });
-      }
-    }
-
-    return items;
-  }, [suppliers, initialSupplierId, supplierName]);
+  const selection = picked ?? defaultSelection;
+  const selectedMatch = matches.find((match) => match.supplierId === selection) ?? null;
+  const otherSupplier =
+    selection !== CREATE && !selectedMatch
+      ? (suppliers.find((supplier) => supplier.id === selection) ?? null)
+      : null;
 
   if (!canValidate) {
     return null;
   }
 
   function updateField(key: ValidationFieldKey, value: string) {
-    if (key === "vendorName") setVendorNameEdited(true);
     setFields((current) => ({ ...current, [key]: value }));
   }
 
-  /**
-   * Re-resolves the linked supplier once the confirmed name is finished being
-   * edited.
-   *
-   * The select is pre-filled with the supplier extraction matched, so leaving it
-   * alone while retyping the name is the easy path — and it saves an invoice
-   * whose header names one company and whose queue row names another. Runs on
-   * blur rather than per keystroke so it doesn't fight the reviewer mid-word,
-   * and never overrides a supplier they picked themselves.
-   */
-  function realignSupplierToConfirmedName() {
-    if (!vendorNameEdited || supplierPickedByUser || createSupplier) return;
-
-    const name = normalizeForMatch(fields.vendorName);
-    if (!name) return;
-
-    const selected = suppliers.find((entry) => entry.id === supplierId);
-    if (!selected || normalizeForMatch(selected.name) === name) {
-      setSupplierRelinkNote(null);
-      return;
-    }
-
-    const rematched = suppliers.find(
-      (entry) => normalizeForMatch(entry.name) === name,
-    );
-
-    if (rematched) {
-      setSupplierId(rematched.id);
-      setSupplierRelinkNote(
-        `Confirmed name no longer matches ${selected.name}, so this invoice will link to ${rematched.name}.`,
-      );
-      return;
-    }
-
-    setSupplierId("none");
-    setCreateSupplier(true);
-    setSupplierRelinkNote(
-      `Confirmed name no longer matches ${selected.name}, so a new supplier will be created. Pick an existing supplier above to link to that instead.`,
-    );
-  }
-
   /** Fill the supplier fields from a candidate and collapse the picker so the
-   * form fields are the single source of truth for what gets saved. */
+   * form fields are the single source of truth for what gets matched. */
   function chooseCandidate(candidate: SupplierCandidate, index: number) {
     setSelectedCandidateIndex(index);
-    setCreateSupplier(true);
-    setSupplierId("none");
     setPickerOpen(false);
+    setPicked(null);
     setFields((current) => ({
       ...current,
       vendorName: candidate.company ?? current.vendorName,
@@ -350,6 +332,39 @@ export function InvoiceValidationPanel({
     }
   }
 
+  async function handleLinkSupplier(event: React.FormEvent) {
+    event.preventDefault();
+
+    setLinking(true);
+    setLinkError(null);
+
+    const response = await fetch(`/api/invoices/${invoiceId}/link-supplier`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        vendorName: fields.vendorName,
+        vendorEmail: fields.vendorEmail || null,
+        ...(selection === CREATE
+          ? { createSupplier: true }
+          : { supplierId: selection }),
+      }),
+    });
+
+    setLinking(false);
+
+    if (!response.ok) {
+      const body = (await response.json()) as { error?: string };
+      setLinkError(body.error ?? "Failed to link supplier");
+      return;
+    }
+
+    const body = (await response.json()) as { supplier: LinkedSupplier };
+    setLinkedSupplier(body.supplier);
+    setPicked(null);
+    setStep("details");
+    router.refresh();
+  }
+
   function numberOrNull(value: string) {
     if (!value.trim()) return null;
     const parsed = Number(value);
@@ -359,41 +374,35 @@ export function InvoiceValidationPanel({
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
 
+    if (!linkedSupplier) {
+      setError("Link a supplier before routing for approval.");
+      setStep("supplier");
+      return;
+    }
+
     setLoading(true);
     setError(null);
-
-    const payload: Record<string, unknown> = {
-      fields: {
-        vendorName: fields.vendorName,
-        vendorEmail: fields.vendorEmail || null,
-        invoiceNumber: fields.invoiceNumber || null,
-        invoiceDate: fields.invoiceDate || null,
-        dueDate: fields.dueDate || null,
-        respondByDate: fields.respondByDate || null,
-        totalAmount: numberOrNull(fields.totalAmount),
-        subtotalAmount: numberOrNull(fields.subtotalAmount),
-        taxAmount: numberOrNull(fields.taxAmount),
-        currency: fields.currency || "AUD",
-      },
-    };
-
-    if (createSupplier) {
-      payload.createSupplier = {
-        name: fields.vendorName,
-        emailAddresses: fields.vendorEmail ? [fields.vendorEmail] : [],
-      };
-    } else if (supplierId !== "none" && !staleSupplierSelection) {
-      payload.supplierId = supplierId;
-    }
-    // A stale selection is deliberately left out so the server re-resolves the
-    // link from the confirmed name and email rather than pinning the supplier
-    // the reviewer just typed over. Submitting via Enter can skip the blur that
-    // would otherwise have realigned the select.
 
     const response = await fetch(`/api/invoices/${invoiceId}/validate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({
+        fields: {
+          vendorName: fields.vendorName,
+          vendorEmail: fields.vendorEmail || null,
+          invoiceNumber: fields.invoiceNumber || null,
+          invoiceDate: fields.invoiceDate || null,
+          dueDate: fields.dueDate || null,
+          respondByDate: fields.respondByDate || null,
+          totalAmount: numberOrNull(fields.totalAmount),
+          subtotalAmount: numberOrNull(fields.subtotalAmount),
+          taxAmount: numberOrNull(fields.taxAmount),
+          currency: fields.currency || "AUD",
+        },
+        // The link the reviewer settled in step one, never re-derived from the
+        // fields: a match confirmed on a near name would otherwise be dropped.
+        supplierId: linkedSupplier.id,
+      }),
     });
 
     setLoading(false);
@@ -410,134 +419,43 @@ export function InvoiceValidationPanel({
   const selectedCandidate =
     selectedCandidateIndex != null ? candidates[selectedCandidateIndex] : null;
   const platformEmail = detectPlatformEmail(fields.vendorEmail);
+  const confirmedName = fields.vendorName.trim();
 
-  // A pre-filled selection the reviewer never confirmed, on an invoice whose
-  // supplier name they have since changed.
-  const selectedSupplier = suppliers.find((entry) => entry.id === supplierId);
-  const staleSupplierSelection =
-    vendorNameEdited &&
-    !supplierPickedByUser &&
-    selectedSupplier != null &&
-    normalizeForMatch(fields.vendorName).length > 0 &&
-    normalizeForMatch(selectedSupplier.name) !== normalizeForMatch(fields.vendorName);
-
-  const supplierActionSummary = createSupplier
-    ? `A new supplier "${fields.vendorName || "…"}" will be created and linked.`
-    : supplierId !== "none"
-      ? "The invoice will be linked to the selected supplier."
-      : "Choose or create a supplier to link this invoice to.";
-
-  return (
-    <div className="grid gap-6 xl:grid-cols-[minmax(0,28rem)_minmax(0,1fr)] xl:items-start">
+  const supplierCard =
+    step === "supplier" ? (
       <Card className="min-w-0">
         <CardHeader className="pb-4">
-          <CardTitle>Review extraction</CardTitle>
-          <CardDescription>
-            Check each field against the documents alongside, then route for
-            approval.
-          </CardDescription>
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <CardTitle>Confirm the supplier</CardTitle>
+              <CardDescription>
+                Match this invoice to a supplier — or create one — before it goes for
+                approval.
+              </CardDescription>
+            </div>
+            <StepBadge step={1} />
+          </div>
         </CardHeader>
         <CardContent>
           <form
-            id="invoice-validation-form"
-            onSubmit={handleSubmit}
-            className="flex flex-col gap-6"
+            id="invoice-supplier-form"
+            onSubmit={handleLinkSupplier}
+            className="flex flex-col gap-5"
           >
             <section className="grid min-w-0 grid-cols-1 gap-3">
               <div className="flex items-center justify-between gap-2">
-                <SectionHeading>Supplier</SectionHeading>
+                <SectionHeading>Supplier on the invoice</SectionHeading>
                 {canExtractSupplier ? (
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    disabled={extracting || loading}
+                    disabled={extracting || linking}
                     onClick={() => void handleFillWithAi()}
                   >
                     <Wand2Icon className="size-4" />
                     {extracting ? "Reading email…" : "Fill with AI"}
                   </Button>
-                ) : null}
-              </div>
-
-              <div className="grid min-w-0 grid-cols-1 gap-2">
-                <Label
-                  htmlFor="linked-supplier"
-                  className="text-sm text-muted-foreground"
-                >
-                  Link to supplier
-                </Label>
-                <Select
-                items={supplierSelectItems}
-                value={createSupplier ? "create" : supplierId}
-                onValueChange={(value) => {
-                  setSupplierPickedByUser(true);
-                  setSupplierRelinkNote(null);
-                  if (!value || value === "create") {
-                    setCreateSupplier(true);
-                    setSupplierId("none");
-                  } else {
-                    setCreateSupplier(false);
-                    setSupplierId(value);
-                  }
-                }}
-              >
-                <SelectTrigger id="linked-supplier" className="h-10 w-full">
-                  <SelectValue placeholder="Select supplier">
-                    <SupplierSelectTriggerLabel
-                      createSupplier={createSupplier}
-                      supplierId={supplierId}
-                      initialSupplierId={initialSupplierId}
-                      supplierName={supplierName}
-                      suppliers={suppliers}
-                    />
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent alignItemWithTrigger={false} className="min-w-[var(--anchor-width)]">
-                  <SelectGroup>
-                    <SelectItem value="create" className="py-2.5 pl-2">
-                      <SupplierFeaturedOption
-                        tone="create"
-                        icon={<PlusIcon className="size-5" />}
-                        title="Create from confirmed name"
-                        description="Add a new supplier using the confirmed fields"
-                      />
-                    </SelectItem>
-                    {supplierName && initialSupplierId ? (
-                      <SelectItem value={initialSupplierId} className="py-2.5 pl-2">
-                        <SupplierFeaturedOption
-                          tone="matched"
-                          icon={<Wand2Icon className="size-5" />}
-                          title={`Matched: ${supplierName}`}
-                          description="Use the supplier linked from this email"
-                        />
-                      </SelectItem>
-                    ) : null}
-                  </SelectGroup>
-                  {suppliers.some((supplier) => supplier.id !== initialSupplierId) ? (
-                    <>
-                      <SelectSeparator />
-                      <SelectGroup>
-                        {suppliers
-                          .filter((supplier) => supplier.id !== initialSupplierId)
-                          .map((supplier) => (
-                            <SelectItem key={supplier.id} value={supplier.id}>
-                              {supplier.name}
-                            </SelectItem>
-                          ))}
-                      </SelectGroup>
-                    </>
-                  ) : null}
-                </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">
-                  {supplierActionSummary}
-                </p>
-                {supplierRelinkNote ? (
-                  <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-                    <TriangleAlertIcon className="mt-0.5 size-4 shrink-0" />
-                    <span>{supplierRelinkNote}</span>
-                  </div>
                 ) : null}
               </div>
 
@@ -603,28 +521,27 @@ export function InvoiceValidationPanel({
               ) : null}
 
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                {SUPPLIER_FIELDS.map((config) => (
-                  <div key={config.key} className="grid gap-1.5">
-                    <Label
-                      htmlFor={config.key}
-                      className="text-sm text-muted-foreground"
-                    >
-                      {config.label}
-                    </Label>
-                    <Input
-                      id={config.key}
-                      type={config.type}
-                      value={fields[config.key]}
-                      onChange={(event) => updateField(config.key, event.target.value)}
-                      onBlur={
-                        config.key === "vendorName"
-                          ? realignSupplierToConfirmedName
-                          : undefined
-                      }
-                      required={config.key === "vendorName"}
-                    />
-                  </div>
-                ))}
+                <div className="grid gap-1.5">
+                  <Label htmlFor="vendorName" className="text-sm text-muted-foreground">
+                    Supplier name
+                  </Label>
+                  <Input
+                    id="vendorName"
+                    value={fields.vendorName}
+                    onChange={(event) => updateField("vendorName", event.target.value)}
+                    required
+                  />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="vendorEmail" className="text-sm text-muted-foreground">
+                    Supplier email
+                  </Label>
+                  <Input
+                    id="vendorEmail"
+                    value={fields.vendorEmail}
+                    onChange={(event) => updateField("vendorEmail", event.target.value)}
+                  />
+                </div>
               </div>
 
               {platformEmail ? (
@@ -640,6 +557,170 @@ export function InvoiceValidationPanel({
             </section>
 
             <Separator />
+
+            <section className="grid min-w-0 grid-cols-1 gap-3">
+              <SectionHeading>
+                {matches.length > 0 ? "Matching suppliers" : "No matching supplier"}
+              </SectionHeading>
+
+              {matches.length > 0 ? (
+                <div className="flex min-w-0 flex-col gap-2">
+                  {matches.map((match: SupplierMatch) => (
+                    <SupplierChoice
+                      key={match.supplierId}
+                      icon={<BuildingIcon className="size-4" />}
+                      title={match.name}
+                      description={match.detail}
+                      badge={
+                        <Badge
+                          variant={
+                            match.confidence === "high"
+                              ? "default"
+                              : match.confidence === "medium"
+                                ? "secondary"
+                                : "outline"
+                          }
+                        >
+                          {MATCH_REASON_LABEL[match.reason]}
+                        </Badge>
+                      }
+                      selected={selection === match.supplierId}
+                      onSelect={() => setPicked(match.supplierId)}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  Nothing on file matches{" "}
+                  <span className="font-medium text-foreground">
+                    {confirmedName || "this supplier"}
+                  </span>
+                  {fields.vendorEmail ? ` or ${fields.vendorEmail}` : ""}. Create it, or
+                  pick an existing supplier below.
+                </p>
+              )}
+
+              <SupplierChoice
+                tone="create"
+                icon={<PlusIcon className="size-4" />}
+                title={
+                  confirmedName
+                    ? `Create “${confirmedName}”`
+                    : "Create a new supplier"
+                }
+                description="Adds a new supplier from the confirmed name and email"
+                selected={selection === CREATE}
+                onSelect={() => setPicked(CREATE)}
+              />
+
+              <div className="grid min-w-0 gap-1.5">
+                <Label
+                  htmlFor="other-supplier"
+                  className="text-sm text-muted-foreground"
+                >
+                  Or link to another supplier
+                </Label>
+                <Select
+                  items={suppliers.map((supplier) => ({
+                    label: supplier.name,
+                    value: supplier.id,
+                  }))}
+                  value={otherSupplier?.id ?? null}
+                  onValueChange={(value) => {
+                    if (value) setPicked(value);
+                  }}
+                >
+                  <SelectTrigger id="other-supplier" className="h-10 w-full">
+                    <SelectValue>
+                      {otherSupplier?.name ?? (
+                        <span className="text-muted-foreground">
+                          Search all suppliers
+                        </span>
+                      )}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent
+                    alignItemWithTrigger={false}
+                    className="min-w-[var(--anchor-width)]"
+                  >
+                    {suppliers.map((supplier) => (
+                      <SelectItem key={supplier.id} value={supplier.id}>
+                        {supplier.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </section>
+
+            {linkError ? (
+              <Alert variant="destructive">
+                <AlertDescription>{linkError}</AlertDescription>
+              </Alert>
+            ) : null}
+          </form>
+        </CardContent>
+        <CardFooter className="justify-between gap-3 border-t">
+          <p className="min-w-0 text-xs text-muted-foreground">
+            {selection === CREATE
+              ? `A new supplier will be created and linked${
+                  confirmedName ? ` as “${confirmedName}”` : ""
+                }.`
+              : `This invoice will be linked to ${
+                  selectedMatch?.name ?? otherSupplier?.name ?? "the selected supplier"
+                }.`}
+          </p>
+          <Button
+            type="submit"
+            form="invoice-supplier-form"
+            disabled={linking || !confirmedName}
+          >
+            {linking
+              ? "Linking…"
+              : selection === CREATE
+                ? "Create supplier and continue"
+                : "Link supplier and continue"}
+          </Button>
+        </CardFooter>
+      </Card>
+    ) : (
+      <Card className="min-w-0">
+        <CardHeader className="pb-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <CardTitle>Review invoice details</CardTitle>
+              <CardDescription>
+                Check each field against the documents alongside, then route for
+                approval.
+              </CardDescription>
+            </div>
+            <StepBadge step={2} />
+          </div>
+        </CardHeader>
+        <CardContent>
+          <form
+            id="invoice-validation-form"
+            onSubmit={handleSubmit}
+            className="flex flex-col gap-6"
+          >
+            <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/40 px-3 py-2">
+              <p className="flex min-w-0 flex-1 items-center gap-2 text-sm">
+                <CheckIcon className="size-4 shrink-0 text-primary" />
+                <span className="min-w-0 truncate">
+                  Supplier{" "}
+                  <span className="font-medium">{linkedSupplier?.name ?? "—"}</span>
+                </span>
+              </p>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-auto shrink-0 px-1.5 py-0.5 text-xs"
+                onClick={() => setStep("supplier")}
+              >
+                Change supplier
+              </Button>
+            </div>
 
             <section className="grid min-w-0 grid-cols-1 gap-3">
               <SectionHeading>Invoice details</SectionHeading>
@@ -677,7 +758,11 @@ export function InvoiceValidationPanel({
           </Button>
         </CardFooter>
       </Card>
+    );
 
+  return (
+    <div className="grid gap-6 xl:grid-cols-[minmax(0,28rem)_minmax(0,1fr)] xl:items-start">
+      {supplierCard}
       <div className="min-w-0 space-y-6">{sourceSlot}</div>
     </div>
   );

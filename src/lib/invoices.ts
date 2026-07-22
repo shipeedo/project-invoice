@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db, invoices, suppliers, type Supplier } from "@/lib/db";
 import { recordAuditEvent } from "@/lib/audit";
 import { extractInvoiceFromDocument, parseInvoiceDate } from "@/lib/extraction";
@@ -144,6 +144,110 @@ export async function processUploadedInvoice(params: {
   return withSupplier ?? updatedInvoice;
 }
 
+export type LinkInvoiceSupplierInput = {
+  organizationId: string;
+  userId: string;
+  invoiceId: string;
+  vendorName: string;
+  vendorEmail?: string | null;
+  /** An existing supplier the reviewer picked or confirmed as the match. */
+  supplierId?: string;
+  /** Create a new supplier from the confirmed name and email. */
+  createSupplier?: boolean;
+};
+
+/**
+ * Settles which supplier a draft invoice belongs to, before it is validated and
+ * routed for approval.
+ *
+ * Deliberately a step of its own: the reviewer confirms who sent the invoice
+ * first, and the link is persisted there and then, so nothing about the
+ * supplier is still in flight by the time an approver is picked — routing rules
+ * and trading terms both read the linked record.
+ */
+export async function linkInvoiceSupplier(input: LinkInvoiceSupplierInput) {
+  const invoice = await db.query.invoices.findFirst({
+    where: eq(invoices.id, input.invoiceId),
+  });
+
+  if (!invoice || invoice.organizationId !== input.organizationId) {
+    return { error: "Not found" as const };
+  }
+
+  if (invoice.status !== "DRAFT") {
+    return { error: "Invoice is not awaiting validation" as const };
+  }
+
+  const vendorName = input.vendorName?.trim();
+  if (!vendorName) {
+    return { error: "Supplier name is required" as const };
+  }
+  const vendorEmail = input.vendorEmail?.trim() || null;
+
+  let supplier: Supplier | null = null;
+  let created = false;
+
+  if (input.supplierId) {
+    supplier =
+      (await db.query.suppliers.findFirst({
+        where: and(
+          eq(suppliers.id, input.supplierId),
+          eq(suppliers.organizationId, input.organizationId),
+        ),
+      })) ?? null;
+    if (!supplier) {
+      return { error: "Supplier not found" as const };
+    }
+  } else if (input.createSupplier) {
+    // Creating stays the fallback even when it is asked for outright: the
+    // screen ranks matches on the name and email it can see, so a supplier
+    // reachable on a domain it cannot would otherwise be duplicated here.
+    supplier = await findMatchingSupplier(input.organizationId, vendorName, vendorEmail);
+    if (!supplier) {
+      const [row] = await db
+        .insert(suppliers)
+        .values(
+          buildNewSupplierValues({
+            organizationId: input.organizationId,
+            name: vendorName,
+            emailAddresses: vendorEmail ? [vendorEmail] : [],
+          }),
+        )
+        .returning();
+      supplier = row;
+      created = true;
+    }
+  } else {
+    return { error: "Pick a supplier to link, or create one" as const };
+  }
+
+  await db
+    .update(invoices)
+    .set({
+      vendorName,
+      vendorEmail,
+      supplierId: supplier.id,
+      updatedAt: new Date(),
+    })
+    .where(eq(invoices.id, invoice.id));
+
+  await recordAuditEvent({
+    invoiceId: invoice.id,
+    userId: input.userId,
+    action: "invoice.supplier_linked",
+    details: {
+      supplierId: supplier.id,
+      supplierName: supplier.name,
+      created,
+      ...(invoice.supplierId && invoice.supplierId !== supplier.id
+        ? { previousSupplierId: invoice.supplierId }
+        : {}),
+    },
+  });
+
+  return { supplier, created };
+}
+
 export type ValidateInvoiceInput = {
   organizationId: string;
   userId: string;
@@ -161,23 +265,18 @@ export type ValidateInvoiceInput = {
     currency?: string;
   };
   supplierId?: string | null;
-  createSupplier?: {
-    name: string;
-    emailAddresses?: string[];
-    emailDomains?: string[];
-  };
 };
 
 /**
  * Decides which supplier record a validated invoice links to.
  *
- * An absent `input.supplierId` cannot mean "keep the existing link": the panel
- * only sends the field when the validator actively picks a supplier, so the
- * validator may instead have retyped the supplier name over an invoice that is
- * still linked to the old company. The link therefore only survives while it
- * still matches the submitted name or email; otherwise it is dropped and
- * re-matched from the submitted fields. An explicitly supplied id (including
- * null, to detach) always wins and is never second-guessed.
+ * Suppliers are settled by linkInvoiceSupplier before this runs, so the usual
+ * path is the id the screen submits back, which always wins. An absent
+ * `input.supplierId` cannot mean "keep the existing link": a caller may instead
+ * have retyped the supplier name over an invoice that is still linked to the
+ * old company. The link therefore only survives while it still matches the
+ * submitted name or email; otherwise it is dropped and re-matched from the
+ * submitted fields.
  */
 async function resolveValidatedSupplierId(
   input: ValidateInvoiceInput,
@@ -185,33 +284,6 @@ async function resolveValidatedSupplierId(
 ): Promise<string | null> {
   if (input.supplierId !== undefined) {
     return input.supplierId;
-  }
-
-  if (input.createSupplier?.name?.trim()) {
-    const name = input.createSupplier.name.trim();
-    // Creating is a fallback, not an override. The panel switches itself to
-    // "create" whenever the confirmed name matches no supplier *name*, but it
-    // only knows names — a supplier matched on its email address or domain
-    // would be duplicated if this created one unconditionally.
-    const existing = await findMatchingSupplier(
-      input.organizationId,
-      name,
-      input.fields.vendorEmail,
-    );
-    if (existing) return existing.id;
-
-    const [created] = await db
-      .insert(suppliers)
-      .values(
-        buildNewSupplierValues({
-          organizationId: input.organizationId,
-          name,
-          emailAddresses: input.createSupplier.emailAddresses,
-          emailDomains: input.createSupplier.emailDomains,
-        }),
-      )
-      .returning();
-    return created.id;
   }
 
   if (
@@ -252,6 +324,12 @@ export async function validateInvoice(input: ValidateInvoiceInput) {
   }
 
   const supplierId = await resolveValidatedSupplierId(input, invoice);
+
+  // Approval routing and trading terms both read the supplier, so an invoice
+  // cannot leave DRAFT without one — the link is settled in its own step first.
+  if (!supplierId) {
+    return { error: "Link a supplier before routing for approval" as const };
+  }
 
   const supplierTradingTermDays = supplierId
     ? invoice.supplier?.id === supplierId

@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { db, invoices, organizations, suppliers, users } from "@/lib/db";
-import { validateInvoice } from "@/lib/invoices";
+import { linkInvoiceSupplier, validateInvoice } from "@/lib/invoices";
 
 const ORG = "org-validate";
+const OTHER_ORG = "org-elsewhere";
 const VALIDATOR = "user-validator";
 
 async function seed() {
@@ -12,9 +13,10 @@ async function seed() {
   await db.delete(users);
   await db.delete(organizations);
 
-  await db
-    .insert(organizations)
-    .values({ id: ORG, name: "Shipeedo", slug: "shipeedo-validate" });
+  await db.insert(organizations).values([
+    { id: ORG, name: "Shipeedo", slug: "shipeedo-validate" },
+    { id: OTHER_ORG, name: "Elsewhere", slug: "elsewhere-validate" },
+  ]);
   await db.insert(users).values({
     id: VALIDATOR,
     organizationId: ORG,
@@ -37,6 +39,13 @@ async function seed() {
       name: "Snapes Project Logistics",
       emailAddresses: JSON.stringify([]),
       emailDomains: JSON.stringify(["snapes.com.au"]),
+    },
+    {
+      id: "supplier-elsewhere",
+      organizationId: OTHER_ORG,
+      name: "Another Org's Carrier",
+      emailAddresses: JSON.stringify([]),
+      emailDomains: JSON.stringify([]),
     },
   ]);
 }
@@ -73,6 +82,14 @@ async function linkedSupplierId(invoiceId: string) {
   return row?.supplierId ?? null;
 }
 
+async function invoiceStatus(invoiceId: string) {
+  const row = await db.query.invoices.findFirst({
+    where: eq(invoices.id, invoiceId),
+    columns: { status: true },
+  });
+  return row?.status ?? null;
+}
+
 describe("validateInvoice supplier linking", () => {
   beforeEach(seed);
 
@@ -107,17 +124,23 @@ describe("validateInvoice supplier linking", () => {
     expect(await linkedSupplierId(invoice.id)).toBe("supplier-snapes");
   });
 
-  it("drops the link entirely when the retyped supplier matches no record", async () => {
+  it("refuses to route when the retyped supplier matches no record", async () => {
+    // Approval routing reads the supplier, so an unresolvable one stops the
+    // invoice in DRAFT rather than routing it unlinked.
     const invoice = await draftInvoice();
 
-    await validateInvoice({
+    const result = await validateInvoice({
       organizationId: ORG,
       userId: VALIDATOR,
       invoiceId: invoice.id,
       fields: fields({ vendorName: "Totally New Freight Co", vendorEmail: null }),
     });
 
-    expect(await linkedSupplierId(invoice.id)).toBeNull();
+    expect(result).toEqual({
+      error: "Link a supplier before routing for approval",
+    });
+    expect(await invoiceStatus(invoice.id)).toBe("DRAFT");
+    expect(await linkedSupplierId(invoice.id)).toBe("supplier-cartoncloud");
   });
 
   it("keeps the link when only the trading name changed but the email still matches", async () => {
@@ -147,10 +170,10 @@ describe("validateInvoice supplier linking", () => {
     expect(await linkedSupplierId(invoice.id)).toBe("supplier-snapes");
   });
 
-  it("detaches on an explicit null instead of falling back to the old link", async () => {
+  it("refuses to route on an explicit detach", async () => {
     const invoice = await draftInvoice();
 
-    await validateInvoice({
+    const result = await validateInvoice({
       organizationId: ORG,
       userId: VALIDATOR,
       invoiceId: invoice.id,
@@ -158,46 +181,142 @@ describe("validateInvoice supplier linking", () => {
       supplierId: null,
     });
 
-    expect(await linkedSupplierId(invoice.id)).toBeNull();
+    expect(result).toEqual({
+      error: "Link a supplier before routing for approval",
+    });
+    expect(await invoiceStatus(invoice.id)).toBe("DRAFT");
   });
+});
 
-  it("reuses a supplier matched on email rather than creating a duplicate", async () => {
-    // The panel flips itself to "create" when the confirmed name matches no
-    // supplier name, but it cannot see email domains — Snapes is reachable on
-    // its domain, so creating here would duplicate it.
-    const invoice = await draftInvoice();
-    const before = await db.query.suppliers.findMany();
+describe("linkInvoiceSupplier", () => {
+  beforeEach(seed);
 
-    await validateInvoice({
+  it("links the supplier the reviewer picked and confirms the vendor fields", async () => {
+    const invoice = await draftInvoice({ supplierId: null, vendorName: null });
+
+    const result = await linkInvoiceSupplier({
       organizationId: ORG,
       userId: VALIDATOR,
       invoiceId: invoice.id,
-      fields: fields({
-        vendorName: "Snapes Project Logistics Pty Ltd",
-        vendorEmail: "accounts@snapes.com.au",
-      }),
-      createSupplier: { name: "Snapes Project Logistics Pty Ltd" },
+      vendorName: "Snapes Project Logistics",
+      vendorEmail: "accounts@snapes.com.au",
+      supplierId: "supplier-snapes",
+    });
+
+    expect(result).toMatchObject({ created: false });
+    expect(await linkedSupplierId(invoice.id)).toBe("supplier-snapes");
+
+    const row = await db.query.invoices.findFirst({
+      where: eq(invoices.id, invoice.id),
+      columns: { vendorName: true, vendorEmail: true },
+    });
+    expect(row?.vendorName).toBe("Snapes Project Logistics");
+    expect(row?.vendorEmail).toBe("accounts@snapes.com.au");
+  });
+
+  it("reuses a supplier reachable on its domain rather than creating a duplicate", async () => {
+    // The screen ranks matches on the name and email it can see; Snapes is
+    // reachable on a domain it was never told about, so creating outright here
+    // would duplicate it.
+    const invoice = await draftInvoice();
+    const before = await db.query.suppliers.findMany();
+
+    await linkInvoiceSupplier({
+      organizationId: ORG,
+      userId: VALIDATOR,
+      invoiceId: invoice.id,
+      vendorName: "Snapes Logistics Group",
+      vendorEmail: "billing@snapes.com.au",
+      createSupplier: true,
     });
 
     expect(await linkedSupplierId(invoice.id)).toBe("supplier-snapes");
     expect(await db.query.suppliers.findMany()).toHaveLength(before.length);
   });
 
-  it("creates and links a new supplier when asked to", async () => {
+  it("creates a supplier from the confirmed fields when nothing matches", async () => {
     const invoice = await draftInvoice({ supplierId: null, vendorName: null });
 
-    await validateInvoice({
+    await linkInvoiceSupplier({
       organizationId: ORG,
       userId: VALIDATOR,
       invoiceId: invoice.id,
-      fields: fields({ vendorName: "Brand New Carrier", vendorEmail: null }),
-      createSupplier: { name: "Brand New Carrier" },
+      vendorName: "Brand New Carrier",
+      vendorEmail: "accounts@brandnew.test",
+      createSupplier: true,
     });
 
-    const linked = await linkedSupplierId(invoice.id);
     const created = await db.query.suppliers.findFirst({
       where: eq(suppliers.name, "Brand New Carrier"),
     });
-    expect(linked).toBe(created?.id);
+    expect(await linkedSupplierId(invoice.id)).toBe(created?.id);
+    expect(JSON.parse(created!.emailAddresses)).toEqual(["accounts@brandnew.test"]);
+  });
+
+  it("refuses a supplier from another organisation", async () => {
+    const invoice = await draftInvoice();
+
+    const result = await linkInvoiceSupplier({
+      organizationId: ORG,
+      userId: VALIDATOR,
+      invoiceId: invoice.id,
+      vendorName: "CartonCloud Pty Ltd",
+      supplierId: "supplier-elsewhere",
+    });
+
+    expect(result).toEqual({ error: "Supplier not found" });
+    expect(await linkedSupplierId(invoice.id)).toBe("supplier-cartoncloud");
+  });
+
+  it("refuses to link once the invoice has left DRAFT", async () => {
+    const invoice = await draftInvoice({ status: "PENDING_APPROVAL" });
+
+    const result = await linkInvoiceSupplier({
+      organizationId: ORG,
+      userId: VALIDATOR,
+      invoiceId: invoice.id,
+      vendorName: "Snapes Project Logistics",
+      supplierId: "supplier-snapes",
+    });
+
+    expect(result).toEqual({ error: "Invoice is not awaiting validation" });
+  });
+
+  it("requires a choice rather than guessing", async () => {
+    const invoice = await draftInvoice({ supplierId: null });
+
+    const result = await linkInvoiceSupplier({
+      organizationId: ORG,
+      userId: VALIDATOR,
+      invoiceId: invoice.id,
+      vendorName: "CartonCloud Pty Ltd",
+    });
+
+    expect(result).toEqual({ error: "Pick a supplier to link, or create one" });
+    expect(await linkedSupplierId(invoice.id)).toBeNull();
+  });
+
+  it("routes for approval once the supplier is linked", async () => {
+    const invoice = await draftInvoice({ supplierId: null, vendorName: null });
+
+    await linkInvoiceSupplier({
+      organizationId: ORG,
+      userId: VALIDATOR,
+      invoiceId: invoice.id,
+      vendorName: "CartonCloud",
+      vendorEmail: "accounts@cartoncloud.com",
+      supplierId: "supplier-cartoncloud",
+    });
+
+    const result = await validateInvoice({
+      organizationId: ORG,
+      userId: VALIDATOR,
+      invoiceId: invoice.id,
+      fields: fields({ vendorName: "CartonCloud" }),
+      supplierId: "supplier-cartoncloud",
+    });
+
+    expect("error" in result).toBe(false);
+    expect(await linkedSupplierId(invoice.id)).toBe("supplier-cartoncloud");
   });
 });

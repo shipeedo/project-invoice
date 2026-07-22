@@ -150,6 +150,18 @@ export function describeAuditEvent(
         label: "Extraction failed",
         description: asString(details.parseError),
       };
+    case "invoice.supplier_linked": {
+      const supplierName = asString(details.supplierName);
+      const created = details.created === true;
+      return {
+        label: created ? "Supplier created and linked" : "Supplier linked",
+        description: supplierName
+          ? created
+            ? `Created ${supplierName} from the confirmed details`
+            : `Linked to ${supplierName}`
+          : null,
+      };
+    }
     case "invoice.validated": {
       const rejectedCount = asNumber(details.rejectedLineCount);
       const parts = [

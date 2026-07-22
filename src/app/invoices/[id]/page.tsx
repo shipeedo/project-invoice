@@ -39,6 +39,7 @@ import {
   isInvoiceVisibleInTrash,
 } from "@/lib/invoice-trash";
 import { getSourceAttachments } from "@/lib/invoice-source-files";
+import { toSupplierMatchTarget } from "@/lib/supplier-matching";
 import { getNavCounts } from "@/lib/nav-counts";
 import { requireSession, formatCurrency, formatDate } from "@/lib/session";
 
@@ -104,11 +105,14 @@ export default async function InvoiceDetailPage({ params, searchParams }: PagePr
 
   await recordInvoiceView({ invoiceId: invoice.id, userId: session.user.id });
 
-  const supplierOptions = await db.query.suppliers.findMany({
+  const supplierRows = await db.query.suppliers.findMany({
     where: eq(suppliers.organizationId, session.user.organizationId),
-    columns: { id: true, name: true },
+    columns: { id: true, name: true, emailAddresses: true, emailDomains: true },
     orderBy: asc(suppliers.name),
   });
+  // Addresses and domains travel to the client so the draft screen can rank
+  // matches as the reviewer edits, using the same rules the server applies.
+  const supplierOptions = supplierRows.map(toSupplierMatchTarget);
 
   const orgUsers = await db.query.users.findMany({
     where: eq(users.organizationId, session.user.organizationId),
