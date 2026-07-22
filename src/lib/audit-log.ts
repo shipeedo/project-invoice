@@ -163,6 +163,27 @@ export function describeAuditEvent(
           : null,
       };
     }
+    case "invoice.supplier_changed": {
+      const supplierName = asString(details.supplierName);
+      const previousName = asString(details.previousSupplierName);
+      const move = supplierName
+        ? previousName
+          ? `Moved from ${previousName} to ${supplierName}`
+          : `Linked to ${supplierName}`
+        : null;
+      // Only present when the new supplier's trading terms moved the due date.
+      const dueDate = asString(details.dueDate);
+      const termDays = asNumber(details.tradingTermDays);
+      const dueDateNote = dueDate
+        ? `Due date re-derived to ${formatDate(dueDate)}${
+            termDays != null ? ` from ${termDays}-day trading terms` : ""
+          }`
+        : null;
+      return {
+        label: "Supplier changed",
+        description: [move, dueDateNote].filter(Boolean).join(" · ") || null,
+      };
+    }
     case "invoice.validated": {
       const rejectedCount = asNumber(details.rejectedLineCount);
       const parts = [
