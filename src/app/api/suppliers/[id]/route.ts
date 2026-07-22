@@ -101,7 +101,17 @@ export async function DELETE(request: Request, context: RouteContext) {
           );
     }
 
-    return NextResponse.json({ ok: true, merged: merged.counts });
+    // The survivor goes back with the response so the client can show the
+    // merged values immediately, without waiting for the page to re-render.
+    return NextResponse.json({
+      ok: true,
+      merged: merged.counts,
+      survivor: {
+        ...merged.survivor,
+        emailAddresses: JSON.parse(merged.survivor.emailAddresses) as string[],
+        emailDomains: JSON.parse(merged.survivor.emailDomains) as string[],
+      },
+    });
   }
 
   const existing = await db.query.suppliers.findFirst({

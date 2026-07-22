@@ -481,10 +481,29 @@ export function SuppliersManager({
       return;
     }
 
-    // Drop the deleted row immediately; the refresh brings back the survivor's
-    // recalculated counts and merged email lists.
+    // Drop the deleted row and apply the survivor the server just returned, so
+    // reopening it before the refresh lands can't save pre-merge emails back
+    // over the merged ones. Counts come from the refresh; they aren't written
+    // back on save, so they can lag by a beat.
+    const survivor = mergeTarget
+      ? ((await response.json()) as { survivor: Supplier }).survivor
+      : null;
+
     setSuppliers((current) =>
-      current.filter((supplier) => supplier.id !== editingSupplier.id),
+      current
+        .filter((supplier) => supplier.id !== editingSupplier.id)
+        .map((supplier) =>
+          survivor && supplier.id === survivor.id
+            ? {
+                ...supplier,
+                name: survivor.name,
+                emailAddresses: survivor.emailAddresses,
+                emailDomains: survivor.emailDomains,
+                tradingTermDays: survivor.tradingTermDays,
+                extractionPrompt: survivor.extractionPrompt,
+              }
+            : supplier,
+        ),
     );
     closeEditor();
     router.refresh();

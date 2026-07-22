@@ -139,6 +139,25 @@ describe("mergeSuppliers", () => {
     ]);
   });
 
+  it("returns the survivor's post-merge row so callers need not recompute it", async () => {
+    const result = await merge();
+
+    expect(JSON.parse(result.survivor.emailAddresses)).toEqual([
+      "accounts@cartoncloud.com",
+      "ar@cartoncloud.com",
+    ]);
+    expect(JSON.parse(result.survivor.emailDomains)).toEqual([
+      "cartoncloud.com",
+      "cartoncloud.com.au",
+    ]);
+    expect(result.survivor.extractionPrompt).toBe("Duplicate prompt");
+
+    const stored = await db.query.suppliers.findFirst({
+      where: eq(suppliers.id, KEEP),
+    });
+    expect(result.survivor).toEqual(stored);
+  });
+
   it("keeps the survivor's trading terms but adopts the duplicate's prompt", async () => {
     await merge();
 

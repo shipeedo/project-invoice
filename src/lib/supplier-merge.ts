@@ -23,7 +23,13 @@ export type SupplierMergeCounts = {
 
 export type SupplierMergeResult =
   | { error: "same_supplier" | "not_found" }
-  | { source: Supplier; target: Supplier; counts: SupplierMergeCounts };
+  | {
+      source: Supplier;
+      target: Supplier;
+      /** The survivor as it stands after the merge, for callers to render. */
+      survivor: Supplier;
+      counts: SupplierMergeCounts;
+    };
 
 function parseStringList(raw: string): string[] {
   try {
@@ -159,7 +165,7 @@ export async function mergeSuppliers(params: {
     parseStringList(source.emailDomains),
   );
 
-  const counts = db.transaction((tx) => {
+  const result = db.transaction((tx) => {
     const moved: SupplierMergeCounts = {
       invoices: tx
         .update(invoices)
@@ -196,7 +202,8 @@ export async function mergeSuppliers(params: {
         .run();
     }
 
-    tx.update(suppliers)
+    const merged = tx
+      .update(suppliers)
       .set({
         emailAddresses: JSON.stringify(emailAddresses),
         emailDomains: JSON.stringify(emailDomains),
@@ -204,7 +211,8 @@ export async function mergeSuppliers(params: {
         extractionPrompt: target.extractionPrompt ?? source.extractionPrompt,
       })
       .where(eq(suppliers.id, target.id))
-      .run();
+      .returning()
+      .get();
 
     tx.insert(notes)
       .values({
@@ -216,8 +224,8 @@ export async function mergeSuppliers(params: {
 
     tx.delete(suppliers).where(eq(suppliers.id, source.id)).run();
 
-    return moved;
+    return { moved, survivor: merged };
   });
 
-  return { source, target, counts };
+  return { source, target, survivor: result.survivor, counts: result.moved };
 }
