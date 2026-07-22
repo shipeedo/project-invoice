@@ -529,7 +529,10 @@ export async function processInboundEmailForInvoice(params: ProcessEmailOptions)
   }
 
   const invoiceDate = parseInvoiceDate(extraction.data?.invoiceDate);
-  const resolvedSupplierId = supplier?.id ?? params.supplierHintId ?? null;
+  // No fallback to the hint: runInvoiceExtraction already kept it when the
+  // extracted vendor still matched and dropped it when it didn't, so
+  // re-applying it here would only reinstate a link the extraction disowned.
+  const resolvedSupplierId = supplier?.id ?? null;
   const resolvedDueDate = resolveDueDate({
     invoiceDate,
     extractedDueDate: parseInvoiceDate(extraction.data?.dueDate),

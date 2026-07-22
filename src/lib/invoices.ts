@@ -188,12 +188,24 @@ async function resolveValidatedSupplierId(
   }
 
   if (input.createSupplier?.name?.trim()) {
+    const name = input.createSupplier.name.trim();
+    // Creating is a fallback, not an override. The panel switches itself to
+    // "create" whenever the confirmed name matches no supplier *name*, but it
+    // only knows names — a supplier matched on its email address or domain
+    // would be duplicated if this created one unconditionally.
+    const existing = await findMatchingSupplier(
+      input.organizationId,
+      name,
+      input.fields.vendorEmail,
+    );
+    if (existing) return existing.id;
+
     const [created] = await db
       .insert(suppliers)
       .values(
         buildNewSupplierValues({
           organizationId: input.organizationId,
-          name: input.createSupplier.name.trim(),
+          name,
           emailAddresses: input.createSupplier.emailAddresses,
           emailDomains: input.createSupplier.emailDomains,
         }),

@@ -161,6 +161,28 @@ describe("validateInvoice supplier linking", () => {
     expect(await linkedSupplierId(invoice.id)).toBeNull();
   });
 
+  it("reuses a supplier matched on email rather than creating a duplicate", async () => {
+    // The panel flips itself to "create" when the confirmed name matches no
+    // supplier name, but it cannot see email domains — Snapes is reachable on
+    // its domain, so creating here would duplicate it.
+    const invoice = await draftInvoice();
+    const before = await db.query.suppliers.findMany();
+
+    await validateInvoice({
+      organizationId: ORG,
+      userId: VALIDATOR,
+      invoiceId: invoice.id,
+      fields: fields({
+        vendorName: "Snapes Project Logistics Pty Ltd",
+        vendorEmail: "accounts@snapes.com.au",
+      }),
+      createSupplier: { name: "Snapes Project Logistics Pty Ltd" },
+    });
+
+    expect(await linkedSupplierId(invoice.id)).toBe("supplier-snapes");
+    expect(await db.query.suppliers.findMany()).toHaveLength(before.length);
+  });
+
   it("creates and links a new supplier when asked to", async () => {
     const invoice = await draftInvoice({ supplierId: null, vendorName: null });
 
