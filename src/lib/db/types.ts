@@ -37,18 +37,19 @@ export const aiConnectorTypes = [
 ] as const;
 export type AiConnectorType = (typeof aiConnectorTypes)[number];
 
+/**
+ * Lifecycle of a credit request with the carrier. This is deliberately not the
+ * invoice status — the two used to look alike ("Draft"/"Approved"), which read
+ * as the invoice's own state in the credits table.
+ */
 export const creditRequestStatuses = [
-  "DRAFT",
-  "SENT",
-  "AWAITING_USER",
-  "CONTESTED",
+  "PENDING",
+  "SUBMITTED",
   "APPROVED",
+  "PARTIALLY_APPROVED",
   "REJECTED",
 ] as const;
 export type CreditRequestStatus = (typeof creditRequestStatuses)[number];
-
-export const carrierDecisions = ["APPROVED", "DENIED"] as const;
-export type CarrierDecision = (typeof carrierDecisions)[number];
 
 export const mailboxMessageDirections = ["INBOUND", "OUTBOUND"] as const;
 export type MailboxMessageDirection = (typeof mailboxMessageDirections)[number];

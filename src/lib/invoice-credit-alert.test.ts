@@ -4,7 +4,7 @@ import { getInvoiceCreditAlert } from "@/lib/invoice-credit-alert";
 describe("getInvoiceCreditAlert", () => {
   it("warns when an approved invoice has an open credit", () => {
     expect(
-      getInvoiceCreditAlert({ status: "APPROVED", creditStatuses: ["SENT"] }),
+      getInvoiceCreditAlert({ status: "APPROVED", creditStatuses: ["SUBMITTED"] }),
     ).toMatchObject({ label: "Credit pending" });
   });
 
@@ -14,11 +14,20 @@ describe("getInvoiceCreditAlert", () => {
     ).toMatchObject({ label: "Credit to apply" });
   });
 
+  it("warns on a partial approval — there is still a credit to deduct", () => {
+    expect(
+      getInvoiceCreditAlert({
+        status: "APPROVED",
+        creditStatuses: ["PARTIALLY_APPROVED"],
+      }),
+    ).toMatchObject({ label: "Credit to apply" });
+  });
+
   it("prefers the granted-credit warning when both exist", () => {
     expect(
       getInvoiceCreditAlert({
         status: "APPROVED",
-        creditStatuses: ["SENT", "APPROVED"],
+        creditStatuses: ["SUBMITTED", "APPROVED"],
       }),
     ).toMatchObject({ label: "Credit to apply" });
   });
@@ -42,7 +51,7 @@ describe("getInvoiceCreditAlert", () => {
     expect(
       getInvoiceCreditAlert({
         status: "PENDING_APPROVAL",
-        creditStatuses: ["SENT"],
+        creditStatuses: ["SUBMITTED"],
       }),
     ).toBeNull();
   });

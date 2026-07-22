@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useState } from "react";
 import { CreditOutcomeDialog } from "@/components/credit-outcome-dialog";
-import { Badge } from "@/components/ui/badge";
+import { CreditStatusBadge } from "@/components/credit-status-badge";
+import { CreditSubmitButton } from "@/components/credit-submit-button";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Table,
@@ -13,20 +14,25 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import type { CarrierDecision, CreditRequestStatus } from "@/lib/db/types";
-import { isCreditRequestOpen, parseCreditRequestLineItems, resolveDefaultApprovedAmount } from "@/lib/credit-line-utils";
-import { formatCurrency, formatDate, statusLabel } from "@/lib/format";
+import type { CreditRequestStatus } from "@/lib/db/types";
+import {
+  creditShortfall,
+  isCreditRequestOpen,
+  parseCreditRequestLineItems,
+  resolveDefaultApprovedAmount,
+} from "@/lib/credit-line-utils";
+import { formatCurrency, formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 export type CreditRequestRow = {
   id: string;
   status: CreditRequestStatus;
-  carrierDecision: CarrierDecision | null;
   subject: string;
   requestedTotal: number | null;
   approvedAmount: number | null;
   lineItems: string;
   createdAt: string;
+  submittedAt: string | null;
   invoice: {
     id: string;
     vendorName: string | null;
@@ -59,7 +65,7 @@ export function CreditsTable({ creditRequests }: { creditRequests: CreditRequest
             <TableRow>
               <TableHead>Invoice</TableHead>
               <TableHead>Lines</TableHead>
-              <TableHead>Status</TableHead>
+              <TableHead>Credit status</TableHead>
               <TableHead className="text-right">Requested</TableHead>
               <TableHead className="text-right">Approved</TableHead>
               <TableHead>Created</TableHead>
@@ -71,6 +77,7 @@ export function CreditsTable({ creditRequests }: { creditRequests: CreditRequest
               const currency = request.invoice.currency ?? "AUD";
               const lineCount = parseCreditRequestLineItems(request.lineItems).length;
               const open = isCreditRequestOpen(request.status);
+              const shortfall = creditShortfall(request);
 
               return (
                 <TableRow key={request.id}>
@@ -91,12 +98,12 @@ export function CreditsTable({ creditRequests }: { creditRequests: CreditRequest
                   </TableCell>
                   <TableCell>{lineCount || "—"}</TableCell>
                   <TableCell>
-                    <div className="flex flex-wrap gap-2">
-                      <Badge variant="secondary">{statusLabel(request.status)}</Badge>
-                      {request.carrierDecision ? (
-                        <Badge variant="outline">
-                          Carrier {request.carrierDecision.toLowerCase()}
-                        </Badge>
+                    <div className="space-y-1">
+                      <CreditStatusBadge status={request.status} />
+                      {request.submittedAt ? (
+                        <p className="text-xs text-muted-foreground">
+                          Sent {formatDate(request.submittedAt)}
+                        </p>
                       ) : null}
                     </div>
                   </TableCell>
@@ -106,9 +113,18 @@ export function CreditsTable({ creditRequests }: { creditRequests: CreditRequest
                       : "—"}
                   </TableCell>
                   <TableCell className="text-right">
-                    {request.approvedAmount != null
-                      ? formatCurrency(request.approvedAmount, currency)
-                      : "—"}
+                    {request.approvedAmount != null ? (
+                      <div className="space-y-1">
+                        <p>{formatCurrency(request.approvedAmount, currency)}</p>
+                        {shortfall != null ? (
+                          <p className="text-xs text-amber-700 dark:text-amber-400">
+                            {formatCurrency(shortfall, currency)} short
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : (
+                      "—"
+                    )}
                   </TableCell>
                   <TableCell>
                     <div className="text-sm">
@@ -126,6 +142,9 @@ export function CreditsTable({ creditRequests }: { creditRequests: CreditRequest
                       >
                         Download spreadsheet
                       </a>
+                      {request.status === "PENDING" ? (
+                        <CreditSubmitButton creditRequestId={request.id} />
+                      ) : null}
                       {open ? (
                         <Button size="sm" onClick={() => setOutcomeFor(request)}>
                           Record outcome
@@ -147,7 +166,8 @@ export function CreditsTable({ creditRequests }: { creditRequests: CreditRequest
             if (!open) setOutcomeFor(null);
           }}
           creditRequestId={outcomeFor.id}
-          defaultApprovedAmount={resolveDefaultApprovedAmount(
+          currency={outcomeFor.invoice.currency ?? "AUD"}
+          requestedTotal={resolveDefaultApprovedAmount(
             outcomeFor.requestedTotal,
             outcomeFor.lineItems,
           )}

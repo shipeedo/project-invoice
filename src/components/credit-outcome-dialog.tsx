@@ -14,7 +14,9 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { formatDecimalAmount, parseDecimalAmount } from "@/lib/format";
+import { CreditStatusBadge } from "@/components/credit-status-badge";
+import { resolveApprovalStatus } from "@/lib/credit-line-utils";
+import { formatCurrency, formatDecimalAmount, parseDecimalAmount } from "@/lib/format";
 import {
   CREDIT_NOTE_UPLOAD_ACCEPT,
   CREDIT_NOTE_UPLOAD_EXTENSIONS,
@@ -25,14 +27,17 @@ type CreditOutcomeDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   creditRequestId: string;
-  defaultApprovedAmount?: number | null;
+  /** Doubles as the default approved amount and the full-approval benchmark. */
+  requestedTotal?: number | null;
+  currency?: string;
 };
 
 export function CreditOutcomeDialog({
   open,
   onOpenChange,
   creditRequestId,
-  defaultApprovedAmount,
+  requestedTotal,
+  currency = "AUD",
 }: CreditOutcomeDialogProps) {
   const router = useRouter();
   const [outcome, setOutcome] = useState<"approved" | "denied">("approved");
@@ -44,11 +49,20 @@ export function CreditOutcomeDialog({
   const [loading, setLoading] = useState(false);
 
   const defaultApprovedAmountValue = useMemo(() => {
-    if (!open || defaultApprovedAmount == null || defaultApprovedAmount <= 0) return "";
-    return formatDecimalAmount(defaultApprovedAmount);
-  }, [open, defaultApprovedAmount]);
+    if (!open || requestedTotal == null || requestedTotal <= 0) return "";
+    return formatDecimalAmount(requestedTotal);
+  }, [open, requestedTotal]);
 
   const approvedAmount = approvedAmountOverride ?? defaultApprovedAmountValue;
+
+  // Preview the status the entered amount will land on, so a short-paid credit
+  // is recognised as partial before it is saved rather than after.
+  const resultingStatus = useMemo(() => {
+    if (outcome === "denied") return "REJECTED" as const;
+    const parsed = parseDecimalAmount(approvedAmount);
+    if (parsed == null || parsed <= 0) return null;
+    return resolveApprovalStatus(parsed, requestedTotal);
+  }, [outcome, approvedAmount, requestedTotal]);
 
   function handleOpenChange(nextOpen: boolean) {
     if (!nextOpen) {
@@ -119,6 +133,7 @@ export function CreditOutcomeDialog({
           <DialogTitle>Record credit outcome</DialogTitle>
           <DialogDescription>
             Record whether the carrier approved or denied this credit request.
+            Approving less than the requested amount marks it partially approved.
           </DialogDescription>
         </DialogHeader>
 
@@ -156,7 +171,18 @@ export function CreditOutcomeDialog({
               placeholder="0.00"
               required
             />
+            {requestedTotal != null && requestedTotal > 0 ? (
+              <p className="text-xs text-muted-foreground">
+                Requested {formatCurrency(requestedTotal, currency)}
+              </p>
+            ) : null}
           </div>
+        ) : null}
+
+        {resultingStatus ? (
+          <p className="flex items-center gap-2 text-sm text-muted-foreground">
+            Saves as <CreditStatusBadge status={resultingStatus} />
+          </p>
         ) : null}
 
         <div className="space-y-2">

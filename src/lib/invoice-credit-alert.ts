@@ -22,7 +22,7 @@ export function getInvoiceCreditAlert(params: {
   const live = params.creditStatuses.filter((status) => status !== "REJECTED");
   if (live.length === 0) return null;
 
-  if (live.includes("APPROVED")) {
+  if (live.includes("APPROVED") || live.includes("PARTIALLY_APPROVED")) {
     return {
       label: "Credit to apply",
       detail:

@@ -13,7 +13,7 @@ import {
   invoices,
   mailboxMessages,
 } from "@/lib/db";
-import type { CarrierDecision, CreditRequestStatus } from "@/lib/db/types";
+import type { CreditRequestStatus } from "@/lib/db/types";
 import { getO365Connection, getValidAccessToken, resolveGraphMailboxUser } from "@/lib/o365/connection";
 import {
   getMessageDetails,
@@ -154,7 +154,8 @@ export async function createAndSendCreditRequest(params: {
       invoiceId: params.invoiceId,
       threadId,
       createdById: params.userId,
-      status: "SENT",
+      status: "SUBMITTED",
+      submittedAt: sentAt,
       subject: params.subject,
       recipientEmail: params.recipientEmail,
       message: params.message,
@@ -240,20 +241,6 @@ export async function sendThreadReply(params: {
     attachments: graphAttachments,
   });
 
-  const creditRequest = await db.query.creditRequests.findFirst({
-    where: and(
-      eq(creditRequests.threadId, params.threadId),
-      eq(creditRequests.organizationId, params.organizationId),
-    ),
-  });
-
-  if (creditRequest && ["AWAITING_USER", "SENT"].includes(creditRequest.status)) {
-    await db
-      .update(creditRequests)
-      .set({ status: "CONTESTED", updatedAt: new Date() })
-      .where(eq(creditRequests.id, creditRequest.id));
-  }
-
   await recordAuditEvent({
     userId: params.userId,
     action: "email.reply_sent",
@@ -268,7 +255,6 @@ export async function updateCreditRequestStatus(params: {
   userId: string;
   creditRequestId: string;
   status: CreditRequestStatus;
-  carrierDecision?: CarrierDecision | null;
 }) {
   const request = await db.query.creditRequests.findFirst({
     where: and(
@@ -285,7 +271,6 @@ export async function updateCreditRequestStatus(params: {
     .update(creditRequests)
     .set({
       status: params.status,
-      carrierDecision: params.carrierDecision ?? request.carrierDecision,
       updatedAt: new Date(),
     })
     .where(eq(creditRequests.id, params.creditRequestId))
@@ -298,8 +283,48 @@ export async function updateCreditRequestStatus(params: {
     details: {
       creditRequestId: request.id,
       status: params.status,
-      carrierDecision: params.carrierDecision,
     },
+  });
+
+  return { creditRequest: updated };
+}
+
+/**
+ * The accounts team sends credits to carriers outside the app (portal, phone,
+ * their own email), so submission is recorded by hand rather than inferred.
+ */
+export async function markCreditRequestSubmitted(params: {
+  organizationId: string;
+  userId: string;
+  creditRequestId: string;
+}) {
+  const request = await db.query.creditRequests.findFirst({
+    where: and(
+      eq(creditRequests.id, params.creditRequestId),
+      eq(creditRequests.organizationId, params.organizationId),
+    ),
+  });
+
+  if (!request) {
+    return { error: "Credit request not found" as const };
+  }
+
+  if (request.status !== "PENDING") {
+    return { error: "Only a pending credit request can be marked submitted" as const };
+  }
+
+  const submittedAt = new Date();
+  const [updated] = await db
+    .update(creditRequests)
+    .set({ status: "SUBMITTED", submittedAt, updatedAt: submittedAt })
+    .where(eq(creditRequests.id, request.id))
+    .returning();
+
+  await recordAuditEvent({
+    invoiceId: request.invoiceId,
+    userId: params.userId,
+    action: "credit_request.updated",
+    details: { creditRequestId: request.id, status: "SUBMITTED" },
   });
 
   return { creditRequest: updated };

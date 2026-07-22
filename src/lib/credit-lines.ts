@@ -6,6 +6,7 @@ import {
   computeGstCreditAmount,
   isCreditRequestOpen,
   parseCreditRequestLineItems,
+  resolveApprovalStatus,
   sumRequestedAmounts,
   type CreateCreditLineInput,
 } from "@/lib/credit-line-utils";
@@ -19,9 +20,11 @@ export type {
 export {
   computeGstCreditAmount,
   creditLineDescription,
+  creditStatusLabel,
   isCreditRequestOpen,
   parseCreateCreditLinesInput,
   parseCreditRequestLineItems,
+  resolveApprovalStatus,
   sumRequestedAmounts,
 } from "@/lib/credit-line-utils";
 
@@ -73,7 +76,7 @@ export async function createCreditRequest(params: {
       organizationId: params.organizationId,
       invoiceId: params.invoiceId,
       createdById: params.userId,
-      status: "DRAFT",
+      status: "PENDING",
       subject,
       recipientEmail,
       message,
@@ -125,31 +128,27 @@ export async function recordCreditRequestOutcome(params: {
   }
 
   const creditLines = parseCreditRequestLineItems(request.lineItems);
-  const defaultAmount = request.requestedTotal ?? sumRequestedAmounts(creditLines);
+  const requestedTotal = request.requestedTotal ?? sumRequestedAmounts(creditLines);
   let approvedAmount: number | null = null;
   let status: CreditRequestStatus;
-  let carrierDecision: "APPROVED" | "DENIED" | null = null;
 
   if (params.outcome === "approved") {
     approvedAmount =
       params.approvedAmount != null && Number.isFinite(params.approvedAmount)
         ? params.approvedAmount
-        : defaultAmount;
+        : requestedTotal;
     if (approvedAmount == null || approvedAmount <= 0) {
       return { error: "Approved amount is required" as const };
     }
-    status = "APPROVED";
-    carrierDecision = "APPROVED";
+    status = resolveApprovalStatus(approvedAmount, requestedTotal);
   } else {
     status = "REJECTED";
-    carrierDecision = "DENIED";
   }
 
   const [updated] = await db
     .update(creditRequests)
     .set({
       status,
-      carrierDecision,
       approvedAmount,
       updatedAt: new Date(),
     })
@@ -175,7 +174,7 @@ export async function recordCreditRequestOutcome(params: {
     details: {
       creditRequestId: request.id,
       status,
-      carrierDecision,
+      requestedTotal,
       approvedAmount,
       ...(attachments.length > 0
         ? { fileNames: attachments.map((file) => file.fileName) }

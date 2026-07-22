@@ -608,13 +608,11 @@ export const creditRequests = sqliteTable("credit_requests", {
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
   status: text("status", {
-    enum: ["DRAFT", "SENT", "AWAITING_USER", "CONTESTED", "APPROVED", "REJECTED"],
+    enum: ["PENDING", "SUBMITTED", "APPROVED", "PARTIALLY_APPROVED", "REJECTED"],
   })
     .notNull()
-    .default("DRAFT"),
-  carrierDecision: text("carrier_decision", {
-    enum: ["APPROVED", "DENIED"],
-  }),
+    .default("PENDING"),
+  submittedAt: integer("submitted_at", { mode: "timestamp_ms" }),
   subject: text("subject").notNull(),
   recipientEmail: text("recipient_email").notNull(),
   message: text("message").notNull(),
