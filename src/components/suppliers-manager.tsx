@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ChevronDownIcon,
   MessageSquareTextIcon,
@@ -53,6 +54,7 @@ import {
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDate } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 type Supplier = {
   id: string;
@@ -89,6 +91,10 @@ type SuppliersManagerProps = {
 
 function formatInboxMessageCount(count: number) {
   return `${count} message${count === 1 ? "" : "s"}`;
+}
+
+function formatInvoiceCount(count: number) {
+  return `${count} invoice${count === 1 ? "" : "s"}`;
 }
 
 function parseTradingTerms(value: string): number | null {
@@ -312,6 +318,7 @@ export function SuppliersManager({
   initialSuppliers,
   initialSuggestions = [],
 }: SuppliersManagerProps) {
+  const router = useRouter();
   const [suppliers, setSuppliers] = useState(initialSuppliers);
   const [suggestions, setSuggestions] = useState(initialSuggestions);
   const [createSheetOpen, setCreateSheetOpen] = useState(false);
@@ -332,18 +339,23 @@ export function SuppliersManager({
   const [saving, setSaving] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [deleteMode, setDeleteMode] = useState<"unlink" | "merge">("unlink");
+  const [mergeTargetId, setMergeTargetId] = useState<string | null>(null);
+  const [mergeSearch, setMergeSearch] = useState("");
   const [supplierNotes, setSupplierNotes] = useState<SupplierNote[] | null>(null);
   const [notesError, setNotesError] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
   const [addingNote, setAddingNote] = useState(false);
 
-  async function refreshSuppliers() {
-    const response = await fetch("/api/suppliers");
-    if (!response.ok) {
-      setError("Failed to load suppliers");
-      return;
-    }
-    setSuppliers(await response.json());
+  // Invoice/note counts and merged email lists are computed server-side, so
+  // every mutation re-renders the page and re-syncs local state from the fresh
+  // props. Safe to clobber because mutations round-trip through the server
+  // first; without it the list keeps stale counts and a later save would write
+  // them back.
+  const [prevInitialSuppliers, setPrevInitialSuppliers] = useState(initialSuppliers);
+  if (prevInitialSuppliers !== initialSuppliers) {
+    setPrevInitialSuppliers(initialSuppliers);
+    setSuppliers(initialSuppliers);
   }
 
   function openCreateSheet() {
@@ -425,6 +437,17 @@ export function SuppliersManager({
     setEditingSupplier(null);
     setSaving(false);
     setOriginalPrompt("");
+    closeDeleteDialog();
+  }
+
+  function openDeleteDialog() {
+    setDeleteMode("unlink");
+    setMergeTargetId(null);
+    setMergeSearch("");
+    setConfirmingDelete(true);
+  }
+
+  function closeDeleteDialog() {
     setConfirmingDelete(false);
     setDeleting(false);
   }
@@ -432,25 +455,39 @@ export function SuppliersManager({
   async function deleteSupplier() {
     if (!editingSupplier) return;
 
+    const mergeTarget =
+      deleteMode === "merge"
+        ? (suppliers.find((supplier) => supplier.id === mergeTargetId) ?? null)
+        : null;
+    if (deleteMode === "merge" && !mergeTarget) return;
+
     setDeleting(true);
     setError(null);
 
-    const response = await fetch(`/api/suppliers/${editingSupplier.id}`, {
-      method: "DELETE",
-    });
+    const response = await fetch(
+      `/api/suppliers/${editingSupplier.id}${mergeTarget ? `?mergeInto=${mergeTarget.id}` : ""}`,
+      { method: "DELETE" },
+    );
 
     setDeleting(false);
 
     if (!response.ok) {
       setConfirmingDelete(false);
-      setError("Failed to delete supplier");
+      setError(
+        mergeTarget
+          ? `Failed to merge supplier into ${mergeTarget.name}`
+          : "Failed to delete supplier",
+      );
       return;
     }
 
+    // Drop the deleted row immediately; the refresh brings back the survivor's
+    // recalculated counts and merged email lists.
     setSuppliers((current) =>
       current.filter((supplier) => supplier.id !== editingSupplier.id),
     );
     closeEditor();
+    router.refresh();
   }
 
   async function createSupplier() {
@@ -484,7 +521,7 @@ export function SuppliersManager({
       return;
     }
 
-    await refreshSuppliers();
+    router.refresh();
     if (selectedSuggestion) {
       setSuggestions((current) =>
         current.filter((entry) => entry.id !== selectedSuggestion.id),
@@ -563,9 +600,20 @@ export function SuppliersManager({
       ),
     );
     closeEditor();
+    router.refresh();
   }
 
   const isAnySheetOpen = createSheetOpen || Boolean(editingSupplier);
+
+  // Busiest suppliers first — when picking which duplicate survives, the one
+  // holding the most invoices is usually the keeper.
+  const mergeCandidates = suppliers
+    .filter(
+      (supplier) =>
+        supplier.id !== editingSupplier?.id &&
+        supplier.name.toLowerCase().includes(mergeSearch.trim().toLowerCase()),
+    )
+    .sort((a, b) => b.invoiceCount - a.invoiceCount || a.name.localeCompare(b.name));
 
   return (
     <div className="space-y-6">
@@ -846,7 +894,7 @@ export function SuppliersManager({
                   type="button"
                   variant="destructive"
                   className="ml-auto"
-                  onClick={() => setConfirmingDelete(true)}
+                  onClick={openDeleteDialog}
                   disabled={saving || deleting}
                 >
                   <TrashIcon />
@@ -860,22 +908,102 @@ export function SuppliersManager({
 
       <Dialog
         open={confirmingDelete}
-        onOpenChange={(open) => !open && !deleting && setConfirmingDelete(false)}
+        onOpenChange={(open) => !open && !deleting && closeDeleteDialog()}
       >
-        <DialogContent>
+        <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Delete supplier</DialogTitle>
             <DialogDescription>
               {editingSupplier
-                ? `This permanently deletes ${editingSupplier.name}. Invoices and emails already linked to this supplier are kept but unlinked, and its extraction prompt is lost.`
+                ? `Choose what happens to the invoices, emails and notes linked to ${editingSupplier.name}.`
                 : null}
             </DialogDescription>
           </DialogHeader>
+
+          <div role="radiogroup" className="flex flex-col gap-2">
+            {(
+              [
+                {
+                  mode: "unlink" as const,
+                  title: "Delete only",
+                  description:
+                    "Invoices and emails are kept but unlinked, and the extraction prompt is lost.",
+                },
+                {
+                  mode: "merge" as const,
+                  title: "Merge into another supplier",
+                  description:
+                    "Move everything onto the supplier you pick, then delete this duplicate.",
+                },
+              ]
+            ).map((option) => (
+              <button
+                key={option.mode}
+                type="button"
+                role="radio"
+                aria-checked={deleteMode === option.mode}
+                onClick={() => setDeleteMode(option.mode)}
+                disabled={deleting}
+                className={cn(
+                  "rounded-md border px-3 py-2 text-left transition-colors hover:bg-accent",
+                  deleteMode === option.mode && "border-primary bg-accent",
+                )}
+              >
+                <span className="block text-sm font-medium">{option.title}</span>
+                <span className="block text-sm text-muted-foreground">
+                  {option.description}
+                </span>
+              </button>
+            ))}
+          </div>
+
+          {deleteMode === "merge" ? (
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="merge-search">Merge into</Label>
+              <Input
+                id="merge-search"
+                value={mergeSearch}
+                onChange={(event) => setMergeSearch(event.target.value)}
+                placeholder="Search suppliers"
+                disabled={deleting}
+              />
+              <div className="max-h-56 overflow-y-auto rounded-md border">
+                {mergeCandidates.length === 0 ? (
+                  <p className="px-3 py-2 text-sm text-muted-foreground">
+                    No other suppliers match.
+                  </p>
+                ) : (
+                  mergeCandidates.map((candidate) => (
+                    <button
+                      key={candidate.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={mergeTargetId === candidate.id}
+                      onClick={() => setMergeTargetId(candidate.id)}
+                      disabled={deleting}
+                      className={cn(
+                        "flex w-full items-center justify-between gap-3 border-b px-3 py-2 text-left last:border-b-0 hover:bg-accent",
+                        mergeTargetId === candidate.id && "bg-accent",
+                      )}
+                    >
+                      <span className="truncate text-sm font-medium">
+                        {candidate.name}
+                      </span>
+                      <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                        {formatInvoiceCount(candidate.invoiceCount)}
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          ) : null}
+
           <DialogFooter>
             <Button
               type="button"
               variant="outline"
-              onClick={() => setConfirmingDelete(false)}
+              onClick={closeDeleteDialog}
               disabled={deleting}
             >
               Cancel
@@ -884,9 +1012,15 @@ export function SuppliersManager({
               type="button"
               variant="destructive"
               onClick={() => void deleteSupplier()}
-              disabled={deleting}
+              disabled={deleting || (deleteMode === "merge" && !mergeTargetId)}
             >
-              {deleting ? "Deleting..." : "Delete supplier"}
+              {deleteMode === "merge"
+                ? deleting
+                  ? "Merging..."
+                  : "Merge and delete"
+                : deleting
+                  ? "Deleting..."
+                  : "Delete supplier"}
             </Button>
           </DialogFooter>
         </DialogContent>

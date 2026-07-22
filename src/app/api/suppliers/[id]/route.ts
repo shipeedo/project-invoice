@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db, suppliers } from "@/lib/db";
 import { updateSupplierExtractionSettings } from "@/lib/supplier-extraction";
+import { mergeSuppliers } from "@/lib/supplier-merge";
 import { normalizeTradingTermDays } from "@/lib/trading-terms";
 
 type RouteContext = {
@@ -72,13 +73,37 @@ export async function PATCH(request: Request, context: RouteContext) {
   });
 }
 
-export async function DELETE(_request: Request, context: RouteContext) {
+export async function DELETE(request: Request, context: RouteContext) {
   const session = await auth();
   if (!session?.user?.organizationId) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const { id } = await context.params;
+
+  // ?mergeInto=<id> relinks everything onto another supplier before deleting
+  // this one, for cleaning up duplicates.
+  const mergeIntoId = new URL(request.url).searchParams.get("mergeInto");
+  if (mergeIntoId) {
+    const merged = await mergeSuppliers({
+      sourceId: id,
+      targetId: mergeIntoId,
+      organizationId: session.user.organizationId,
+      userId: session.user.id,
+    });
+
+    if ("error" in merged) {
+      return merged.error === "not_found"
+        ? NextResponse.json({ error: "Not found" }, { status: 404 })
+        : NextResponse.json(
+            { error: "Choose a different supplier to merge into" },
+            { status: 400 },
+          );
+    }
+
+    return NextResponse.json({ ok: true, merged: merged.counts });
+  }
+
   const existing = await db.query.suppliers.findFirst({
     where: and(
       eq(suppliers.id, id),
