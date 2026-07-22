@@ -255,9 +255,10 @@ describe("linkInvoiceSupplier", () => {
     expect(JSON.parse(created!.emailDomains)).toEqual(["brandnew.test"]);
   });
 
-  it("does not record a relayed platform domain against the new supplier", async () => {
-    // post.xero.com carries mail for every Xero customer, so keeping it would
-    // match all of their invoices to whichever supplier was created first.
+  it("records no contact details from a relayed platform address", async () => {
+    // One Xero address fronts many customers, so keeping either it or its
+    // domain would match all of their later invoices to whichever supplier was
+    // created first. The invoice still records who actually sent it.
     const invoice = await draftInvoice({ supplierId: null, vendorName: null });
 
     await linkInvoiceSupplier({
@@ -272,10 +273,49 @@ describe("linkInvoiceSupplier", () => {
     const created = await db.query.suppliers.findFirst({
       where: eq(suppliers.name, "Relayed Freight Co"),
     });
-    expect(JSON.parse(created!.emailAddresses)).toEqual([
-      "messaging-service@post.xero.com",
-    ]);
+    expect(JSON.parse(created!.emailAddresses)).toEqual([]);
     expect(JSON.parse(created!.emailDomains)).toEqual([]);
+
+    const row = await db.query.invoices.findFirst({
+      where: eq(invoices.id, invoice.id),
+      columns: { vendorEmail: true },
+    });
+    expect(row?.vendorEmail).toBe("messaging-service@post.xero.com");
+  });
+
+  it("does not match a second supplier onto the first one's relay address", async () => {
+    // The failure this guards: two unrelated companies both invoicing through
+    // Xero would otherwise collapse onto one supplier record.
+    const first = await draftInvoice({ supplierId: null, vendorName: null });
+    await linkInvoiceSupplier({
+      organizationId: ORG,
+      userId: VALIDATOR,
+      invoiceId: first.id,
+      vendorName: "First Relayed Co",
+      vendorEmail: "messaging-service@post.xero.com",
+      createSupplier: true,
+    });
+
+    const second = await draftInvoice({ supplierId: null, vendorName: null });
+    await linkInvoiceSupplier({
+      organizationId: ORG,
+      userId: VALIDATOR,
+      invoiceId: second.id,
+      vendorName: "Second Relayed Co",
+      vendorEmail: "messaging-service@post.xero.com",
+      createSupplier: true,
+    });
+
+    const firstSupplier = await db.query.suppliers.findFirst({
+      where: eq(suppliers.name, "First Relayed Co"),
+    });
+    const secondSupplier = await db.query.suppliers.findFirst({
+      where: eq(suppliers.name, "Second Relayed Co"),
+    });
+
+    expect(secondSupplier).toBeDefined();
+    expect(await linkedSupplierId(second.id)).toBe(secondSupplier!.id);
+    expect(secondSupplier!.id).not.toBe(firstSupplier!.id);
   });
 
   it("refuses a supplier from another organisation", async () => {

@@ -55,11 +55,18 @@ type LinkedSupplier = {
 /** Sentinel selection for "none of these — create a new supplier". */
 const CREATE = "create";
 
-const MATCH_REASON_LABEL: Record<SupplierMatchReason, string> = {
+/** A supplier on offer in step one: one the fields rank, or the one this
+ * invoice is already linked to. */
+type SupplierChoiceOption = Omit<SupplierMatch, "reason"> & {
+  reason: SupplierMatchReason | "linked";
+};
+
+const CHOICE_REASON_LABEL: Record<SupplierChoiceOption["reason"], string> = {
   email: "Email match",
   domain: "Domain match",
   name: "Name match",
   similar_name: "Similar name",
+  linked: "Currently linked",
 };
 
 type ValidationFieldKey =
@@ -237,18 +244,40 @@ export function InvoiceValidationPanel({
     [suppliers, fields.vendorName, fields.vendorEmail],
   );
 
+  // A supplier already linked to this invoice is always on offer, even when
+  // the fields no longer rank it — otherwise a draft that arrived linked but
+  // unnamed offers only "create", and continuing duplicates the supplier it is
+  // already linked to.
+  const choices = useMemo<SupplierChoiceOption[]>(() => {
+    if (!linkedSupplier) return matches;
+    if (matches.some((match) => match.supplierId === linkedSupplier.id)) return matches;
+    return [
+      ...matches,
+      {
+        supplierId: linkedSupplier.id,
+        name: linkedSupplier.name,
+        reason: "linked" as const,
+        confidence: "high" as const,
+        detail: "Already linked to this invoice",
+      },
+    ];
+  }, [matches, linkedSupplier]);
+
   // Matching always leads; creating is only the default once nothing matches.
+  // A ranked match wins over an existing link, since the reviewer has since
+  // edited the fields away from it — but never at the cost of offering create
+  // where a link already exists.
   const defaultSelection = useMemo(() => {
     if (linkedSupplier && matches.some((match) => match.supplierId === linkedSupplier.id)) {
       return linkedSupplier.id;
     }
-    return matches[0]?.supplierId ?? CREATE;
+    return matches[0]?.supplierId ?? linkedSupplier?.id ?? CREATE;
   }, [matches, linkedSupplier]);
 
   const selection = picked ?? defaultSelection;
-  const selectedMatch = matches.find((match) => match.supplierId === selection) ?? null;
+  const selectedChoice = choices.find((choice) => choice.supplierId === selection) ?? null;
   const otherSupplier =
-    selection !== CREATE && !selectedMatch
+    selection !== CREATE && !selectedChoice
       ? (suppliers.find((supplier) => supplier.id === selection) ?? null)
       : null;
 
@@ -547,32 +576,32 @@ export function InvoiceValidationPanel({
 
             <section className="grid min-w-0 grid-cols-1 gap-3">
               <SectionHeading>
-                {matches.length > 0 ? "Matching suppliers" : "No matching supplier"}
+                {choices.length > 0 ? "Matching suppliers" : "No matching supplier"}
               </SectionHeading>
 
-              {matches.length > 0 ? (
+              {choices.length > 0 ? (
                 <div className="flex min-w-0 flex-col gap-2">
-                  {matches.map((match: SupplierMatch) => (
+                  {choices.map((choice) => (
                     <SupplierChoice
-                      key={match.supplierId}
+                      key={choice.supplierId}
                       icon={<BuildingIcon className="size-4" />}
-                      title={match.name}
-                      description={match.detail}
+                      title={choice.name}
+                      description={choice.detail}
                       badge={
                         <Badge
                           variant={
-                            match.confidence === "high"
+                            choice.confidence === "high"
                               ? "default"
-                              : match.confidence === "medium"
+                              : choice.confidence === "medium"
                                 ? "secondary"
                                 : "outline"
                           }
                         >
-                          {MATCH_REASON_LABEL[match.reason]}
+                          {CHOICE_REASON_LABEL[choice.reason]}
                         </Badge>
                       }
-                      selected={selection === match.supplierId}
-                      onSelect={() => setPicked(match.supplierId)}
+                      selected={selection === choice.supplierId}
+                      onSelect={() => setPicked(choice.supplierId)}
                     />
                   ))}
                 </div>
@@ -654,7 +683,7 @@ export function InvoiceValidationPanel({
                   confirmedName ? ` as “${confirmedName}”` : ""
                 }.`
               : `This invoice will be linked to ${
-                  selectedMatch?.name ?? otherSupplier?.name ?? "the selected supplier"
+                  selectedChoice?.name ?? otherSupplier?.name ?? "the selected supplier"
                 }.`}
           </p>
           <Button

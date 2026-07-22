@@ -12,7 +12,7 @@ import {
   supplierHasCustomExtraction,
   supplierMatchesInvoiceFields,
 } from "@/lib/supplier-extraction";
-import { supplierEmailDomain } from "@/lib/supplier-matching";
+import { sharedEmailProvider, supplierEmailDomain } from "@/lib/supplier-matching";
 
 async function resolveSupplierFromExtraction(
   organizationId: string,
@@ -205,9 +205,13 @@ export async function linkInvoiceSupplier(input: LinkInvoiceSupplierInput) {
     // reachable on a domain it cannot would otherwise be duplicated here.
     supplier = await findMatchingSupplier(input.organizationId, vendorName, vendorEmail);
     if (!supplier) {
-      // Recording the domain lets a later invoice from someone else at the
-      // same company match on its own; supplierEmailDomain withholds it for
-      // Xero-style relays and free mail, which belong to no one supplier.
+      // Contact details are only worth recording when they identify this
+      // supplier alone. Xero and MYOB relay every customer's invoices from one
+      // address — `messaging-service@post.xero.com` fronts four different
+      // suppliers in our own data — so keeping either the address or its
+      // domain would match all of their later invoices to whichever supplier
+      // was created first. The invoice still records who actually sent it.
+      const ownAddress = vendorEmail && !sharedEmailProvider(vendorEmail);
       const domain = supplierEmailDomain(vendorEmail);
       const [row] = await db
         .insert(suppliers)
@@ -215,7 +219,7 @@ export async function linkInvoiceSupplier(input: LinkInvoiceSupplierInput) {
           buildNewSupplierValues({
             organizationId: input.organizationId,
             name: vendorName,
-            emailAddresses: vendorEmail ? [vendorEmail] : [],
+            emailAddresses: ownAddress ? [vendorEmail] : [],
             emailDomains: domain ? [domain] : [],
           }),
         )
