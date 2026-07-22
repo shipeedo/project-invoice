@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { db, invoices, suppliers } from "@/lib/db";
+import { db, invoices, suppliers, type Supplier } from "@/lib/db";
 import { recordAuditEvent } from "@/lib/audit";
 import { extractInvoiceFromDocument, parseInvoiceDate } from "@/lib/extraction";
 import { resolveDueDate } from "@/lib/trading-terms";
@@ -10,6 +10,7 @@ import {
   findMatchingSupplier,
   getSupplierExtractionContext,
   supplierHasCustomExtraction,
+  supplierMatchesInvoiceFields,
 } from "@/lib/supplier-extraction";
 
 async function resolveSupplierFromExtraction(
@@ -167,6 +168,71 @@ export type ValidateInvoiceInput = {
   };
 };
 
+/**
+ * Decides which supplier record a validated invoice links to.
+ *
+ * An absent `input.supplierId` cannot mean "keep the existing link": the panel
+ * only sends the field when the validator actively picks a supplier, so the
+ * validator may instead have retyped the supplier name over an invoice that is
+ * still linked to the old company. The link therefore only survives while it
+ * still matches the submitted name or email; otherwise it is dropped and
+ * re-matched from the submitted fields. An explicitly supplied id (including
+ * null, to detach) always wins and is never second-guessed.
+ */
+async function resolveValidatedSupplierId(
+  input: ValidateInvoiceInput,
+  invoice: { supplier: Supplier | null },
+): Promise<string | null> {
+  if (input.supplierId !== undefined) {
+    return input.supplierId;
+  }
+
+  if (input.createSupplier?.name?.trim()) {
+    const name = input.createSupplier.name.trim();
+    // Creating is a fallback, not an override. The panel switches itself to
+    // "create" whenever the confirmed name matches no supplier *name*, but it
+    // only knows names — a supplier matched on its email address or domain
+    // would be duplicated if this created one unconditionally.
+    const existing = await findMatchingSupplier(
+      input.organizationId,
+      name,
+      input.fields.vendorEmail,
+    );
+    if (existing) return existing.id;
+
+    const [created] = await db
+      .insert(suppliers)
+      .values(
+        buildNewSupplierValues({
+          organizationId: input.organizationId,
+          name,
+          emailAddresses: input.createSupplier.emailAddresses,
+          emailDomains: input.createSupplier.emailDomains,
+        }),
+      )
+      .returning();
+    return created.id;
+  }
+
+  if (
+    invoice.supplier &&
+    supplierMatchesInvoiceFields(
+      invoice.supplier,
+      input.fields.vendorName,
+      input.fields.vendorEmail,
+    )
+  ) {
+    return invoice.supplier.id;
+  }
+
+  const matched = await findMatchingSupplier(
+    input.organizationId,
+    input.fields.vendorName,
+    input.fields.vendorEmail,
+  );
+  return matched?.id ?? null;
+}
+
 export async function validateInvoice(input: ValidateInvoiceInput) {
   const invoice = await db.query.invoices.findFirst({
     where: eq(invoices.id, input.invoiceId),
@@ -185,31 +251,7 @@ export async function validateInvoice(input: ValidateInvoiceInput) {
     return { error: "Supplier name is required" as const };
   }
 
-  let supplierId = input.supplierId ?? invoice.supplierId;
-
-  if (!supplierId && input.createSupplier?.name?.trim()) {
-    const [created] = await db
-      .insert(suppliers)
-      .values(
-        buildNewSupplierValues({
-          organizationId: input.organizationId,
-          name: input.createSupplier.name.trim(),
-          emailAddresses: input.createSupplier.emailAddresses,
-          emailDomains: input.createSupplier.emailDomains,
-        }),
-      )
-      .returning();
-    supplierId = created.id;
-  }
-
-  if (!supplierId) {
-    const matched = await findMatchingSupplier(
-      input.organizationId,
-      input.fields.vendorName,
-      input.fields.vendorEmail,
-    );
-    supplierId = matched?.id ?? null;
-  }
+  const supplierId = await resolveValidatedSupplierId(input, invoice);
 
   const supplierTradingTermDays = supplierId
     ? invoice.supplier?.id === supplierId
@@ -277,6 +319,11 @@ export async function validateInvoice(input: ValidateInvoiceInput) {
     action: "invoice.validated",
     details: {
       supplierId,
+      // Recorded so a supplier that changed during validation is traceable
+      // afterwards; the invoice row only keeps the final link.
+      ...(supplierId !== invoice.supplierId
+        ? { previousSupplierId: invoice.supplierId }
+        : {}),
       assignedToId: approver?.id,
     },
   });

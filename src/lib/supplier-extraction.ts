@@ -51,6 +51,25 @@ function supplierMatchesEmail(supplier: Supplier, email: string) {
   return domains.some((entry) => entry.toLowerCase() === domain);
 }
 
+/**
+ * True when a supplier record still corresponds to the given name/email — the
+ * same test findMatchingSupplier uses to pick a supplier in the first place.
+ *
+ * Used to decide whether an already-linked supplier survives a change to the
+ * invoice's vendor fields. A link kept past the point where it would no longer
+ * be found leaves surfaces that read `supplier.name` (the queue table) naming a
+ * different company than surfaces that read `vendorName` (the header).
+ */
+export function supplierMatchesInvoiceFields(
+  supplier: Supplier,
+  vendorName?: string | null,
+  vendorEmail?: string | null,
+): boolean {
+  if (vendorEmail && supplierMatchesEmail(supplier, vendorEmail)) return true;
+  if (vendorName && supplierMatchesName(supplier, vendorName)) return true;
+  return false;
+}
+
 export async function findMatchingSupplier(
   organizationId: string,
   vendorName?: string | null,

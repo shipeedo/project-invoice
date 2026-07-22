@@ -66,6 +66,8 @@ export const notificationTypes = [
   "INVOICE_ASSIGNED",
   "INVOICE_REMINDER",
   "NOTE_MENTION",
+  "NOTE_MESSAGE",
+  "NOTE_PARTICIPANT_ADDED",
   "TEST",
 ] as const;
 export type NotificationType = (typeof notificationTypes)[number];

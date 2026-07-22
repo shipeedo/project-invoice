@@ -5,6 +5,11 @@ import { auth } from "@/lib/auth";
 import { db, invoices, notes, users } from "@/lib/db";
 import { invoiceNotDeleted } from "@/lib/invoice-trash";
 import { extractMentionedUserIds, stripMentionTokens } from "@/lib/mentions";
+import {
+  addNoteParticipants,
+  listNoteParticipantIds,
+  participantsJoinedByNote,
+} from "@/lib/note-participants";
 import { createNotification, invoiceSummaryLine } from "@/lib/notifications";
 
 type RouteContext = {
@@ -39,6 +44,7 @@ export async function POST(request: Request, context: RouteContext) {
       invoiceNumber: true,
       totalAmount: true,
       currency: true,
+      assignedToId: true,
     },
   });
 
@@ -60,6 +66,8 @@ export async function POST(request: Request, context: RouteContext) {
         })
       : [];
 
+  const participantsBefore = await listNoteParticipantIds(id);
+
   const [note] = await db
     .insert(notes)
     .values({
@@ -69,25 +77,51 @@ export async function POST(request: Request, context: RouteContext) {
     })
     .returning();
 
+  // Posting or being mentioned puts you in the thread, so the next message
+  // reaches you without anyone having to remember to tag you again.
+  const mentionedIds = mentionedUsers.map((user) => user.id);
+  await addNoteParticipants({
+    organizationId: session.user.organizationId,
+    invoiceId: id,
+    userIds: participantsJoinedByNote({
+      authorId: session.user.id,
+      mentionedUserIds: mentionedIds,
+      assigneeId: invoice.assignedToId,
+      threadIsEmpty: participantsBefore.length === 0,
+    }),
+  });
+
   const actorName = session.user.name ?? session.user.email ?? "A colleague";
   const plainContent = stripMentionTokens(parsed.data.content);
+  const mentioned = new Set(mentionedIds);
+  const summary = invoiceSummaryLine(invoice);
+
+  // Everyone in the thread hears about the message; being named just changes
+  // how loudly. Recipients are resolved after the join above so a first-time
+  // mention is notified in the same post that adds them.
+  const recipients = (
+    await listNoteParticipantIds(id)
+  ).filter((userId) => userId !== session.user.id);
+
   await Promise.all(
-    mentionedUsers
-      .filter((user) => user.id !== session.user.id)
-      .map((user) =>
-        createNotification({
-          organizationId: session.user.organizationId,
-          recipientId: user.id,
-          actorId: session.user.id,
-          invoiceId: id,
-          type: "NOTE_MENTION",
-          title: `${actorName} mentioned you in a note`,
-          body: `"${plainContent}" — ${invoiceSummaryLine(invoice)}`,
-          url: `/invoices/${id}?note=${note.id}`,
-          auditAction: "notification.note_mention",
-          auditDetails: { noteId: note.id },
-        }),
-      ),
+    recipients.map((userId) =>
+      createNotification({
+        organizationId: session.user.organizationId,
+        recipientId: userId,
+        actorId: session.user.id,
+        invoiceId: id,
+        type: mentioned.has(userId) ? "NOTE_MENTION" : "NOTE_MESSAGE",
+        title: mentioned.has(userId)
+          ? `${actorName} mentioned you in a note`
+          : `${actorName} posted a note`,
+        body: `"${plainContent}" — ${summary}`,
+        url: `/invoices/${id}?note=${note.id}`,
+        auditAction: mentioned.has(userId)
+          ? "notification.note_mention"
+          : "notification.note_message",
+        auditDetails: { noteId: note.id },
+      }),
+    ),
   );
 
   return NextResponse.json(note, { status: 201 });

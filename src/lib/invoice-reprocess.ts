@@ -245,7 +245,11 @@ export async function reprocessDraftInvoice(params: {
       accountReference: extraction.data.accountReference ?? null,
       extractionRaw: extraction.raw ? JSON.stringify(extraction.raw) : null,
       parseError,
-      supplierId: supplier?.id ?? invoice.supplierId,
+      // Every other field here is replaced with the fresh extraction, so the
+      // supplier link follows it rather than falling back to the old one —
+      // keeping a link the new vendor name no longer matches is what makes the
+      // queue table and the invoice header disagree.
+      supplierId: supplier?.id ?? null,
       // Fresh extraction invalidates any prior validation of the old values.
       validatedAt: null,
       validatedById: null,
@@ -262,7 +266,10 @@ export async function reprocessDraftInvoice(params: {
     details: {
       sourceType: invoice.sourceType,
       parseError,
-      supplierId: supplier?.id ?? invoice.supplierId,
+      supplierId: supplier?.id ?? null,
+      ...((supplier?.id ?? null) !== invoice.supplierId
+        ? { previousSupplierId: invoice.supplierId }
+        : {}),
       attachmentCount: savedAttachments.length,
       uploadedFileCount: params.extraFiles?.length ?? 0,
     },

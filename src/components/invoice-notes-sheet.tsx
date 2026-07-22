@@ -31,6 +31,7 @@ import {
   InputGroupTextarea,
 } from "@/components/ui/input-group";
 import { Marker, MarkerContent } from "@/components/ui/marker";
+import { NoteParticipantsBar } from "@/components/note-participants-bar";
 import {
   Message,
   MessageAvatar,
@@ -164,6 +165,9 @@ export function InvoiceNotesSheet({
 
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
+  // Posting can change the thread's membership, so the participants bar reloads
+  // off this counter.
+  const [notesPosted, setNotesPosted] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [highlightId, setHighlightId] = useState<string | null>(
     initialNoteId ?? null,
@@ -288,6 +292,7 @@ export function InvoiceNotesSheet({
     setDraft("");
     setMention(null);
     mentionsRef.current.clear();
+    setNotesPosted((count) => count + 1);
     router.refresh();
   }
 
@@ -334,11 +339,21 @@ export function InvoiceNotesSheet({
 
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:max-w-lg">
-          <SheetHeader className="border-b px-6 py-5">
-            <SheetTitle>Notes</SheetTitle>
-            <SheetDescription>
-              Notes recorded against this invoice. Type @ to tag a colleague.
-            </SheetDescription>
+          <SheetHeader className="gap-3 border-b px-6 py-5">
+            <div className="grid gap-1.5">
+              <SheetTitle>Notes</SheetTitle>
+              <SheetDescription>
+                Everyone in this thread is notified of new notes. Type @ to tag a
+                colleague.
+              </SheetDescription>
+            </div>
+            <NoteParticipantsBar
+              invoiceId={invoiceId}
+              currentUserId={currentUserId}
+              canManage={canCompose}
+              active={open}
+              refreshToken={notesPosted}
+            />
           </SheetHeader>
 
           <div className="min-h-0 flex-1">
