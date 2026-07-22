@@ -5,13 +5,13 @@ describe("getInvoiceCreditAlert", () => {
   it("warns when an approved invoice has an open credit", () => {
     expect(
       getInvoiceCreditAlert({ status: "APPROVED", creditStatuses: ["SUBMITTED"] }),
-    ).toMatchObject({ label: "Credit pending" });
+    ).toMatchObject({ label: "Credit pending", tone: "waiting" });
   });
 
   it("warns when the carrier granted a credit that still has to be applied", () => {
     expect(
       getInvoiceCreditAlert({ status: "APPROVED", creditStatuses: ["APPROVED"] }),
-    ).toMatchObject({ label: "Credit to apply" });
+    ).toMatchObject({ label: "Credit to apply", tone: "granted" });
   });
 
   it("warns on a partial approval — there is still a credit to deduct", () => {
@@ -20,7 +20,7 @@ describe("getInvoiceCreditAlert", () => {
         status: "APPROVED",
         creditStatuses: ["PARTIALLY_APPROVED"],
       }),
-    ).toMatchObject({ label: "Credit to apply" });
+    ).toMatchObject({ label: "Credit to apply", tone: "granted" });
   });
 
   it("prefers the granted-credit warning when both exist", () => {
@@ -29,7 +29,7 @@ describe("getInvoiceCreditAlert", () => {
         status: "APPROVED",
         creditStatuses: ["SUBMITTED", "APPROVED"],
       }),
-    ).toMatchObject({ label: "Credit to apply" });
+    ).toMatchObject({ label: "Credit to apply", tone: "granted" });
   });
 
   it("stays silent once every credit is rejected", () => {
