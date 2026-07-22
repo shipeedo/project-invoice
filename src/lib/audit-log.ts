@@ -163,6 +163,18 @@ export function describeAuditEvent(
           : null,
       };
     }
+    case "invoice.supplier_changed": {
+      const supplierName = asString(details.supplierName);
+      const previousName = asString(details.previousSupplierName);
+      return {
+        label: "Supplier changed",
+        description: supplierName
+          ? previousName
+            ? `Moved from ${previousName} to ${supplierName}`
+            : `Linked to ${supplierName}`
+          : null,
+      };
+    }
     case "invoice.validated": {
       const rejectedCount = asNumber(details.rejectedLineCount);
       const parts = [

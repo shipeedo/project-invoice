@@ -9,6 +9,7 @@ import { InvoiceAssigneeControl } from "@/components/invoice-assignee-control";
 import { InvoiceDocumentsCard } from "@/components/invoice-documents-card";
 import { InvoiceNotesSheet } from "@/components/invoice-notes-sheet";
 import { InvoiceDueDate } from "@/components/invoice-due-date";
+import { InvoiceSupplierControl } from "@/components/invoice-supplier-control";
 import { InvoiceValidationPanel } from "@/components/invoice-validation-panel";
 import { CreditAlertBadge } from "@/components/credit-alert-badge";
 import { StatusBadge } from "@/components/status-badge";
@@ -122,6 +123,11 @@ export default async function InvoiceDetailPage({ params, searchParams }: PagePr
 
   const awaitingValidation =
     invoice.status === "DRAFT" && !isExtractionPending(invoice);
+
+  // Drafts settle their supplier in the validation panel, so the correction
+  // control only appears once that step is behind the invoice.
+  const canChangeSupplier =
+    !inTrash && invoice.status !== "DRAFT" && invoice.status !== "CANCELLED";
 
   const invoiceCreditRequests = await db.query.creditRequests.findMany({
     where: eq(creditRequests.invoiceId, invoice.id),
@@ -320,10 +326,20 @@ export default async function InvoiceDetailPage({ params, searchParams }: PagePr
                 ? ` · Account ref: ${invoice.accountReference}`
                 : null}
             </p>
-            {invoice.supplier ? (
-              <p className="mt-1 text-sm text-muted-foreground">
-                Supplier: {invoice.supplier.name}
-              </p>
+            {invoice.supplier || canChangeSupplier ? (
+              <InvoiceSupplierControl
+                invoiceId={invoice.id}
+                supplier={
+                  invoice.supplier
+                    ? { id: invoice.supplier.id, name: invoice.supplier.name }
+                    : null
+                }
+                suppliers={supplierOptions.map((option) => ({
+                  id: option.id,
+                  name: option.name,
+                }))}
+                canChange={canChangeSupplier}
+              />
             ) : null}
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">

@@ -258,6 +258,73 @@ export async function linkInvoiceSupplier(input: LinkInvoiceSupplierInput) {
   return { supplier, created };
 }
 
+export type ChangeInvoiceSupplierInput = {
+  organizationId: string;
+  userId: string;
+  invoiceId: string;
+  supplierId: string;
+};
+
+/**
+ * Re-points an invoice at a different supplier, after the draft flow is done.
+ *
+ * A correction rather than a step of the workflow: extraction (or the reviewer)
+ * matched the wrong company, and someone spotted it later — often once the
+ * invoice is already approved. Only the link moves. The extracted vendor name
+ * and email stay as they were read off the document, since they are the
+ * evidence for who actually sent it, and the approver already decided on this
+ * invoice as it stands.
+ */
+export async function changeInvoiceSupplier(input: ChangeInvoiceSupplierInput) {
+  const invoice = await db.query.invoices.findFirst({
+    where: eq(invoices.id, input.invoiceId),
+    with: { supplier: { columns: { id: true, name: true } } },
+  });
+
+  if (!invoice || invoice.organizationId !== input.organizationId) {
+    return { error: "Not found" as const };
+  }
+
+  if (invoice.deletedAt) {
+    return { error: "Restore this invoice before changing its supplier" as const };
+  }
+
+  const supplier =
+    (await db.query.suppliers.findFirst({
+      where: and(
+        eq(suppliers.id, input.supplierId),
+        eq(suppliers.organizationId, input.organizationId),
+      ),
+    })) ?? null;
+
+  if (!supplier) {
+    return { error: "Supplier not found" as const };
+  }
+
+  if (invoice.supplierId === supplier.id) {
+    return { supplier, changed: false as const };
+  }
+
+  await db
+    .update(invoices)
+    .set({ supplierId: supplier.id, updatedAt: new Date() })
+    .where(eq(invoices.id, invoice.id));
+
+  await recordAuditEvent({
+    invoiceId: invoice.id,
+    userId: input.userId,
+    action: "invoice.supplier_changed",
+    details: {
+      supplierId: supplier.id,
+      supplierName: supplier.name,
+      previousSupplierId: invoice.supplierId,
+      previousSupplierName: invoice.supplier?.name ?? null,
+    },
+  });
+
+  return { supplier, changed: true as const };
+}
+
 export type ValidateInvoiceInput = {
   organizationId: string;
   userId: string;
