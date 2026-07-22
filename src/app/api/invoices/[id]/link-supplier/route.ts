@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
-import { validateInvoice } from "@/lib/invoices";
+import { linkInvoiceSupplier } from "@/lib/invoices";
 
 type RouteContext = {
   params: Promise<{ id: string }>;
@@ -14,27 +14,20 @@ export async function POST(request: Request, context: RouteContext) {
 
   const { id } = await context.params;
   const body = (await request.json()) as {
-    fields: {
-      vendorName: string;
-      vendorEmail?: string | null;
-      invoiceNumber?: string | null;
-      invoiceDate?: string | null;
-      dueDate?: string | null;
-      respondByDate?: string | null;
-      totalAmount?: number | null;
-      subtotalAmount?: number | null;
-      taxAmount?: number | null;
-      currency?: string;
-    };
-    supplierId?: string | null;
+    vendorName: string;
+    vendorEmail?: string | null;
+    supplierId?: string;
+    createSupplier?: boolean;
   };
 
-  const result = await validateInvoice({
+  const result = await linkInvoiceSupplier({
     organizationId: session.user.organizationId,
     userId: session.user.id,
     invoiceId: id,
-    fields: body.fields,
+    vendorName: body.vendorName,
+    vendorEmail: body.vendorEmail,
     supplierId: body.supplierId,
+    createSupplier: body.createSupplier,
   });
 
   if ("error" in result) {
@@ -42,5 +35,8 @@ export async function POST(request: Request, context: RouteContext) {
     return NextResponse.json({ error: result.error }, { status });
   }
 
-  return NextResponse.json(result.invoice);
+  return NextResponse.json({
+    supplier: { id: result.supplier.id, name: result.supplier.name },
+    created: result.created,
+  });
 }

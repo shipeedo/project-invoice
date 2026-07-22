@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { db, suppliers, type Supplier } from "@/lib/db";
 import { INVOICE_EXTRACTION_SYSTEM_PROMPT } from "@/lib/extraction-prompts";
+import { normalizeForMatch } from "@/lib/supplier-matching";
 import { normalizeTradingTermDays } from "@/lib/trading-terms";
 
 export type SupplierExtractionContext = {
@@ -29,10 +30,6 @@ export function buildNewSupplierValues(params: {
     // the supplier to whatever the default was at creation time.
     extractionPrompt: null,
   };
-}
-
-function normalizeForMatch(value: string) {
-  return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
 function supplierMatchesName(supplier: Supplier, name: string) {
